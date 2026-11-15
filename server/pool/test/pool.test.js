@@ -30,10 +30,12 @@ test("İngilizce oyun satırları alınır", () => {
 
 // D1'in yalnız bu dosyadaki sorguları kadarını taklit eder; her çalışan yazma deyimini sayar.
 // `legacy`: geçiş çalışmamış veritabanı (title_id ve game sütunları yok).
-function fakeDB({ legacy = false } = {}) {
+function fakeDB({ legacy = false, failLineStatementOnce = false } = {}) {
   const sightings = new Set();
   const lines = new Map();
-  const db = { writes: 0, lines, quota: 0, last: null };
+  const db = { writes: 0, lineWrites: 0, batchCalls: 0, lines, quota: 0, last: null, sightings };
+  let lastChanges = 0;
+  let failedLineStatement = false;
   const run = (sql, args) => {
     if (sql.startsWith("SELECT count FROM quota")) return { count: db.quota };
     if (sql.startsWith("SELECT")) {
@@ -45,18 +47,39 @@ function fakeDB({ legacy = false } = {}) {
       const id = args.join("|");
       const changes = sightings.has(id) ? 0 : 1;
       sightings.add(id);
+      lastChanges = changes;
       return { meta: { changes } };
     }
     if (sql.startsWith("INSERT INTO lines")) {
-      const [k, text, , , title = null, game = null] = args;
+      const k = args[0];
+      const text = args[1];
+      const conditional = sql.includes("WHERE changes()>0");
       const row = lines.get(k);
+      const installsSeen = [...sightings].filter((id) => id.startsWith(`${k}|`)).length;
+      const reconciles = sql.includes("OR NOT EXISTS");
+      const repairNeeded = !row || row.installs < installsSeen;
+      if (conditional && lastChanges <= 0 && !(reconciles && repairNeeded)) {
+        lastChanges = 0;
+        return { meta: { changes: 0 } };
+      }
+      const title = sql.includes("title_id") ? args[reconciles ? 7 : conditional ? 4 : 5] : null;
+      const game = sql.includes("title_id") ? args[reconciles ? 8 : conditional ? 5 : 6] : null;
+      const firstSeen = args[reconciles ? 3 : conditional ? 2 : 3];
+      const submittedLastSeen = args[reconciles ? 4 : conditional ? 3 : 4];
+      const lastSeen = lastChanges > 0 ? submittedLastSeen : row?.lastSeen ?? submittedLastSeen;
+      db.lineWrites++;
+      const installs = conditional
+        ? Math.max((row?.installs ?? 0) + (lastChanges > 0 ? 1 : 0), installsSeen)
+        : installsSeen;
       lines.set(k, row
-        ? { ...row, installs: row.installs + 1, title: row.title ?? title, game: row.game ?? game }
-        : { text, installs: 1, title, game });
+        ? { ...row, installs, lastSeen, title: row.title ?? title, game: row.game ?? game }
+        : { text, installs, firstSeen, lastSeen, title, game });
+      lastChanges = 1;
       return { meta: { changes: 1 } };
     }
     if (sql.startsWith("INSERT INTO quota")) {
       db.quota += args[2];
+      lastChanges = 1;
       return { meta: { changes: 1 } };
     }
     throw new Error(sql);
@@ -66,10 +89,39 @@ function fakeDB({ legacy = false } = {}) {
       first: async () => run(sql, args), run: async () => run(sql, args), all: async () => run(sql, args), sql, args,
     }),
   });
-  // D1'de toplu yazma tek işlemdir: bir deyim hata verirse hiçbiri yazılmaz.
+  // D1'de toplu yazma tek işlemdir: bir deyim hata verirse bütün batch geri alınır.
   db.batch = async (stmts) => {
-    if (legacy && stmts.some((s) => s.sql.includes("title_id"))) throw new Error("D1_ERROR: table lines has no column named title_id");
-    return stmts.map((s) => run(s.sql, s.args));
+    db.batchCalls++;
+    const before = {
+      sightings: new Set(sightings),
+      lines: new Map([...lines].map(([k, row]) => [k, { ...row }])),
+      quota: db.quota,
+      writes: db.writes,
+      lineWrites: db.lineWrites,
+      lastChanges,
+    };
+    try {
+      if (legacy && stmts.some((s) => s.sql.includes("title_id"))) throw new Error("D1_ERROR: table lines has no column named title_id");
+      const results = [];
+      for (const s of stmts) {
+        if (failLineStatementOnce && !failedLineStatement && s.sql.startsWith("INSERT INTO lines")) {
+          failedLineStatement = true;
+          throw new Error("simulated line statement failure");
+        }
+        results.push(run(s.sql, s.args));
+      }
+      return results;
+    } catch (error) {
+      sightings.clear();
+      for (const id of before.sightings) sightings.add(id);
+      lines.clear();
+      for (const [k, row] of before.lines) lines.set(k, row);
+      db.quota = before.quota;
+      db.writes = before.writes;
+      db.lineWrites = before.lineWrites;
+      lastChanges = before.lastChanges;
+      throw error;
+    }
   };
   return db;
 }
@@ -89,11 +141,15 @@ test("gönderim süzer ve satır başına en çok iki yazma yapar", async () => 
   assert.equal(DB.writes, 5);
   assert.equal(DB.lines.size, 2);
 
-  // Aynı kurulum aynı satırları yeniden gönderirse yalnız görülme denemesi ve kota yazılır.
+  // Aynı kurulum yeniden gönderilince satır upsert'i koşuldan atlanır; son görülme de değişmez.
+  const rowsBeforeDuplicate = [...DB.lines].map(([k, row]) => [k, { ...row }]);
+  const lineWritesBeforeDuplicate = DB.lineWrites;
   DB.writes = 0;
-  await post(env, install(1), ["Get down!", "Who is that over there?"]);
-  assert.equal(DB.writes, 3);
-  assert.deepEqual([...DB.lines.values()].map((l) => l.installs), [1, 1]);
+  const duplicate = await post(env, install(1), ["Get down!", "Who is that over there?"]);
+  assert.deepEqual(await duplicate.json(), { accepted: 2, recorded: 0 });
+  assert.equal(DB.writes, 5);
+  assert.equal(DB.lineWrites, lineWritesBeforeDuplicate);
+  assert.deepEqual([...DB.lines].map(([k, row]) => [k, { ...row }]), rowsBeforeDuplicate);
 
   // Başka kurulum: sayaç bir artar.
   await post(env, install(2), ["Get down!"]);
@@ -104,6 +160,74 @@ const postLines = (env, who, lines) => worker.fetch(new Request("https://pool.te
   method: "POST",
   body: JSON.stringify({ install: who, lines }),
 }), env);
+
+test("tek batch içindeki satır yazması başarısızsa görülme geri alınır ve retry kaydeder", async () => {
+  const DB = fakeDB({ failLineStatementOnce: true });
+  const env = { DB };
+  const line = [{ text: "Get in the car, Lucia." }];
+
+  assert.equal((await postLines(env, install(1), line)).status, 500);
+  assert.equal(DB.sightings.size, 0);
+  assert.equal(DB.lines.size, 0);
+  assert.equal(DB.batchCalls, 1);
+
+  const reply = await postLines(env, install(1), line);
+  assert.equal(reply.status, 200);
+  assert.deepEqual(await reply.json(), { accepted: 1, recorded: 1 });
+  assert.equal(DB.lines.size, 1);
+  assert.equal([...DB.lines.values()][0].installs, 1);
+  assert.equal(DB.batchCalls, 2);
+});
+
+test("retry yetim satırı oluşturur ve eskik installs sayısını onarır", async () => {
+  const line = [{ text: "Get in the car, Lucia.", titleId: "PPSA12345", game: "GTA V" }];
+  const orphanDB = fakeDB();
+  const orphanEnv = { DB: orphanDB };
+  await postLines(orphanEnv, install(1), line);
+  const orphanKey = [...orphanDB.lines.keys()][0];
+  orphanDB.lines.delete(orphanKey);
+
+  const orphanRetry = await postLines(orphanEnv, install(1), line);
+  assert.deepEqual(await orphanRetry.json(), { accepted: 1, recorded: 0 });
+  assert.ok(orphanDB.lines.has(orphanKey), "retry must recreate the missing line row");
+  const orphan = orphanDB.lines.get(orphanKey);
+  assert.equal(orphan.installs, 1);
+  assert.equal(orphan.text, line[0].text);
+  assert.equal(orphan.title, line[0].titleId);
+  assert.equal(orphan.game, line[0].game);
+  assert.ok(orphan.firstSeen);
+  assert.equal(orphan.lastSeen, orphan.firstSeen, "a new row starts with matching first_seen and last_seen");
+
+  const staleDB = fakeDB();
+  const staleEnv = { DB: staleDB };
+  await postLines(staleEnv, install(1), line);
+  await postLines(staleEnv, install(2), line);
+  const staleKey = [...staleDB.lines.keys()][0];
+  staleDB.lines.get(staleKey).installs = 1;
+  const beforeRepair = { ...staleDB.lines.get(staleKey) };
+  const beforeRepairWrites = staleDB.lineWrites;
+
+  const staleRetry = await postLines(staleEnv, install(2), line);
+  assert.deepEqual(await staleRetry.json(), { accepted: 1, recorded: 0 });
+  assert.equal(staleDB.lines.get(staleKey).installs, 2);
+  assert.equal(staleDB.lines.get(staleKey).text, beforeRepair.text);
+  assert.equal(staleDB.lines.get(staleKey).firstSeen, beforeRepair.firstSeen);
+  assert.equal(staleDB.lines.get(staleKey).lastSeen, beforeRepair.lastSeen, "repair-only retry must preserve last_seen");
+  assert.equal(staleDB.lines.get(staleKey).title, beforeRepair.title);
+  assert.equal(staleDB.lines.get(staleKey).game, beforeRepair.game);
+  assert.equal(staleDB.lineWrites, beforeRepairWrites + 1);
+
+  // Higher historical counts are kept rather than reduced to the current sightings count.
+  staleDB.lines.get(staleKey).installs = 5;
+  const beforeDuplicateWrites = staleDB.lineWrites;
+  await postLines(staleEnv, install(2), line);
+  assert.equal(staleDB.lines.get(staleKey).installs, 5);
+  assert.equal(staleDB.lineWrites, beforeDuplicateWrites);
+
+  const newInstall = await postLines(staleEnv, install(3), line);
+  assert.deepEqual(await newInstall.json(), { accepted: 1, recorded: 1 });
+  assert.equal(staleDB.lines.get(staleKey).installs, 6, "a fresh install increments a higher historical count");
+});
 
 test("oyun kimliği ve adı doğrulanır", () => {
   assert.equal(titleId("PPSA01234"), "PPSA01234");
@@ -139,12 +263,47 @@ test("satırın oyunu saklanır; ilk bilinen oyun kalır, yazma sayısı artmaz"
   assert.equal(first.title, "PPSA12345");
 });
 
-test("geçiş çalışmadıysa satırlar eski biçimle yazılır", async () => {
+test("geçiş çalışmadıysa eski biçimde duplicate ve eski sayımlar onarılır", async () => {
   const DB = fakeDB({ legacy: true });
-  const reply = await postLines({ DB }, install(1), [{ text: "Get in the car, Lucia.", titleId: "PPSA12345", game: "GTA VI" }]);
+  const env = { DB };
+  const line = [{ text: "Get in the car, Lucia.", titleId: "PPSA12345", game: "GTA VI" }];
+  const reply = await postLines(env, install(1), line);
   assert.equal(reply.status, 200);
   assert.deepEqual(await reply.json(), { accepted: 1, recorded: 1 });
   assert.equal(DB.lines.size, 1);
+
+  const key = [...DB.lines.keys()][0];
+  const beforeDuplicate = { ...DB.lines.get(key) };
+  const beforeDuplicateWrites = DB.lineWrites;
+  const duplicate = await postLines(env, install(1), line);
+  assert.deepEqual(await duplicate.json(), { accepted: 1, recorded: 0 });
+  assert.deepEqual(DB.lines.get(key), beforeDuplicate);
+  assert.equal(DB.lineWrites, beforeDuplicateWrites);
+
+  const secondInstall = await postLines(env, install(2), line);
+  assert.deepEqual(await secondInstall.json(), { accepted: 1, recorded: 1 });
+  assert.equal(DB.lines.get(key).installs, 2);
+  DB.lines.get(key).installs = 1;
+  const beforeRepair = { ...DB.lines.get(key) };
+  const repair = await postLines(env, install(2), line);
+  assert.deepEqual(await repair.json(), { accepted: 1, recorded: 0 });
+  assert.equal(DB.lines.get(key).installs, 2);
+  assert.equal(DB.lines.get(key).lastSeen, beforeRepair.lastSeen);
+
+  DB.lines.delete(key);
+  const orphanRepair = await postLines(env, install(2), line);
+  assert.deepEqual(await orphanRepair.json(), { accepted: 1, recorded: 0 });
+  assert.equal(DB.lines.get(key).installs, 2);
+
+  DB.lines.get(key).installs = 5;
+  const beforeHighDuplicate = DB.lineWrites;
+  await postLines(env, install(2), line);
+  assert.equal(DB.lines.get(key).installs, 5);
+  assert.equal(DB.lineWrites, beforeHighDuplicate);
+
+  const newInstall = await postLines(env, install(3), line);
+  assert.deepEqual(await newInstall.json(), { accepted: 1, recorded: 1 });
+  assert.equal(DB.lines.get(key).installs, 6, "legacy fallback increments a higher historical count");
 });
 
 test("dışa aktarma oyuna göre süzülür (yalnız yönetici)", async () => {
