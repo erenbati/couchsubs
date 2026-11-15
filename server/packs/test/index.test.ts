@@ -45,6 +45,27 @@ describe("GET /v1/packs", () => {
       expect(response.headers.get("cache-control")).toBe("no-store");
     });
 
+  it.each([
+    ["invalid checksum", { sha256: "bad" }],
+    ["unsafe pack id", { id: "../outside" }],
+    ["missing title", { title: null }],
+    ["invalid version", { version: "new" }],
+    ["invalid size", { size: -1 }],
+    ["invalid entry count", { entries: -1 }],
+  ])("rejects invalid pack metadata (%s)", async (_label, changes) => {
+    const entry = { ...index.packs[0], ...changes };
+    const response = await handle(get("/v1/packs"), { PACKS: indexBucket(JSON.stringify({ packs: [entry] })) }, new RateLimiter());
+    expect(response.status).toBe(503);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("accepts valid automatically generated pack metadata", async () => {
+    const auto = { ...index.packs[0], id: "pool-gta-v", auto: true, titleId: "PPSA01234" };
+    const response = await handle(get("/v1/packs"), { PACKS: indexBucket(JSON.stringify({ packs: [auto] })) }, new RateLimiter());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ packs: [auto] });
+  });
+
   it("keeps a valid empty list as a successful response", async () => {
     const response = await handle(get("/v1/packs"), { PACKS: indexBucket('{"packs":[]}') }, new RateLimiter());
     expect(response.status).toBe(200);

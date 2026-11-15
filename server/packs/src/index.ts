@@ -31,6 +31,20 @@ export interface PackInfo {
 }
 
 const PACK_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const SHA256_HEX = /^[a-f0-9]{64}$/i;
+
+/** Bozuk indeks girdileri istemcilerin kurulu paket kayıtlarını kaybetmesine neden olabilir. */
+function validPack(value: unknown): value is PackInfo {
+  if (!value || typeof value !== "object") return false;
+  const pack = value as Record<string, unknown>;
+  return typeof pack.id === "string" && PACK_ID.test(pack.id)
+    && typeof pack.title === "string" && pack.title.trim().length > 0
+    && Number.isSafeInteger(pack.version) && (pack.version as number) >= 0
+    && typeof pack.sha256 === "string" && SHA256_HEX.test(pack.sha256)
+    && Number.isSafeInteger(pack.size) && (pack.size as number) >= 0
+    && Number.isSafeInteger(pack.entries) && (pack.entries as number) >= 0;
+}
+
 /** Bir IP'nin bir saatte indirebileceği paket dosyası (altı paketin tamamı birkaç kez sığar). */
 export const RATE_LIMIT = 60;
 const WINDOW_MS = 60 * 60 * 1000;
@@ -65,8 +79,8 @@ async function readIndex(env: Env): Promise<PackInfo[] | null> {
   try {
     const object = await env.PACKS.get("index.json");
     if (!object) return null;
-    const parsed = JSON.parse(await object.text()) as { packs?: PackInfo[] };
-    return Array.isArray(parsed?.packs) ? parsed.packs : null;
+    const parsed = JSON.parse(await object.text()) as { packs?: unknown };
+    return Array.isArray(parsed?.packs) && parsed.packs.every(validPack) ? parsed.packs : null;
   } catch {
     return null;
   }
