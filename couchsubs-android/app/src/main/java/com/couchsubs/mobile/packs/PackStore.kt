@@ -70,6 +70,7 @@ class PackStore(
         directory.mkdirs()
         val kept = mutableListOf<Local>()
         val downloaded = mutableListOf<String>()
+        var retry = false
         for (pack in remote) {
             val existing = current.firstOrNull { it.id == pack.id }
             val file = packFile(pack.id)
@@ -83,10 +84,12 @@ class PackStore(
                 server.download(pack.id)
             } catch (error: PackDownloadException) {
                 // Bu paket şimdi inmedi: eski sürümü varsa o kalır, sonraki yenilemede yeniden denenir.
+                retry = true
                 if (existing != null && file.isFile) kept.add(existing.copy(version = -1))
                 continue
             }
             if (!sha256(data).equals(pack.sha256, ignoreCase = true)) {
+                retry = true
                 if (existing != null && file.isFile) kept.add(existing.copy(version = -1))
                 continue
             }
@@ -101,8 +104,7 @@ class PackStore(
         }
         val removed = current.map { it.id }.filter { id -> remote.none { it.id == id } }
         removed.forEach { packFile(it).delete() }
-        // Bir paket inemediyse (sürüm -1) bir sonraki açılışta yeniden denensin diye kontrol zamanı ilerletilmez.
-        val retry = kept.any { it.version == -1L }
+        // Başarısız indirme ya da checksum doğrulaması sonraki yenilemede yeniden denensin diye kontrol zamanı ilerletilmez.
         writeManifest(if (retry) checked else clock(), kept)
         Refresh(downloaded, removed)
     }
