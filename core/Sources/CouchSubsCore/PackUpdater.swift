@@ -129,6 +129,7 @@ public actor PackUpdater {
 
         var result = Refresh()
         var kept: [Installed] = []
+        var retry = false
         for pack in remote where Self.isValidId(pack.id) && Self.isHex(pack.sha256) {
             let wanted = pack.sha256.lowercased()
             let existing = state.packs.first { $0.id == pack.id }
@@ -141,6 +142,7 @@ public actor PackUpdater {
             // Bizim indirmediğimiz (ya da indirdikten sonra değiştirilmiş) dosyaya dokunulmaz.
             if let onDisk, onDisk != existing?.sha256, onDisk != wanted { continue }
             guard let data = await download(pack.id), Self.sha256(data) == wanted else {
+                retry = true
                 if let existing, onDisk != nil {
                     kept.append(Installed(id: existing.id, title: existing.title, version: -1, sha256: existing.sha256))
                 }
@@ -169,7 +171,8 @@ public actor PackUpdater {
             if Self.sha256(ofFile: file) == old.sha256 { try? FileManager.default.removeItem(at: file) }
             result.removed.append(old.id)
         }
-        save(State(checked: now.timeIntervalSince1970, packs: kept))
+        // Yeni bir paket inemediyse kontrol zamanı ilerletilmez: sonraki açılışta yeniden denenir.
+        save(State(checked: retry ? state.checked : now.timeIntervalSince1970, packs: kept))
         return result
     }
 

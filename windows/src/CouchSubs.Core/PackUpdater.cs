@@ -120,6 +120,7 @@ public sealed partial class PackUpdater : IDisposable
 
             var kept = new List<Installed>();
             var downloaded = new List<string>();
+            var retry = false;
             foreach (var pack in remote)
             {
                 if (!PackId().IsMatch(pack.Id) || !Hex64().IsMatch(pack.Sha256)) continue;
@@ -137,6 +138,7 @@ public sealed partial class PackUpdater : IDisposable
                 var data = await GetAsync($"v1/packs/{pack.Id}", cancellationToken).ConfigureAwait(false);
                 if (data is null || data.Length > MaxPackBytes || Sha256(data) != wanted)
                 {
+                    retry = true;
                     if (existing is not null && onDisk is not null) kept.Add(existing with { Version = -1 });
                     continue;
                 }
@@ -164,7 +166,8 @@ public sealed partial class PackUpdater : IDisposable
                 if (Sha256OfFile(file) == old.Sha256) TryDelete(file);
                 removed.Add(old.Id);
             }
-            Save(new State { Checked = nowSeconds, Packs = kept });
+            // Yeni bir paket inemediyse kontrol zamanı ilerletilmez: sonraki açılışta yeniden denenir.
+            Save(new State { Checked = retry ? state.Checked : nowSeconds, Packs = kept });
             return new Refresh(downloaded, removed);
         }
         finally

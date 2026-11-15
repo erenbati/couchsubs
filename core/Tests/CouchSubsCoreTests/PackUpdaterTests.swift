@@ -110,6 +110,27 @@ final class PackUpdaterTests: XCTestCase {
         XCTAssertEqual(installed, [])
     }
 
+    /// Yeni bir paket inemediyse kontrol zamanı ilerlemez: başka paket duruyor olsa da sonraki bakışta yeniden denenir.
+    func testFailedNewPackIsRetriedWithoutWaitingADay() async {
+        server.add("gta-6", version: 1, data: Data("one".utf8))
+        let updater = makeUpdater()
+        _ = await updater.refresh()
+
+        server.add("rdr-2", version: 1, data: Data("new".utf8))
+        let good = server.files["rdr-2"]
+        server.files["rdr-2"] = nil
+        clock.advance(PackUpdater.refreshInterval + 1)
+        let failed = await updater.refresh()
+        XCTAssertEqual(failed.downloaded, [])
+
+        server.files["rdr-2"] = good
+        clock.advance(60)
+        let retried = await updater.refresh(maxAge: PackUpdater.gameCheckInterval)
+        XCTAssertFalse(retried.skipped)
+        XCTAssertEqual(retried.downloaded, ["rdr-2"])
+        XCTAssertEqual(content("gta-6"), Data("one".utf8))
+    }
+
     func testRemovedPackIsDeletedAndUnreachableServerKeepsPacks() async {
         server.add("gta-6", version: 1, data: Data("one".utf8))
         let updater = makeUpdater()

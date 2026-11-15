@@ -87,6 +87,28 @@ public sealed class PackUpdaterTests : IDisposable
         Assert.Empty(updater.InstalledPacks);
     }
 
+    /// <summary>Yeni bir paket inemediyse kontrol zamanı ilerlemez: başka paket duruyor olsa da sonraki bakışta yeniden denenir.</summary>
+    [Fact]
+    public async Task FailedNewPackIsRetriedWithoutWaitingADay()
+    {
+        server.Add("gta-6", 1, "one");
+        using var updater = Make();
+        await updater.RefreshAsync();
+
+        server.Add("rdr-2", 1, "new");
+        var good = server.Files["rdr-2"];
+        server.Files.Remove("rdr-2");
+        now += PackUpdater.RefreshInterval + TimeSpan.FromSeconds(1);
+        Assert.Empty((await updater.RefreshAsync()).Downloaded);
+
+        server.Files["rdr-2"] = good;
+        now += TimeSpan.FromSeconds(60);
+        var retried = await updater.RefreshAsync(maxAge: TimeSpan.FromMinutes(10));
+        Assert.False(retried.Skipped);
+        Assert.Equal(["rdr-2"], retried.Downloaded);
+        Assert.Equal("one", Content("gta-6"));
+    }
+
     [Fact]
     public async Task RemovedPackIsDeletedAndUnreachableServerKeepsPacks()
     {
