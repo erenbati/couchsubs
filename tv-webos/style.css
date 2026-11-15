@@ -132,6 +132,15 @@ html, body {
 }
 
 
+/* Tam genişlik bant (bilgisayardaki "Arka plan alanı"): zemin ekranın iki kenarına uzanır, oyundaki İngilizce yazı
+   yan yana taşsa da görünmez. Eski sürümler bu sınıfı hiç kurmaz. */
+body.band #subtitle { left: 0 !important; right: 0 !important; }
+body.band #subtitle-text, body.band #subtitle-prev-text, body.band #subtitle-prev2-text {
+  display: block;
+  box-sizing: border-box;
+  border-radius: 0;
+}
+
 /* Panel ve bekleme ekranı: design/tokens.json'un koyu tema renkleri (docs/TASARIM.md). */
 #panel {
   position: absolute;

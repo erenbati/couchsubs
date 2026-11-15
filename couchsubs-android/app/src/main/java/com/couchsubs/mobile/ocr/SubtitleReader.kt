@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.couchsubs.mobile.ocr
 
-import android.media.Image
 import com.couchsubs.mobile.core.CropRegion
 import com.couchsubs.mobile.core.Reading
 import com.couchsubs.mobile.core.TextBox
 import com.couchsubs.mobile.core.TextLine
+import com.couchsubs.mobile.remoteplay.VideoFrame
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -23,30 +23,26 @@ class SubtitleReader : AutoCloseable {
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
     companion object {
-        /** YUV_420_888 karenin bölgesini NV21 gri görüntüye kopyalar (en ve boy çift sayıya yuvarlanır). */
-        fun copyRegion(image: Image, region: CropRegion): RegionPixels? {
-            val crop = image.cropRect
-            val frameWidth = crop.width()
-            val frameHeight = crop.height()
-            if (frameWidth <= 0 || frameHeight <= 0) return null
-            val left = (crop.left + region.left * frameWidth).toInt() and 1.inv()
-            val top = (crop.top + region.top * frameHeight).toInt() and 1.inv()
-            val width = ((region.right - region.left) * frameWidth).toInt().coerceAtMost(crop.right - left) and 1.inv()
-            val height = ((region.bottom - region.top) * frameHeight).toInt().coerceAtMost(crop.bottom - top) and 1.inv()
+        /** Karenin (Y düzlemi) bölgesini NV21 gri görüntüye kopyalar (en ve boy çift sayıya yuvarlanır). */
+        fun copyRegion(frame: VideoFrame, region: CropRegion): RegionPixels? {
+            val frameWidth = frame.width
+            val frameHeight = frame.height
+            if (frameWidth <= 0 || frameHeight <= 0 || frame.rowStride < frameWidth) return null
+            val left = (region.left * frameWidth).toInt().coerceIn(0, frameWidth) and 1.inv()
+            val top = (region.top * frameHeight).toInt().coerceIn(0, frameHeight) and 1.inv()
+            val width = ((region.right - region.left) * frameWidth).toInt().coerceAtMost(frameWidth - left) and 1.inv()
+            val height = ((region.bottom - region.top) * frameHeight).toInt().coerceAtMost(frameHeight - top) and 1.inv()
             if (width < 16 || height < 16) return null
-            val plane = image.planes[0]
-            val buffer = plane.buffer
-            val rowStride = plane.rowStride
-            val pixelStride = plane.pixelStride
+            // Yerel taraf arabelleği her karede yeniden yazar: konum ve sınır başkasının işini bozmasın diye kopya.
+            val buffer = frame.buffer.duplicate()
+            val rowStride = frame.rowStride
+            if ((top + height - 1).toLong() * rowStride + left + width > buffer.capacity()) return null
             val out = ByteArray(width * height * 3 / 2)
             var signature = 1125899906842597L
-            val row = ByteArray(if (pixelStride == 1) width else (width - 1) * pixelStride + 1)
             for (y in 0 until height) {
-                buffer.position((top + y) * rowStride + left * pixelStride)
-                buffer.get(row, 0, row.size)
                 val base = y * width
-                if (pixelStride == 1) System.arraycopy(row, 0, out, base, width)
-                else for (x in 0 until width) out[base + x] = row[x * pixelStride]
+                buffer.position((top + y) * rowStride + left)
+                buffer.get(out, base, width)
                 // Kare değişmediyse yeniden okunmasın diye kaba bir imza (her 8. piksel).
                 if (y % 8 == 0) for (x in 0 until width step 8) signature = 31 * signature + (out[base + x].toInt() and 0xf0)
             }

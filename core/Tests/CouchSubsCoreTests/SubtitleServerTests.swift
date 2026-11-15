@@ -276,6 +276,19 @@ final class SubtitleServerTests: XCTestCase {
                                              textColor: .white, displayMode: .inApp))
     }
 
+    func testBackgroundShapeIsSentAndOldStyleDefaultsToFit() throws {
+        var style = SubtitleStyle(background: 100)
+        XCTAssertEqual(style.backgroundShape, .fit)
+        XCTAssertEqual(style.json["backgroundShape"] as? String, "fit")
+        style.backgroundShape = .band
+        let decoded = try JSONDecoder().decode(SubtitleStyle.self, from: JSONEncoder().encode(style))
+        XCTAssertEqual(decoded.backgroundShape, .band)
+        XCTAssertEqual(style.json["background"] as? Int, 100)
+        XCTAssertEqual(style.json["backgroundShape"] as? String, "band")
+        let unknown = try JSONDecoder().decode(SubtitleStyle.self, from: Data(#"{"backgroundShape":"yeni"}"#.utf8))
+        XCTAssertEqual(unknown.backgroundShape, .fit)
+    }
+
     func testDisplayModeIsSavedAndRestored() throws {
         var style = SubtitleStyle()
         style.displayMode = .overlay

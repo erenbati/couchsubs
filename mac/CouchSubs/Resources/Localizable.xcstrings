@@ -2385,6 +2385,70 @@
         }
       }
     },
+    "Background area": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Background area"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arka plan alanı"
+          }
+        }
+      }
+    },
+    "Fit the text": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fit the text"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yazı kadar"
+          }
+        }
+      }
+    },
+    "Full-width band": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Full-width band"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tam genişlik bant"
+          }
+        }
+      }
+    },
+    "Drag Background all the way to Solid to fully hide the English subtitle in the game. A full-width band also covers the sides.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag Background all the way to Solid to fully hide the English subtitle in the game. A full-width band also covers the sides."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arka plan kaydırıcısını sonuna çekince arka plan tamamen opak olur, oyundaki İngilizce yazı kapanır. Tam genişlik bant yanları da örter."
+          }
+        }
+      }
+    },
     "Over the English subtitle": {
       "localizations": {
         "en": {

@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import com.couchsubs.mobile.BuildConfig
 import com.couchsubs.mobile.R
 import com.couchsubs.mobile.Services
+import com.couchsubs.mobile.core.SubtitleBackgroundShape
 import com.couchsubs.mobile.core.SubtitleTextColor
 import com.couchsubs.mobile.remoteplay.LoginPasscode
 import com.couchsubs.mobile.service.TranslationService
@@ -125,6 +126,8 @@ fun SettingsScreen(onBack: () -> Unit, onPacks: () -> Unit, onTarget: () -> Unit
     val scope = rememberCoroutineScope()
     var scale by remember { mutableStateOf(settings.subtitleScale.toFloat()) }
     var color by remember { mutableStateOf(settings.textColor) }
+    var background by remember { mutableStateOf(settings.tvBackground.toFloat()) }
+    var shape by remember { mutableStateOf(settings.tvBackgroundShape) }
     var screenOn by remember { mutableStateOf(settings.keepScreenOn) }
     var passcode by remember { mutableStateOf(settings.loginPasscode ?: "") }
     // Tuvaldeki dört seçenek: Ücretsiz, DeepL, Gemini, Diğer (OpenAI / Claude).
@@ -218,6 +221,22 @@ fun SettingsScreen(onBack: () -> Unit, onPacks: () -> Unit, onTarget: () -> Unit
                         .clickable { color = option; settings.textColor = option })
                 }
             }
+            // TV'deki kutu: %100 tamamen opak olur ve oyundaki İngilizce yazıyı kapatır; bant ekranın iki kenarına uzanır.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TileLabel(stringResource(R.string.settings_background))
+                Spacer(Modifier.weight(1f))
+                Text("%${background.toInt()}", style = Tokens.Type.headline, color = Tokens.Color.text)
+            }
+            Slider(background, { background = it; settings.tvBackground = it.toInt() }, valueRange = 0f..100f, steps = 19,
+                colors = SliderDefaults.colors(thumbColor = Tokens.Color.text, activeTrackColor = Tokens.Color.accent,
+                    inactiveTrackColor = Tokens.Color.borderStrong, activeTickColor = Color.Transparent, inactiveTickColor = Color.Transparent))
+            TileLabel(stringResource(R.string.settings_background_area))
+            Segmented(listOf(stringResource(R.string.settings_background_fit), stringResource(R.string.settings_background_band)),
+                if (shape == SubtitleBackgroundShape.BAND) 1 else 0) {
+                shape = if (it == 1) SubtitleBackgroundShape.BAND else SubtitleBackgroundShape.FIT
+                settings.tvBackgroundShape = shape
+            }
+            Text(stringResource(R.string.settings_background_note), style = Tokens.Type.caption, color = Tokens.Color.secondary)
             RowItem(stringResource(R.string.settings_screen_on)) { Switch(screenOn, { screenOn = it; settings.keepScreenOn = it }) }
         }
         // Altyazı alanı ve ek alanlar (iPhone ile aynı sırada: görünümden sonra).

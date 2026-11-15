@@ -209,7 +209,7 @@ struct SubtitleOverlayView: View {
                 }
                 ForEach(lines) { line($0) }
             }
-            .padding(.horizontal, 24 * scale)
+            .padding(.horizontal, model.settings.style.backgroundShape == .band ? 0 : 24 * scale)
             .padding(.bottom, 8 * scale)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -278,7 +278,9 @@ struct SubtitleOverlayView: View {
         let shadowRadius: CGFloat = 2 * scale
         let vertical: CGFloat = (current ? 10 : 6) * scale
         let horizontal: CGFloat = (current ? 26 : 20) * scale
-        let corner: CGFloat = 10 * scale
+        // Bant: kutu pencerenin tüm genişliğini kaplar, oyundaki İngilizce yazıyı yan yana da gizler.
+        let band = style.backgroundShape == .band
+        let corner: CGFloat = band ? 0 : 10 * scale
         let shown: Double = line.fading ? 0 : opacity
         let text = Text(verbatim: line.text)
             .font(.system(size: size, weight: weight))
@@ -290,6 +292,7 @@ struct SubtitleOverlayView: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(.vertical, vertical)
             .padding(.horizontal, horizontal)
+            .frame(maxWidth: band ? .infinity : nil)
             .background(Color.black.opacity(alpha), in: RoundedRectangle(cornerRadius: corner))
             .opacity(shown)
             .animation(.linear(duration: SubtitleStack.previousFade), value: line.fading)

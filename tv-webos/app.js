@@ -461,12 +461,16 @@
       right = Math.max(right, text.right);
       bottom = Math.max(bottom, text.bottom);
     }
+    // Tam genişlik bandı: oyundaki İngilizce yazı yan yana taşsa da görünmesin diye örtü ekranın iki kenarına uzanır.
+    if (bandShape) { left = 0; right = width; }
     cover.style.left = Math.round(left) + 'px';
     // Çeviri gibi alttan konumlanır: sayfanın yüksekliği sonradan değişirse (Android TV ölçeklemesi) ikisi birlikte kayar.
     cover.style.top = 'auto';
     cover.style.bottom = Math.round(height - bottom) + 'px';
     cover.style.width = Math.round(right - left) + 'px';
     cover.style.height = Math.round(bottom - top) + 'px';
+    // %100 zemin tamamen opak: örtünün varsayılan %97'si altındaki yazıyı silik de olsa gösterirdi.
+    cover.style.background = solidBackground ? '#000' : '';
     cover.className = '';
   }
 
@@ -489,6 +493,10 @@
   // Çevirinin zemini (bilgisayardaki "Zemin koyuluğu"); boşsa style.css'teki varsayılan. Örtü varken saydam olur.
   var textBackground = '';
 
+  // Zemin %100 mü (tamamen opak) ve tam genişlik bant mı; eski bilgisayar uygulamaları alanı göndermez, yazı kadar kalır.
+  var solidBackground = false;
+  var bandShape = false;
+
   // Bilgisayardaki "Yazı rengi" seçimi; bilinmeyen değer gelirse renk değişmez.
   var TEXT_COLORS = { white: '#FFFFFF', yellow: '#FFE135' };
 
@@ -499,8 +507,11 @@
       $('subtitle-prev2-text').style.fontSize = Math.round(style.fontSize * 0.8) + 'px';
     }
     if (PLACEMENTS[style.placement]) placement = style.placement;
+    bandShape = style.backgroundShape === 'band';
+    document.body.className = bandShape ? 'band' : '';
     if (typeof style.background === 'number') {
       var alpha = Math.max(0, Math.min(100, style.background)) / 100;
+      solidBackground = style.background >= 100;
       textBackground = 'rgba(0, 0, 0, ' + alpha + ')';
       $('subtitle-text').style.background = textBackground;
       $('subtitle-prev-text').style.background = 'rgba(0, 0, 0, ' + (alpha * 0.83).toFixed(2) + ')';

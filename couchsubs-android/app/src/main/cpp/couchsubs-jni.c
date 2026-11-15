@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 /* Kotlin'deki com.couchsubs.mobile.remoteplay.NativeBridge'in yerel tarafı: libchiaki ile PS5 arama, uyandırma,
  * kayıt ve görüntü akışı. Davranış Windows'taki windows/native/couchsubs_native.c ile aynıdır (1080p30 H.264,
- * ses kapalı, kol girdisi yok); çözme FFmpeg yerine Android MediaCodec'le, ImageReader'ın yüzeyine yapılır.
+ * ses kapalı, kol girdisi yok); çözme FFmpeg yerine Android MediaCodec'le yüzeysiz yapılır, karenin parlaklık düzlemi
+ * kare dinleyicisine verilir (video-decoder.c).
  * JNI kalıpları chiaki-ng'nin android/app/src/main/cpp/chiaki-jni.c dosyasından uyarlandı. */
 
 #include <jni.h>
@@ -494,7 +495,7 @@ static void cs_session_event(ChiakiEvent *event, void *user)
 
 static void cs_session_free(JNIEnv *env, cs_session *session)
 {
-	couchsubs_video_decoder_fini(&session->decoder);
+	couchsubs_video_decoder_fini(&session->decoder, env);
 	if(session->listener)
 		(*env)->DeleteGlobalRef(env, session->listener);
 	cs_sink_fini(&session->sink);
@@ -502,9 +503,10 @@ static void cs_session_free(JNIEnv *env, cs_session *session)
 }
 
 /* Oturumu başlatır; 0 dönerse lastError'a nedeni yazar. listener.onEvent(type, reason, text) libchiaki'nin iş
- * parçacığından çağrılır. Görüntü surface'e (ImageReader) çözülür. */
+ * parçacığından çağrılır. Kareler frameListener.onFrame(buffer, width, height, rowStride, colorFormat) ile çözücünün
+ * çıkış iş parçacığından verilir (arabellek yalnız çağrı süresince geçerlidir). */
 JNIEXPORT jlong JNICALL JNI_FCN(sessionStart)(JNIEnv *env, jclass cls, jstring host_string, jbyteArray regist_key_array,
-		jbyteArray morning_array, jbyteArray account_array, jint width, jint height, jobject surface, jboolean swap_decoder,
+		jbyteArray morning_array, jbyteArray account_array, jint width, jint height, jobject frame_listener, jboolean swap_decoder,
 		jobject listener, jobject outcome)
 {
 	(void)cls;
@@ -517,7 +519,7 @@ JNIEXPORT jlong JNICALL JNI_FCN(sessionStart)(JNIEnv *env, jclass cls, jstring h
 	session->on_event = (*env)->GetMethodID(env, (*env)->GetObjectClass(env, listener), "onEvent", "(IILjava/lang/String;)V");
 
 	if(couchsubs_video_decoder_init(&session->decoder, &session->log, width, height) != CHIAKI_ERR_SUCCESS
-			|| !couchsubs_video_decoder_start(&session->decoder, env, surface, swap_decoder == JNI_TRUE))
+			|| !couchsubs_video_decoder_start(&session->decoder, env, frame_listener, swap_decoder == JNI_TRUE))
 	{
 		set_object(env, outcome, "errors", "Ljava/lang/String;", (*env)->NewStringUTF(env, "H.264 decoder could not be opened"));
 		cs_session_free(env, session);
@@ -613,10 +615,10 @@ JNIEXPORT jstring JNICALL JNI_FCN(sessionErrors)(JNIEnv *env, jclass cls, jlong 
 	return session ? cs_sink_errors(env, &session->sink) : NULL;
 }
 
-/* Çözücünün yüzeye verdiği kare sayısı (tanı: görüntü geliyor mu). */
+/* Çözücünün dinleyiciye verdiği kare sayısı (tanı: görüntü geliyor mu). */
 JNIEXPORT jlong JNICALL JNI_FCN(sessionFrames)(JNIEnv *env, jclass cls, jlong ptr)
 {
 	(void)env; (void)cls;
 	cs_session *session = (cs_session *)(intptr_t)ptr;
-	return session ? (jlong)session->decoder.frames_out : 0;
+	return session ? (jlong)atomic_load(&session->decoder.frames_out) : 0;
 }

@@ -288,13 +288,13 @@ class TranslationService : Service() {
             }
         }
 
-        val onFrame: (android.media.Image) -> Unit = { image ->
+        val onFrame: (com.couchsubs.mobile.remoteplay.VideoFrame) -> Unit = { frame ->
             val now = System.currentTimeMillis()
             if (!reading.get() && now - lastRead >= 1000 / MAX_READS_PER_SECOND) {
                 val area = region
                 // Karenin geldiği an: gecikme buradan TV'ye gidene kadar ölçülür (hattın saatiyle).
                 val capturedAt = com.couchsubs.mobile.core.monotonicClock()
-                SubtitleReader.copyRegion(image, area)?.let { pixels ->
+                SubtitleReader.copyRegion(frame, area)?.let { pixels ->
                     lastRead = now
                     reading.set(true)
                     ocr.execute { read(pixels, area, capturedAt) }
@@ -302,11 +302,11 @@ class TranslationService : Service() {
             }
             // Ek alanlar saniyede bir, kendi iş parçacığında okunur; altyazı okumasını beklemez, onu bekletmez.
             regionWatcher?.offer(extraAreas, { r ->
-                SubtitleReader.copyRegion(image, r)?.let {
+                SubtitleReader.copyRegion(frame, r)?.let {
                     com.couchsubs.mobile.core.RegionWatcher.Crop(it, com.couchsubs.mobile.core.RegionSignature.of(it.nv21, it.width, it.height))
                 }
             }) { task -> runCatching { regionWork.execute(task) } }
-            FramePreview.offer(image, now)
+            FramePreview.offer(frame, now)
         }
         val onState: (SessionState) -> Unit = { state ->
             streaming = state == SessionState.Streaming

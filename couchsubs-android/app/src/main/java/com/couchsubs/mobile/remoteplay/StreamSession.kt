@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.couchsubs.mobile.remoteplay
 
-import android.graphics.ImageFormat
-import android.media.Image
-import android.media.ImageReader
-import android.os.Handler
-import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.Log
 import com.couchsubs.mobile.account.Backend
@@ -197,15 +192,16 @@ class PictureWatchdog {
 }
 
 /**
- * PS5'e (ikinci hesapla) Remote Play bağlantısı kurar; görüntü MediaCodec'le bir ImageReader'a çözülür ve kare kare
- * [onFrame]'e verilir (kare yalnız çağrı süresince geçerlidir). Ses kapalıdır, kol girdisi gönderilmez. Bağlantı koparsa
+ * PS5'e (ikinci hesapla) Remote Play bağlantısı kurar; görüntü MediaCodec'le yüzeysiz çözülür, her karenin parlaklık
+ * düzlemi yerel tarafta kopyalanıp [onFrame]'e verilir (kare yalnız çağrı süresince geçerlidir; çözücünün iş
+ * parçacığında çağrılır, kısa sürmeli). Ses kapalıdır, kol girdisi gönderilmez. Bağlantı koparsa
  * kendiliğinden yeniden bağlanır; PS5 uyuyorsa uyandırılır, adresi değiştiyse ağda yeniden bulunur. Windows'taki
  * StreamSession.cs ile aynı akış.
  */
 class StreamSession(
     console: RegisteredConsole,
     private val accountId: ByteArray,
-    private val onFrame: (Image) -> Unit,
+    private val onFrame: (VideoFrame) -> Unit,
     private val onState: (SessionState) -> Unit,
     private val onConsoleMoved: (RegisteredConsole) -> Unit = {},
     private val width: Int = 1920,
@@ -220,7 +216,6 @@ class StreamSession(
 
     @Volatile private var console = console
     private val queue = Executors.newSingleThreadScheduledExecutor { Thread(it, "CouchSubs session").apply { isDaemon = true } }
-    private val imageThread = HandlerThread("CouchSubs frames").apply { start() }
     private val policy = ReconnectPolicy()
     /** Bağlıyken görüntü gelmezse oturum yeniden kurulur. */
     private val watchdog = PictureWatchdog()
@@ -233,7 +228,6 @@ class StreamSession(
     /** Yalnız kuyrukta okunur/yazılır. */
     private var native = 0L
     private var nativeGeneration = 0
-    private var reader: ImageReader? = null
 
     override fun start() {
         val current = bump(true)
@@ -252,10 +246,7 @@ class StreamSession(
 
     override fun dispose() {
         stop()
-        queue.execute {
-            imageThread.quitSafely()
-            queue.shutdown()
-        }
+        queue.execute { queue.shutdown() }
     }
 
     /** Ağ değiştiğinde uygulama çağırır. */
@@ -270,7 +261,7 @@ class StreamSession(
         }
     }
 
-    /** ImageReader'a gelen kare sayısı (tanı: görüntü geliyor mu). */
+    /** Çözücüden gelen kare sayısı (tanı: görüntü geliyor mu). */
     @Volatile override var framesReceived = 0L
         private set
 
@@ -327,74 +318,50 @@ class StreamSession(
 
     private fun openSession(current: Int) {
         if (!isCurrent(current) || native != 0L) return
-        val imageReader = ImageReader.newInstance(width, height, ImageFormat.YUV_420_888, 3)
         var described = false
-        imageReader.setOnImageAvailableListener({ source ->
-            // IllegalStateException (en çok kare) ya da UnsupportedOperationException (çözücünün kare biçimi okuyucuyla
-            // uyuşmuyor) bu iş parçacığında yakalanmazsa uygulama kapanır.
-            val image = try {
-                source.acquireLatestImage()
-            } catch (error: RuntimeException) {
-                Log.w(TAG, "acquireLatestImage: ${error.message}")
-                null
-            } ?: return@setOnImageAvailableListener
+        // Çözücünün çıkış iş parçacığından gelir. Kare Java'nın arabelleğindedir (Image.getPlanes yok): okunamayan
+        // kare yerel tarafta atlanır, burada JNI'yi durduracak bir çağrı kalmadı.
+        val frames = NativeFrameListener { buffer, frameWidth, frameHeight, rowStride, colorFormat ->
             framesReceived++
             watchdog.picture(SystemClock.elapsedRealtime())
             if (!described) {
                 described = true
-                describeFirstFrame(image)
+                val text = "PS5: ilk kare ${frameWidth}x$frameHeight biçim 0x${Integer.toHexString(colorFormat)}"
+                Log.i(TAG, text)
+                Backend.breadcrumb(text)
             }
             try {
-                onFrame(image)
+                onFrame(VideoFrame(buffer, frameWidth, frameHeight, rowStride, colorFormat))
             } catch (error: RuntimeException) {
                 Log.e(TAG, "frame handler", error)
-            } finally {
-                image.close()
             }
-        }, Handler(imageThread.looper))
+        }
         val outcome = NativeOutcome()
         val listener = NativeSessionListener { type, reason, text -> handle(type, reason, text, current) }
         val c = console
         val swapDecoder = watchdog.swapDecoder
         if (swapDecoder) Backend.breadcrumb("PS5: önceki oturumda görüntü gelmedi; öbür çözücü türüyle deneniyor")
-        val ptr = NativeBridge.sessionStart(c.host, c.registKey, c.morning, accountId, width, height, imageReader.surface,
+        val ptr = NativeBridge.sessionStart(c.host, c.registKey, c.morning, accountId, width, height, frames,
             swapDecoder, listener, outcome)
         if (ptr == 0L) {
-            imageReader.close()
             Log.w(TAG, "PS5 oturumu başlatılamadı (${c.host}): ${outcome.errors}")
             scheduleReconnect(current, SessionState.Disconnected(DisconnectKind.OTHER, outcome.errorLines.lastOrNull() ?: "session could not be started"))
             return
         }
         native = ptr
         nativeGeneration = current
-        reader = imageReader
-    }
-
-    /** Oturumun ilk karesinin gerçek arabellek biçimi çökme raporuna yazılır (üreticiye özel biçimler okunamayabilir). */
-    private fun describeFirstFrame(image: Image) {
-        val text = try {
-            val buffer = if (android.os.Build.VERSION.SDK_INT >= 28) image.hardwareBuffer else null
-            val detail = buffer?.let { "biçim 0x${Integer.toHexString(it.format)} kullanım 0x${java.lang.Long.toHexString(it.usage)}" }
-            buffer?.close()
-            "PS5: ilk kare ${image.width}x${image.height} ${detail ?: "-"}"
-        } catch (error: RuntimeException) {
-            "PS5: ilk kare okunamadı: ${error.message}"
-        }
-        Log.i(TAG, text)
-        com.couchsubs.mobile.account.Backend.breadcrumb(text)
     }
 
     /** Oturumu kapatır (join içerir; yalnız kuyrukta, asla yerel geri çağrıdan değil). */
     private fun closeNative() {
-        watchdog.ended()
         val ptr = native
-        if (ptr == 0L) return
-        native = 0L
-        NativeBridge.sessionStop(ptr)
-        // Okuyucu kare iş parçacığında kapatılır: kuyruktan kapatılırsa o an okunan karenin belleği elden gider ve
-        // düzlem okunurken süreç SIGSEGV ile çöker. dispose()'taki quitSafely bu iletiyi önce işler.
-        reader?.let { r -> if (!Handler(imageThread.looper).post { r.close() }) r.close() }
-        reader = null
+        if (ptr != 0L) {
+            native = 0L
+            // Çözücünün çıkış iş parçacığını da bekler: dönünce [onFrame] bir daha çağrılmaz.
+            NativeBridge.sessionStop(ptr)
+        }
+        // Kapanırken gelen son kare bekçiyi yeniden kurmasın diye durdurmadan sonra.
+        watchdog.ended()
     }
 
     /** libchiaki'nin iş parçacığından çağrılır. */

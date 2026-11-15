@@ -15,6 +15,14 @@ public enum SubtitlePlacement: String, Codable, CaseIterable, Sendable {
     case fixed
 }
 
+/// Altyazı kutusunun kapladığı alan.
+public enum SubtitleBackgroundShape: String, Codable, CaseIterable, Sendable {
+    /// Kutu yazı kadar (ya da örtüyse okunan altyazı bölgesi kadar) yer kaplar.
+    case fit
+    /// Kutu tam genişlikte bir bant: oyundaki İngilizce altyazı yan yana taşsa da görünmez.
+    case band
+}
+
 /// TV'de altyazı yazısının rengi.
 public enum SubtitleTextColor: String, Codable, CaseIterable, Sendable {
     case white
@@ -38,23 +46,26 @@ public struct SubtitleStyle: Codable, Equatable, Sendable {
     public var placement: SubtitlePlacement
     /// Yazının arkasındaki siyah zeminin koyuluğu, yüzde (0: zemin yok).
     public var background: Int
+    /// Zeminin kapladığı alan; eski TV uygulamaları alanı tanımaz, `fit` gibi davranır.
+    public var backgroundShape: SubtitleBackgroundShape
     public var bold: Bool
     public var textColor: SubtitleTextColor
     /// Yalnız Android TV uygulaması kullanır; diğer TV'ler ve OBS katmanı alanı tanımaz.
     public var displayMode: TVDisplayMode
 
-    public init(fontSize: Int = 46, bottomPercent: Int = 7, placement: SubtitlePlacement = .cover, background: Int = 72, bold: Bool = false,
+    public init(fontSize: Int = 46, bottomPercent: Int = 7, placement: SubtitlePlacement = .cover, background: Int = 72, backgroundShape: SubtitleBackgroundShape = .fit, bold: Bool = false,
                 textColor: SubtitleTextColor = .white, displayMode: TVDisplayMode = .inApp) {
         self.fontSize = fontSize
         self.bottomPercent = bottomPercent
         self.placement = placement
         self.background = background
+        self.backgroundShape = backgroundShape
         self.bold = bold
         self.textColor = textColor
         self.displayMode = displayMode
     }
 
-    private enum CodingKeys: String, CodingKey { case fontSize, bottomPercent, placement, background, bold, textColor, displayMode }
+    private enum CodingKeys: String, CodingKey { case fontSize, bottomPercent, placement, background, backgroundShape, bold, textColor, displayMode }
 
     /// Eski sürümün kaydettiği ayarlarda yeni alanlar yoktur; eksikler varsayılanla dolar.
     public init(from decoder: Decoder) throws {
@@ -64,6 +75,7 @@ public struct SubtitleStyle: Codable, Equatable, Sendable {
         bottomPercent = try values.decodeIfPresent(Int.self, forKey: .bottomPercent) ?? defaults.bottomPercent
         placement = (try? values.decodeIfPresent(SubtitlePlacement.self, forKey: .placement)) ?? defaults.placement
         background = try values.decodeIfPresent(Int.self, forKey: .background) ?? defaults.background
+        backgroundShape = (try? values.decodeIfPresent(SubtitleBackgroundShape.self, forKey: .backgroundShape)) ?? defaults.backgroundShape
         bold = try values.decodeIfPresent(Bool.self, forKey: .bold) ?? defaults.bold
         textColor = (try? values.decodeIfPresent(SubtitleTextColor.self, forKey: .textColor)) ?? defaults.textColor
         displayMode = (try? values.decodeIfPresent(TVDisplayMode.self, forKey: .displayMode)) ?? defaults.displayMode
@@ -72,7 +84,7 @@ public struct SubtitleStyle: Codable, Equatable, Sendable {
     /// TV'ye giden `style` olayının gövdesi.
     var json: [String: Any] {
         ["fontSize": fontSize, "bottomPercent": bottomPercent, "placement": placement.rawValue,
-         "background": max(0, min(100, background)), "bold": bold, "textColor": textColor.rawValue,
+         "background": max(0, min(100, background)), "backgroundShape": backgroundShape.rawValue, "bold": bold, "textColor": textColor.rawValue,
          "displayMode": displayMode.rawValue]
     }
 }

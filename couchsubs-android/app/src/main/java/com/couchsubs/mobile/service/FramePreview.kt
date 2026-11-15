@@ -2,7 +2,7 @@
 package com.couchsubs.mobile.service
 
 import android.graphics.Bitmap
-import android.media.Image
+import com.couchsubs.mobile.remoteplay.VideoFrame
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -26,27 +26,25 @@ object FramePreview {
     }
 
     /** Çeviri hizmeti her karede çağırır; önizleme izlenmiyorsa hemen döner. */
-    fun offer(image: Image, now: Long) {
+    fun offer(frame: VideoFrame, now: Long) {
         if (watchers == 0 || now - last < INTERVAL_MS) return
         last = now
         try {
-            val crop = image.cropRect
-            if (crop.width() <= 0 || crop.height() <= 0) return
-            val height = (WIDTH.toLong() * crop.height() / crop.width()).toInt().coerceAtLeast(1)
-            val plane = image.planes[0]
-            val buffer = plane.buffer
+            if (frame.width <= 0 || frame.height <= 0) return
+            val height = (WIDTH.toLong() * frame.height / frame.width).toInt().coerceAtLeast(1)
+            val buffer = frame.buffer
             val pixels = IntArray(WIDTH * height)
             for (y in 0 until height) {
-                val sy = crop.top + y * crop.height() / height
+                val sy = y * frame.height / height
                 for (x in 0 until WIDTH) {
-                    val sx = crop.left + x * crop.width() / WIDTH
-                    val v = buffer.get(sy * plane.rowStride + sx * plane.pixelStride).toInt() and 0xff
+                    val sx = x * frame.width / WIDTH
+                    val v = buffer.get(sy * frame.rowStride + sx).toInt() and 0xff
                     pixels[y * WIDTH + x] = (0xff shl 24) or (v shl 16) or (v shl 8) or v
                 }
             }
             state.value = Bitmap.createBitmap(pixels, WIDTH, height, Bitmap.Config.ARGB_8888)
         } catch (error: RuntimeException) {
-            // Kare bu arada bırakıldı; sonraki karede yeniden denenir.
+            // Kare okunamadı (sınır dışı); sonraki karede yeniden denenir.
         }
     }
 }

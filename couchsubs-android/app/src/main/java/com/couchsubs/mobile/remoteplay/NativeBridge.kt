@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.couchsubs.mobile.remoteplay
 
-import android.view.Surface
+import java.nio.ByteBuffer
 
 /** Yerel kayıt ya da oturum başlatma sonucu; alanları yerel taraf (couchsubs-jni.c) doldurur. */
 class NativeOutcome {
@@ -21,6 +21,14 @@ class NativeOutcome {
 /** Oturum olayları libchiaki'nin iş parçacığından gelir. */
 fun interface NativeSessionListener {
     fun onEvent(type: Int, reason: Int, text: String?)
+}
+
+/**
+ * Çözülen kareler çözücünün çıkış iş parçacığından gelir: [buffer] Y düzlemidir ve yalnız çağrı süresince geçerlidir.
+ * Çağrı kısa sürmeli (kopyala ve dön); bu sürede çözücü yeni kare vermez.
+ */
+fun interface NativeFrameListener {
+    fun onFrame(buffer: ByteBuffer, width: Int, height: Int, rowStride: Int, colorFormat: Int)
 }
 
 /** libchiaki'ye JNI köprüsü (app/src/main/cpp/couchsubs-jni.c). */
@@ -51,7 +59,7 @@ object NativeBridge {
     @JvmStatic external fun register(host: String, accountId: ByteArray, pin: Int, outcome: NativeOutcome)
     @JvmStatic external fun sessionStart(
         host: String, registKey: ByteArray, morning: ByteArray, accountId: ByteArray, width: Int, height: Int,
-        surface: Surface,
+        frameListener: NativeFrameListener,
         /** Üreticiye göre seçilen çözücü türünün (yazılım/donanım) tersiyle başla (önceki oturumda görüntü gelmedi). */
         swapDecoder: Boolean,
         listener: NativeSessionListener, outcome: NativeOutcome,

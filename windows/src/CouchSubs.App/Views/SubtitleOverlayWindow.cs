@@ -255,6 +255,8 @@ public sealed partial class SubtitleOverlayWindow : Window
         // Satır yüksekliği sıfır olursa WPF hata verir; boy en az 1.
         var size = Math.Max(1, OverlayPlacement.FontSize(style.FontSize) * scale * (current ? 1 : 0.8));
         var alpha = Math.Clamp(style.Background, 0, 100) / 100.0 * (current ? 1 : 0.83);
+        // Bant: kutu pencerenin tüm genişliğini kaplar, oyundaki İngilizce yazıyı yan yana da gizler.
+        var band = style.BackgroundShape == SubtitleBackgroundShape.Band;
         var text = new TextBlock
         {
             Text = line.Text,
@@ -269,10 +271,10 @@ public sealed partial class SubtitleOverlayWindow : Window
         return new Border
         {
             Background = new SolidColorBrush(Color.FromArgb((byte)Math.Round(alpha * 255), 0, 0, 0)),
-            CornerRadius = new CornerRadius(10 * scale),
+            CornerRadius = new CornerRadius(band ? 0 : 10 * scale),
             Padding = current ? new Thickness(26 * scale, 10 * scale, 26 * scale, 10 * scale) : new Thickness(20 * scale, 6 * scale, 20 * scale, 6 * scale),
-            Margin = new Thickness(0, 14 * scale, 0, 0),
-            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(band ? -24 * scale : 0, 14 * scale, band ? -24 * scale : 0, 0),
+            HorizontalAlignment = band ? HorizontalAlignment.Stretch : HorizontalAlignment.Center,
             Opacity = line.Role switch { SubtitleStack.Role.Current => 1, SubtitleStack.Role.Previous => 0.6, _ => 0.45 },
             Child = text,
         };

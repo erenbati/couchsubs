@@ -22,12 +22,16 @@ enum class TvDisplayMode { IN_APP, OVERLAY }
 
 enum class SubtitleTextColor { WHITE, YELLOW }
 
+/** Altyazı kutusunun kapladığı alan: yazı kadar ya da tam genişlikte bant (eski TV uygulamaları alanı tanımaz, FIT gibi davranır). */
+enum class SubtitleBackgroundShape { FIT, BAND }
+
 /** TV'de altyazının görünümü (Windows: SubtitleStyle). fontSize: 36 küçük, 46 orta, 58 büyük, 72 çok büyük. */
 data class SubtitleStyle(
     val fontSize: Int = 46,
     val bottomPercent: Int = 7,
     val placement: SubtitlePlacement = SubtitlePlacement.COVER,
     val background: Int = 72,
+    val backgroundShape: SubtitleBackgroundShape = SubtitleBackgroundShape.FIT,
     val bold: Boolean = false,
     val textColor: SubtitleTextColor = SubtitleTextColor.WHITE,
     val displayMode: TvDisplayMode = TvDisplayMode.IN_APP,
@@ -102,6 +106,7 @@ class SubtitleServer(
         fun styleFrame(style: SubtitleStyle) = frame(
             "style", mapOf(
                 "background" to style.background.coerceIn(0, 100),
+                "backgroundShape" to style.backgroundShape.name.lowercase(Locale.ROOT),
                 "bold" to style.bold,
                 "bottomPercent" to style.bottomPercent,
                 "displayMode" to if (style.displayMode == TvDisplayMode.OVERLAY) "overlay" else "inApp",

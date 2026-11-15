@@ -187,6 +187,20 @@ struct SettingsScreen: View {
                         .accessibilityLabel(Text(color == .yellow ? "Yellow" : "White"))
                     }
                 }
+                // Kutu TV'de görünür; %100 tamamen opak olur ve oyundaki İngilizce yazıyı kapatır.
+                HStack {
+                    Text("Background").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                    Spacer()
+                    Text(verbatim: "%\(model.settings.style.background)").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                }
+                Slider(value: Binding(get: { Double(model.settings.style.background) },
+                                      set: { model.settings.style.background = Int($0.rounded()) }), in: 0...100, step: 5)
+                    .tint(Mobile.Palette.accent)
+                Text("Background area").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                SegmentedTabs(options: [SubtitleBackgroundShape.fit: "Fit the text", .band: "Full-width band"],
+                              selection: $model.settings.style.backgroundShape)
+                Text("Drag Background all the way to Solid to fully hide the English subtitle in the game. A full-width band also covers the sides.")
+                    .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
             }
             AreaTile()
             ExtraAreasTile()

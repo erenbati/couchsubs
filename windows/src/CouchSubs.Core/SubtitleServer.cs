@@ -23,10 +23,21 @@ public enum SubtitlePlacement
     Fixed,
 }
 
+/// <summary>Altyazı kutusunun kapladığı alan.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<SubtitleBackgroundShape>))]
+public enum SubtitleBackgroundShape
+{
+    /// <summary>Kutu yazı kadar (örtüyse okunan altyazı bölgesi kadar) yer kaplar.</summary>
+    Fit,
+    /// <summary>Kutu tam genişlikte bir bant: oyundaki İngilizce altyazı yan yana taşsa da görünmez.</summary>
+    Band,
+}
+
 /// <summary>TV'de altyazının görünümü. Eski sürümün kaydettiği ayarlarda olmayan alanlar varsayılanla dolar.</summary>
 /// <param name="FontSize">36 (küçük), 46 (orta), 58 (büyük), 72 (çok büyük)</param>
 /// <param name="BottomPercent">Sabit yerleşimde altyazının ekranın altından uzaklığı, yüzde.</param>
 /// <param name="Background">Yazının arkasındaki siyah zeminin koyuluğu, yüzde (0: zemin yok).</param>
+/// <param name="BackgroundShape">Zeminin kapladığı alan; eski TV uygulamaları alanı tanımaz, yazı kadar gibi davranır.</param>
 /// <param name="StackPrevious">
 /// Hızlı konuşmada önceki satır(lar) yeni satırın üstünde kısa süre soluk kalsın mı; kapalıysa yeni satır eskisinin
 /// yerine geçer. TV uygulaması 0.9.16 ve sonrası tanır.
@@ -39,7 +50,8 @@ public sealed record SubtitleStyle(
     bool Bold = false,
     SubtitleTextColor TextColor = SubtitleTextColor.White,
     TvDisplayMode DisplayMode = TvDisplayMode.InApp,
-    bool StackPrevious = true);
+    bool StackPrevious = true,
+    SubtitleBackgroundShape BackgroundShape = SubtitleBackgroundShape.Fit);
 
 /// <summary>
 /// Android TV'de PS5 görüntüsünün nasıl gösterildiği. Yalnız Android TV uygulaması kullanır; diğer TV'ler ve OBS
@@ -473,6 +485,7 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
         Frame("style", new SortedDictionary<string, object>
         {
             ["background"] = Math.Clamp(style.Background, 0, 100),
+            ["backgroundShape"] = style.BackgroundShape.ToString().ToLowerInvariant(),
             ["bold"] = style.Bold,
             ["bottomPercent"] = style.BottomPercent,
             ["displayMode"] = style.DisplayMode == TvDisplayMode.Overlay ? "overlay" : "inApp",

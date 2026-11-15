@@ -127,10 +127,15 @@
       // Kutu sayfanın tamamına göre yerleşir: kap tüm sayfayı kaplar.
       wrap.style.top = '0';
       wrap.style.bottom = '0';
-      line.style.left = ((box.left + box.right) / 2 * 100) + '%';
+      var band = lastStyle && lastStyle.backgroundShape === 'band';
+      line.style.left = band ? '50%' : ((box.left + box.right) / 2 * 100) + '%';
+      line.style.maxWidth = band ? '100vw' : '';
       line.style.top = ((box.top + box.bottom) / 2 * 100) + '%';
-      line.style.minWidth = ((box.right - box.left) * 100) + 'vw';
-      line.style.background = 'rgba(0, 0, 0, 0.97)';
+      // Bant: zemin sayfanın tüm genişliğini kaplar (eski sürümler alanı göndermez, yazı kadar kalır).
+      line.style.minWidth = band ? '100vw' : ((box.right - box.left) * 100) + 'vw';
+      // %100 zemin tamamen opak; altındaki yazı hiç görünmesin.
+      var solid = (fixed.bg !== null ? Number(fixed.bg) : (lastStyle && lastStyle.background)) >= 100;
+      line.style.background = solid ? '#000' : 'rgba(0, 0, 0, 0.97)';
       if (pageColor) line.style.background = '#000';
     } else {
       wrap.style.top = '';
@@ -138,6 +143,7 @@
       line.style.left = '';
       line.style.top = '';
       line.style.minWidth = '';
+      line.style.maxWidth = '';
       apply(lastStyle);
     }
     line.className = text ? (cover ? 'on cover' : 'on') : '';

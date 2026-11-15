@@ -210,6 +210,11 @@
     <string name="settings_engine_note">In games with a ready pack, this engine only translates missing lines.</string>
     <string name="settings_preview">Dinliyor musun beni?</string>
     <string name="settings_color">Text color</string>
+    <string name="settings_background">Background</string>
+    <string name="settings_background_area">Background area</string>
+    <string name="settings_background_fit">Fit the text</string>
+    <string name="settings_background_band">Full-width band</string>
+    <string name="settings_background_note">Drag the slider all the way to the end to make the background fully solid and hide the English subtitle in the game. A full-width band also covers the sides.</string>
     <string name="settings_target">Subtitle target</string>
     <string name="settings_ps5">PS5 and connection</string>
     <string name="settings_passcode">PS5 login passcode</string>

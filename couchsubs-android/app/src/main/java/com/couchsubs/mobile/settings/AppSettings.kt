@@ -146,6 +146,15 @@ class AppSettings(context: Context) {
         get() = enumOr(prefs.getString("textColor", null), SubtitleTextColor.WHITE)
         set(value) = prefs.edit().putString("textColor", value.name).apply()
 
+    /** TV'deki altyazı kutusunun koyuluğu, yüzde (100: tamamen opak; oyundaki İngilizce yazıyı kapatır). */
+    var tvBackground: Int
+        get() = prefs.getInt("tvBackground", 72).coerceIn(0, 100)
+        set(value) = prefs.edit().putInt("tvBackground", value.coerceIn(0, 100)).apply()
+
+    var tvBackgroundShape: com.couchsubs.mobile.core.SubtitleBackgroundShape
+        get() = enumOr(prefs.getString("tvBackgroundShape", null), com.couchsubs.mobile.core.SubtitleBackgroundShape.FIT)
+        set(value) = prefs.edit().putString("tvBackgroundShape", value.name).apply()
+
     /** TV'deki yazı boyu: 36, 46, 58, 72. */
     var tvFontSize: Int
         get() = prefs.getInt("tvFontSize", 46)
@@ -156,7 +165,8 @@ class AppSettings(context: Context) {
      * (iPhone ile aynı: %120 → 55); eskiden ölçek yalnız telefon ekranını değiştiriyor, TV hep 46 kalıyordu.
      */
     val style: SubtitleStyle
-        get() = SubtitleStyle(fontSize = scaledFontSize(tvFontSize, subtitleScale), placement = SubtitlePlacement.COVER, textColor = textColor)
+        get() = SubtitleStyle(fontSize = scaledFontSize(tvFontSize, subtitleScale), placement = SubtitlePlacement.COVER,
+            background = tvBackground, backgroundShape = tvBackgroundShape, textColor = textColor)
 
     /** Altyazının arandığı bölge (Ayarlar › Altyazı alanı; iPhone ile aynı hazır seçimler ve Özel). */
     var region: com.couchsubs.mobile.core.CropRegion
@@ -197,7 +207,8 @@ class AppSettings(context: Context) {
     /** Görünüm ayarı değişince (ölçek, renk) çağrılır; çeviri sürerken TV'ye yeni görünüm gider. */
     fun onStyleChanged(action: () -> Unit): SharedPreferences.OnSharedPreferenceChangeListener {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (key == "subtitleScale" || key == "textColor" || key == "tvFontSize") action()
+            if (key == "subtitleScale" || key == "textColor" || key == "tvFontSize" ||
+                key == "tvBackground" || key == "tvBackgroundShape") action()
         }
         prefs.registerOnSharedPreferenceChangeListener(listener)
         return listener

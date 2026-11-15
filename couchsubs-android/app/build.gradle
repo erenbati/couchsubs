@@ -103,6 +103,14 @@ android {
         release {
             minifyEnabled false
             signingConfig releaseSigning ? signingConfigs.release : signingConfigs.debug
+            // Yerel çökme izleri (libcouchsubs-jni, içine bağlı libchiaki ve OpenSSL) Crashlytics'te sembollü görünsün:
+            // sembol dosyası sürüm derlemesinde yüklenir (bkz. aşağıdaki uploadCrashlyticsSymbolFileRelease). Eklenti
+            // yalnız google-services.json varken uygulandığı için blok da o zaman eklenir; CI onsuz derler.
+            if (hasGoogleServices) {
+                firebaseCrashlytics {
+                    nativeSymbolUploadEnabled true
+                }
+            }
         }
     }
     compileOptions {
@@ -224,6 +232,15 @@ tasks.register('tvReleasePackages') {
     }
 }
 preBuild.dependsOn 'copyCouchSubsAssets', 'copyCouchSubsPacks', 'samsungTvPackage', 'tvReleasePackages'
+
+// Sürüm derlemesi (assembleRelease / bundleRelease) bitince yerel semboller Crashlytics'e yüklenir; böylece yerel
+// çökme izlerinde "Missing BuildId" yerine işlev adları görünür. Ağ yoksa -Pcouchsubs.skipSymbolUpload=true ile atlanır.
+def skipSymbolUpload = (findProperty('couchsubs.skipSymbolUpload') ?: 'false').toString().toBoolean()
+if (hasGoogleServices && !skipNative && !skipSymbolUpload) {
+    tasks.matching { it.name in ['assembleRelease', 'bundleRelease'] }.configureEach {
+        finalizedBy 'uploadCrashlyticsSymbolFileRelease'
+    }
+}
 
 // CI'da chiaki-ng yamaları masaüstü derlemeleri gibi uygulanır (scripts/patch-chiaki.sh): -Pcouchsubs.patchChiaki=true
 if ((findProperty('couchsubs.patchChiaki') ?: 'false').toString().toBoolean()) {

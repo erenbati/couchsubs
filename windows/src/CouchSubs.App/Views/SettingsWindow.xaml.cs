@@ -38,6 +38,7 @@ public partial class SettingsWindow : Window
         Placement.SelectedItem = Placement.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == settings.Style.Placement.ToString());
         ShowPlacement(settings.Style.Placement);
         BackgroundOpacity.Value = settings.Style.Background;
+        BackgroundShape.SelectedItem = BackgroundShape.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == settings.Style.BackgroundShape.ToString());
         Bold.IsChecked = settings.Style.Bold;
         StackPrevious.IsChecked = settings.Style.StackPrevious;
         MisreadWait.Value = settings.MisreadWaitMs / 1000.0;
@@ -566,6 +567,13 @@ public partial class SettingsWindow : Window
 
     private void OnBackground(object sender, RoutedPropertyChangedEventArgs<double> e) =>
         Update(s => s with { Style = s.Style with { Background = (int)Math.Round(e.NewValue) } });
+
+    private void OnBackgroundShape(object sender, SelectionChangedEventArgs e)
+    {
+        if (BackgroundShape.SelectedItem is not ComboBoxItem { Tag: string tag }) return;
+        var shape = Enum.Parse<SubtitleBackgroundShape>(tag);
+        Update(s => s with { Style = s.Style with { BackgroundShape = shape } });
+    }
 
     private void OnBold(object sender, RoutedEventArgs e) =>
         Update(s => s with { Style = s.Style with { Bold = Bold.IsChecked == true } });

@@ -198,7 +198,7 @@ public class SubtitleServerTests
     {
         using var server = new SubtitleServer(0);
         var port = await server.StartAsync();
-        server.SendStyle(new SubtitleStyle(58, 10, SubtitlePlacement.Above, 40, true, SubtitleTextColor.Yellow, TvDisplayMode.Overlay));
+        server.SendStyle(new SubtitleStyle(58, 10, SubtitlePlacement.Above, 40, true, SubtitleTextColor.Yellow, TvDisplayMode.Overlay, true, SubtitleBackgroundShape.Band));
 
         using var response = await Http.GetAsync($"http://127.0.0.1:{port}/events", HttpCompletionOption.ResponseHeadersRead);
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
@@ -214,6 +214,9 @@ public class SubtitleServerTests
         Assert.Contains("\"displayMode\":\"overlay\"", data);
         // Varsayılan: önceki satırlar üstte kalır (eski davranış); ayar TV'ye gider.
         Assert.Contains("\"stackPrevious\":true", data);
+        // Tam genişlik bandı TV'ye gider; eski kayıtta alan yoksa yazı kadar kalır.
+        Assert.Contains("\"backgroundShape\":\"band\"", data);
+        Assert.Equal(SubtitleBackgroundShape.Fit, System.Text.Json.JsonSerializer.Deserialize<SubtitleStyle>("{\"FontSize\":58}")!.BackgroundShape);
     }
 
     [Fact]

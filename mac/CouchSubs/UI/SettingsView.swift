@@ -209,6 +209,11 @@ private struct AppearanceCard: View {
             } onEditingChanged: { editing in
                 if editing { model.sendTestSubtitle() }
             }
+            Picker("Background area", selection: $model.settings.style.backgroundShape) {
+                Text("Fit the text").tag(SubtitleBackgroundShape.fit)
+                Text("Full-width band").tag(SubtitleBackgroundShape.band)
+            }
+            HintText(text: "Drag Background all the way to Solid to fully hide the English subtitle in the game. A full-width band also covers the sides.")
             Toggle("Bold text", isOn: $model.settings.style.bold)
             Picker("Text color", selection: $model.settings.style.textColor) {
                 Text("White").tag(SubtitleTextColor.white)

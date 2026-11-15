@@ -36,12 +36,14 @@ class SubtitleServerTest {
     fun clearAndStyleFrames() {
         assertEquals("event: clear\ndata: {}\n\n", SubtitleServer.clearFrame())
         assertEquals(
-            "event: style\ndata: {\"background\":72,\"bold\":false,\"bottomPercent\":7,\"displayMode\":\"inApp\",\"fontSize\":46," +
+            "event: style\ndata: {\"background\":72,\"backgroundShape\":\"fit\",\"bold\":false,\"bottomPercent\":7,\"displayMode\":\"inApp\",\"fontSize\":46," +
                 "\"placement\":\"cover\",\"textColor\":\"white\"}\n\n",
             SubtitleServer.styleFrame(SubtitleStyle()),
         )
         assertTrue(SubtitleServer.styleFrame(SubtitleStyle(displayMode = TvDisplayMode.OVERLAY, textColor = SubtitleTextColor.YELLOW))
             .contains("\"displayMode\":\"overlay\""))
+        val band = SubtitleServer.styleFrame(SubtitleStyle(background = 100, backgroundShape = SubtitleBackgroundShape.BAND))
+        assertTrue(band.contains("\"background\":100") && band.contains("\"backgroundShape\":\"band\""))
     }
 
     @Test

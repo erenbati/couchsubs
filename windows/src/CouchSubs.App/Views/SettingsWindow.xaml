@@ -84,6 +84,13 @@
                                         ValueChanged="OnBackground" PreviewMouseDown="OnPositionStart" />
                                 <TextBlock Grid.Column="2" Text="{t:T 'Solid'}" Style="{StaticResource HintText}" VerticalAlignment="Center" />
                             </Grid>
+                            <TextBlock Text="{t:T 'Background area'}" Margin="0,0,0,8" />
+                            <ComboBox x:Name="BackgroundShape" SelectionChanged="OnBackgroundShape" Margin="0,0,0,8">
+                                <ComboBoxItem Content="{t:T 'Fit the text'}" Tag="Fit" />
+                                <ComboBoxItem Content="{t:T 'Full-width band'}" Tag="Band" />
+                            </ComboBox>
+                            <TextBlock Style="{StaticResource HintText}" Margin="0,0,0,16"
+                                       Text="{t:T 'Drag Background all the way to Solid to fully hide the English subtitle in the game. A full-width band also covers the sides.'}" />
                             <CheckBox x:Name="Bold" Content="{t:T 'Bold text'}" Foreground="{DynamicResource textPrimaryBrush}" Margin="0,0,0,16"
                                       Checked="OnBold" Unchecked="OnBold" />
                             <CheckBox x:Name="StackPrevious" Content="{t:T 'Keep previous lines above in fast dialogue'}" Foreground="{DynamicResource textPrimaryBrush}" Margin="0,0,0,4"

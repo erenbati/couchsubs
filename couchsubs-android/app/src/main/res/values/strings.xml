@@ -216,6 +216,11 @@
     <string name="settings_engine_note">Hazır paketi olan oyunlarda bu motor yalnız eksik satırlar için çalışır.</string>
     <string name="settings_preview">Dinliyor musun beni?</string>
     <string name="settings_color">Yazı rengi</string>
+    <string name="settings_background">Arka plan koyuluğu</string>
+    <string name="settings_background_area">Arka plan alanı</string>
+    <string name="settings_background_fit">Yazı kadar</string>
+    <string name="settings_background_band">Tam genişlik bant</string>
+    <string name="settings_background_note">Kaydırıcıyı sonuna çekince arka plan tamamen opak olur, oyundaki İngilizce yazı kapanır. Tam genişlik bant yanları da örter.</string>
     <string name="settings_target">Altyazı hedefi</string>
     <string name="settings_ps5">PS5 ve bağlantı</string>
     <string name="settings_passcode">PS5 giriş şifresi</string>
