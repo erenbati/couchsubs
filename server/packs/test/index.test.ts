@@ -24,11 +24,33 @@ function bucket(): R2BucketLike {
   };
 }
 
+function indexBucket(raw: string | null): R2BucketLike {
+  return {
+    async get(key) {
+      if (key !== "index.json" || raw === null) return null;
+      return { body: null, size: raw.length, httpEtag: '"index"', text: async () => raw };
+    },
+  };
+}
+
 const env = (): Env => ({ PACKS: bucket() });
 const get = (path: string, headers: Record<string, string> = {}) =>
   new Request(`https://packs.example${path}`, { headers: { "cf-connecting-ip": "203.0.113.7", ...headers } });
 
 describe("GET /v1/packs", () => {
+  it.each([null, "{}", '{"packs":null}', '{"packs":'])
+    ("reports index unavailability rather than an empty pack list (%s)", async (raw) => {
+      const response = await handle(get("/v1/packs"), { PACKS: indexBucket(raw) }, new RateLimiter());
+      expect(response.status).toBe(503);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    });
+
+  it("keeps a valid empty list as a successful response", async () => {
+    const response = await handle(get("/v1/packs"), { PACKS: indexBucket('{"packs":[]}') }, new RateLimiter());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ packs: [] });
+  });
+
   it("lists packs", async () => {
     const response = await handle(get("/v1/packs"), env(), new RateLimiter());
     expect(response.status).toBe(200);

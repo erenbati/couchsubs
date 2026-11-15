@@ -61,15 +61,22 @@ export class RateLimiter {
 
 const limiter = new RateLimiter();
 
-async function readIndex(env: Env): Promise<PackInfo[]> {
-  const object = await env.PACKS.get("index.json");
-  if (!object) return [];
-  const parsed = JSON.parse(await object.text()) as { packs?: PackInfo[] };
-  return parsed.packs ?? [];
+async function readIndex(env: Env): Promise<PackInfo[] | null> {
+  try {
+    const object = await env.PACKS.get("index.json");
+    if (!object) return null;
+    const parsed = JSON.parse(await object.text()) as { packs?: PackInfo[] };
+    return Array.isArray(parsed?.packs) ? parsed.packs : null;
+  } catch {
+    return null;
+  }
 }
 
 async function list(env: Env): Promise<Response> {
-  return json({ packs: await readIndex(env) }, 200, { "cache-control": "public, max-age=300" });
+  const packs = await readIndex(env);
+  // Eksik/bozuk index başarıyla boş liste gibi gönderilirse istemciler kurulu paketleri silebilir.
+  if (packs === null) return json({ error: "index_unavailable" }, 503, { "cache-control": "no-store" });
+  return json({ packs }, 200, { "cache-control": "public, max-age=300" });
 }
 
 async function download(request: Request, env: Env, id: string, rate: RateLimiter, now: number): Promise<Response> {
