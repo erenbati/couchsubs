@@ -141,15 +141,29 @@ public static partial class GamePackImporter
                 || !GetFileInformationByHandleEx(destinationHandle, fileIdInfo, out var destinationId, Marshal.SizeOf<FileId>()))
             {
                 // Some volumes do not support file IDs. Use the resolved names instead.
-                var resolvedSource = new FileInfo(source).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? source;
-                var resolvedDestination = new FileInfo(destination).ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? destination;
-                return string.Equals(resolvedSource, resolvedDestination, StringComparison.OrdinalIgnoreCase);
+                return SameResolvedPath(source, destination);
             }
             return sourceId.Equals(destinationId);
         }
 
         var resolved = RealPath(source);
         return resolved is not null && resolved == RealPath(destination);
+    }
+
+    internal static bool SameResolvedPath(string source, string destination) =>
+        string.Equals(ResolvePath(source, isDirectory: false), ResolvePath(destination, isDirectory: false),
+            StringComparison.OrdinalIgnoreCase);
+
+    private static string ResolvePath(string path, bool isDirectory)
+    {
+        if (Path.GetDirectoryName(path) is not { } parent) return path;
+
+        // Resolve directory junctions before looking for a link at the current component.
+        var candidate = Path.Combine(ResolvePath(parent, isDirectory: true), Path.GetFileName(path));
+        var target = isDirectory
+            ? Directory.ResolveLinkTarget(candidate, returnFinalTarget: true)
+            : File.ResolveLinkTarget(candidate, returnFinalTarget: true);
+        return target is null ? candidate : ResolvePath(target.FullName, isDirectory);
     }
 
     private static string? RealPath(string path)

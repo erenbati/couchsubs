@@ -244,6 +244,27 @@ public class GamePackImporterTests
         Assert.Equal([destination], Directory.GetFileSystemEntries(directory));
     }
 
+    [Fact]
+    public void PathFallbackIdentifiesSourceThroughAnAncestorLink()
+    {
+        // On Windows, creating symlinks can require additional privileges.
+        if (OperatingSystem.IsWindows()) return;
+
+        using var temp = new TempDirectory();
+        var physicalParent = Directory.CreateDirectory(Path.Combine(temp.Path, "physical")).FullName;
+        var directory = Directory.CreateDirectory(Path.Combine(physicalParent, "packs")).FullName;
+        var destination = Path.Combine(directory, "community-test-game.json");
+        File.WriteAllText(destination, """{"Get Down!":"Yere yat!"}""");
+        var alias = Path.Combine(temp.Path, "alias");
+        Directory.CreateSymbolicLink(alias, physicalParent);
+        var source = Path.Combine(alias, "packs", Path.GetFileName(destination));
+        var otherFile = Path.Combine(alias, "packs", "other.json");
+        File.WriteAllBytes(otherFile, File.ReadAllBytes(destination));
+
+        Assert.True(GamePackImporter.SameResolvedPath(source, destination));
+        Assert.False(GamePackImporter.SameResolvedPath(otherFile, destination));
+    }
+
     private static GamePackImportPreview Parse(string source, string fileName) =>
         GamePackImporter.Parse(Encoding.UTF8.GetBytes(source), fileName);
 
