@@ -167,5 +167,9 @@ public class SubtitleStackTests
         Assert.True(SubtitleStack.SameLine("Kapıyı aç!", "kapıyı aç."));
         Assert.True(SubtitleStack.SameLine("Kapı", "Kapı daha fazla…"));
         Assert.False(SubtitleStack.SameLine("Evet", "Hayır"));
+        // OCR'ın boşluk farkı ve yazılırken okunan satır (birden çok sözcük) yine aynı satırdır.
+        Assert.True(SubtitleStack.SameLine("Kapıyı aç!", "Kapıyıaç"));
+        Assert.True(SubtitleStack.SameLine("Kapıyı a", "Kapıyı aç!"));
+        Assert.False(SubtitleStack.SameLine("No!", "Not now!"));
     }
 }

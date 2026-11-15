@@ -164,9 +164,14 @@ public struct SubtitleStack: Equatable, Sendable {
         let x = plain(a)
         let y = plain(b)
         if x.isEmpty || y.isEmpty { return x == y }
-        // Kısa bir sözcüğün başka sözcüğün içinde geçmesi aynı altyazı demek değildir ("No!" ≠ "Not now!").
-        return x == y || (" " + x + " ").contains(" " + y + " ")
-            || (" " + y + " ").contains(" " + x + " ")
+        // Boşluklar karşılaştırmaya girmez (OCR boşluğu bazen yutar ya da fazladan koyar). Tek sözcüklük satır ise
+        // ancak öteki satırda tam sözcük olarak geçerse aynıdır: "No!" ≠ "Not now!", "Go!" ≠ "Going home.".
+        let cx = x.replacingOccurrences(of: " ", with: "")
+        let cy = y.replacingOccurrences(of: " ", with: "")
+        if cx == cy { return true }
+        if cx.contains(cy) { return y.contains(" ") || (" " + x + " ").contains(" " + y + " ") }
+        if cy.contains(cx) { return x.contains(" ") || (" " + y + " ").contains(" " + x + " ") }
+        return false
     }
 
     private static let punctuation = Set(" \t\n\r.,!?;:…\"'“”‘’«»()[]-–—")

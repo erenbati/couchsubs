@@ -127,5 +127,9 @@ final class SubtitleStackTests: XCTestCase {
         XCTAssertTrue(SubtitleStack.sameLine("Kapıyı aç!", "kapıyı aç."))
         XCTAssertTrue(SubtitleStack.sameLine("Kapı", "Kapı daha fazla…"))
         XCTAssertFalse(SubtitleStack.sameLine("Evet", "Hayır"))
+        // OCR'ın boşluk farkı ve yazılırken okunan satır (birden çok sözcük) yine aynı satırdır.
+        XCTAssertTrue(SubtitleStack.sameLine("Kapıyı aç!", "Kapıyıaç"))
+        XCTAssertTrue(SubtitleStack.sameLine("Kapıyı a", "Kapıyı aç!"))
+        XCTAssertFalse(SubtitleStack.sameLine("No!", "Not now!"))
     }
 }
