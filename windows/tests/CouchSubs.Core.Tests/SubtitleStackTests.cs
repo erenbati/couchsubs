@@ -149,6 +149,18 @@ public class SubtitleStackTests
         Assert.True(stack.IsEmpty(0.5));
     }
 
+    [Theory]
+    [InlineData("No!", "Not now!")]
+    [InlineData("Go!", "Going home.")]
+    [InlineData("No!", "I know!")]
+    public void DistinctShortLinesStackEvenWhenOneIsInsideAnotherWord(string first, string next)
+    {
+        var stack = new SubtitleStack();
+        stack.Show(first, 4000, false, 0);
+        stack.Show(next, 4000, false, 0.5);
+        Assert.Equal([first, next], Texts(stack, 0.5));
+    }
+
     [Fact]
     public void SameLineIgnoresCaseAndPunctuation()
     {

@@ -114,6 +114,15 @@ final class SubtitleStackTests: XCTestCase {
         XCTAssertTrue(stack.isEmpty(at: 0.5))
     }
 
+    func testDistinctShortSentencesAreStacked() {
+        for (first, next) in [("No!", "Not now!"), ("Go!", "Going home."), ("No!", "I know!")] {
+            var stack = SubtitleStack()
+            stack.show(first, durationMs: 4000, now: 0)
+            stack.show(next, durationMs: 4000, now: 0.5)
+            XCTAssertEqual(texts(stack, at: 0.5), [first, next])
+        }
+    }
+
     func testSameLineIgnoresCaseAndPunctuation() {
         XCTAssertTrue(SubtitleStack.sameLine("Kapıyı aç!", "kapıyı aç."))
         XCTAssertTrue(SubtitleStack.sameLine("Kapı", "Kapı daha fazla…"))

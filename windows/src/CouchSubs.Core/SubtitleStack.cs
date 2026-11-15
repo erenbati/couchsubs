@@ -136,11 +136,15 @@ public sealed class SubtitleStack
         var x = Plain(a);
         var y = Plain(b);
         if (x.Length == 0 || y.Length == 0) return x == y;
-        return x == y || x.Contains(y, StringComparison.Ordinal) || y.Contains(x, StringComparison.Ordinal);
+        // Yalnız tam sözcükleri içeren okumalar aynı sayılsın: "No!" ve "Not now!" farklı altyazılardır.
+        return x == y || (" " + x + " ").Contains(" " + y + " ", StringComparison.Ordinal)
+            || (" " + y + " ").Contains(" " + x + " ", StringComparison.Ordinal);
     }
 
     private const string Punctuation = ".,!?;:…\"'“”‘’«»()[]-–—";
 
     private static string Plain(string text) =>
-        new([.. text.ToLowerInvariant().Where(c => !char.IsWhiteSpace(c) && !Punctuation.Contains(c))]);
+        string.Join(' ', text.ToLowerInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Select(word => new string([.. word.Where(c => !Punctuation.Contains(c))]))
+            .Where(word => word.Length > 0));
 }

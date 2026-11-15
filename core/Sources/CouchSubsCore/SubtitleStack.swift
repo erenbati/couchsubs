@@ -164,12 +164,16 @@ public struct SubtitleStack: Equatable, Sendable {
         let x = plain(a)
         let y = plain(b)
         if x.isEmpty || y.isEmpty { return x == y }
-        return x == y || x.contains(y) || y.contains(x)
+        // Kısa bir sözcüğün başka sözcüğün içinde geçmesi aynı altyazı demek değildir ("No!" ≠ "Not now!").
+        return x == y || (" " + x + " ").contains(" " + y + " ")
+            || (" " + y + " ").contains(" " + x + " ")
     }
 
     private static let punctuation = Set(" \t\n\r.,!?;:…\"'“”‘’«»()[]-–—")
 
     private static func plain(_ text: String) -> String {
-        String(text.lowercased().filter { !punctuation.contains($0) && !$0.isWhitespace })
+        text.lowercased().split(whereSeparator: \.isWhitespace)
+            .map { String($0.filter { !punctuation.contains($0) }) }
+            .filter { !$0.isEmpty }.joined(separator: " ")
     }
 }

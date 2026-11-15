@@ -268,11 +268,12 @@
     var x = plainText(a);
     var y = plainText(b);
     if (!x || !y) return x === y;
-    return x === y || x.indexOf(y) >= 0 || y.indexOf(x) >= 0;
+    // Sözcüğün içindeki eşleşme farklı kısa altyazıları gizlemesin ("No!" ve "Not now!").
+    return x === y || (' ' + x + ' ').indexOf(' ' + y + ' ') >= 0 || (' ' + y + ' ').indexOf(' ' + x + ' ') >= 0;
   }
 
   function plainText(text) {
-    return String(text).toLowerCase().replace(/[\s.,!?;:…"'“”‘’«»()\[\]\-–—]+/g, '');
+    return String(text).toLowerCase().replace(/[.,!?;:…"'“”‘’«»()\[\]\-–—]+/g, '').replace(/\s+/g, ' ').trim();
   }
 
   // --- Ekranı çevir ---
