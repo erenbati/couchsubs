@@ -89,6 +89,38 @@ class AreasTest {
     }
 
     @Test
+    fun failedTranslationRetriesWithoutLosingPreviouslyShownText() {
+        val recorder = Recorder()
+        var text = "Talk to Arthur"
+        var now = 0L
+        var failures = 0
+        val calls = mutableListOf<String>()
+        val watcher = RegionWatcher({ Reading.fromText(text) }, {
+            calls.add(it)
+            if (failures > 0) { failures--; throw IllegalStateException("expected") }
+            "TR: $it"
+        }, recorder, clock = { now })
+        val area = ExtraArea(id = "q", name = "Görev", region = ExtraAreaPreset.QUEST.region)
+        fun pass(value: Int) {
+            assertTrue(watcher.offer(listOf(area), { RegionWatcher.Crop(Unit, signature(value)) }) { it.run() })
+            now += 1000
+        }
+        pass(10)
+        pass(10)
+        assertEquals(listOf("q" to "TR: Talk to Arthur"), recorder.sent)
+
+        text = "Meet Arthur at the barn"
+        failures = 1
+        pass(90)
+        pass(90)
+        assertEquals(listOf("q" to "TR: Talk to Arthur"), recorder.sent)
+
+        pass(90)
+        assertEquals(listOf("Talk to Arthur", "Meet Arthur at the barn", "Meet Arthur at the barn"), calls)
+        assertEquals(listOf("q" to "TR: Talk to Arthur", "q" to "TR: Meet Arthur at the barn"), recorder.sent)
+    }
+
+    @Test
     fun removedAreaIsClearedAndFrequencyIsLimited() {
         val recorder = Recorder()
         var now = 0L

@@ -315,6 +315,7 @@ class RegionWatcher(
 
     private fun commit(candidate: Candidate, area: ExtraArea, state: State, started: Int) {
         if (state.shown == candidate.key) return
+        val previousShown = state.shown
         state.shown = candidate.key
         if (candidate.key.isEmpty()) {
             sender.sendRegion(area.id, "", null, null)
@@ -323,8 +324,11 @@ class RegionWatcher(
         val translated = try {
             candidate.paragraphs.map { packLookup?.invoke(it)?.text ?: translator.translate(it) }
         } catch (error: Exception) {
-            // Çevrilemedi: sonraki değişiklikte yeniden denenir.
-            state.shown = ""
+            // Çevrilemedi: önceki yazı kutuda kalır, aynı yazı sonraki turda yeniden denenir.
+            if (started == session && state.shown == candidate.key) {
+                state.shown = previousShown
+                state.candidate = candidate
+            }
             return
         }
         if (started != session || state.shown != candidate.key) return
