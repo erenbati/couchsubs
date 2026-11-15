@@ -43,7 +43,7 @@ SAMSUNG_VERSION=$(sed -n 's/.* version="\([0-9.]*\)" viewmodes.*/\1/p' "$ROOT/tv
 
 # Android TV ve LG: son GitHub sürümü.
 if "$PY" - "$CACHE" <<'PYEOF'
-import hashlib, json, os, re, sys, urllib.request
+import hashlib, json, os, re, sys, tempfile, urllib.request
 cache = sys.argv[1]
 token = os.environ.get('GITHUB_TOKEN')
 def fetch(url, api):
@@ -58,14 +58,37 @@ sums = next((a for a in release['assets'] if a['name'] == 'SHA256SUMS.txt'), Non
 if not sums: raise SystemExit(release['tag_name'] + ': SHA256SUMS.txt yok')
 lines = [l.strip() for l in fetch(sums['browser_download_url'], False).decode().splitlines()]
 props = ['release=' + release['tag_name']]
-for pattern, name in [(r'CouchSubs-androidtv\.apk', 'couchsubs-androidtv.apk'), (r'com\.couchsubs\.tv_[0-9.]+_all\.ipk', 'couchsubs-lg.ipk')]:
-    asset = next((a for a in release['assets'] if re.fullmatch(pattern, a['name'])), None)
-    if not asset: raise SystemExit(release['tag_name'] + ': ' + pattern + ' yok')
-    data = fetch(asset['browser_download_url'], False)
-    if hashlib.sha256(data).hexdigest() + '  ' + asset['name'] not in lines: raise SystemExit(asset['name'] + ': SHA-256 tutmuyor')
-    with open(os.path.join(cache, name), 'wb') as f: f.write(data)
-    props.append(name + '=' + asset['name'])
-with open(os.path.join(cache, 'release.properties'), 'w') as f: f.write('\n'.join(props) + '\n')
+names = ['couchsubs-androidtv.apk', 'couchsubs-lg.ipk', 'release.properties']
+with tempfile.TemporaryDirectory(prefix='.tv-release-', dir=cache) as staging:
+    for pattern, name in [(r'CouchSubs-androidtv\.apk', names[0]), (r'com\.couchsubs\.tv_[0-9.]+_all\.ipk', names[1])]:
+        asset = next((a for a in release['assets'] if re.fullmatch(pattern, a['name'])), None)
+        if not asset: raise SystemExit(release['tag_name'] + ': ' + pattern + ' yok')
+        data = fetch(asset['browser_download_url'], False)
+        if hashlib.sha256(data).hexdigest() + '  ' + asset['name'] not in lines: raise SystemExit(asset['name'] + ': SHA-256 tutmuyor')
+        with open(os.path.join(staging, name), 'wb') as f: f.write(data)
+        props.append(name + '=' + asset['name'])
+    with open(os.path.join(staging, names[2]), 'w') as f: f.write('\n'.join(props) + '\n')
+
+    # Do not change the fallback cache until both assets and their metadata have been verified. If a local replace fails,
+    # restore the previous complete release before propagating the error to the shell fallback.
+    backups, installed = {}, []
+    try:
+        for name in names:
+            target = os.path.join(cache, name)
+            if os.path.exists(target):
+                backup = os.path.join(staging, '.previous-' + name)
+                os.replace(target, backup)
+                backups[name] = backup
+            os.replace(os.path.join(staging, name), target)
+            installed.append(name)
+    except Exception:
+        for name in reversed(names):
+            target = os.path.join(cache, name)
+            if name in installed:
+                os.unlink(target)
+            if name in backups:
+                os.replace(backups[name], target)
+        raise
 print('TV paketleri: ' + release['tag_name'])
 PYEOF
 then :
