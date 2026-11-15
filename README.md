@@ -7,8 +7,10 @@
 Site, kurulum rehberi ve SSS: **[couchsubs.enmeraapps.com](https://couchsubs.enmeraapps.com)**
 
 CouchSubs, oyundaki İngilizce altyazıyı anlık okur, Türkçeye çevirir ve TV'de oyun görüntüsünün üstünde
-gösterir. Oyunu her zamanki gibi TV'de, kendi kolunuzla oynarsınız. Yazı tanıma ve çeviri bilgisayarınızda
-yapılır; altyazılar internete gönderilmez. Ücretsiz ve açık kaynaklıdır.
+gösterir. Oyunu her zamanki gibi TV'de, kendi kolunuzla oynarsınız. Yazı tanıma ve varsayılan çeviri bilgisayarınızda
+yapılır; oyun görüntüsü internete gönderilmez. Hazır paketlerde bulunmayan İngilizce altyazı satırları varsayılan olarak
+açık olan ortak havuza gönderilebilir (ayarlardan kapatılabilir). Çevrimiçi çeviriyi seçerseniz metin ilgili hizmete de
+gönderilir. Ayrıntılar: [Gizlilik](PRIVACY.md). Ücretsiz ve açık kaynaklıdır.
 
 *English below.*
 
@@ -229,7 +231,9 @@ CouchSubs, Sony Interactive Entertainment ile bağlantılı değildir ve onun ta
 
 CouchSubs reads the English subtitles of PS5 games in real time, translates them and shows the translation
 on your TV on top of the game picture. You keep playing on the TV with your own controller; text recognition
-and translation run on your computer, and subtitles are never sent to the internet.
+and default translation run on your computer, and game frames are never uploaded. English subtitle lines not found
+in game packs may be sent to the shared pool (enabled by default, opt-out in Settings). Choosing online translation
+also sends subtitle text to the selected provider. See [Privacy](PRIVACY.md) for details.
 
 **You need:** a PS5 and a supported TV on the same network as your computer, a free second
 PlayStation Network account, and either a Mac on macOS 13 Ventura or later (Apple Silicon or Intel) or a 64-bit Windows 10 (2004)
