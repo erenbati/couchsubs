@@ -12,6 +12,7 @@ internal sealed class FakePackServer : HttpMessageHandler
     public List<RemotePack> Packs { get; } = [];
     public Dictionary<string, byte[]> Files { get; } = [];
     public HttpStatusCode ListStatus { get; set; } = HttpStatusCode.OK;
+    public string? ListPayload { get; set; }
     public List<string> Downloads { get; } = [];
 
     public void Add(string id, long version, string content)
@@ -26,7 +27,7 @@ internal sealed class FakePackServer : HttpMessageHandler
     {
         var path = request.RequestUri!.AbsolutePath;
         if (path == "/v1/packs")
-            return Task.FromResult(new HttpResponseMessage(ListStatus) { Content = new StringContent(JsonSerializer.Serialize(new { packs = Packs })) });
+            return Task.FromResult(new HttpResponseMessage(ListStatus) { Content = new StringContent(ListPayload ?? JsonSerializer.Serialize(new { packs = Packs })) });
         var id = path[(path.LastIndexOf('/') + 1)..];
         Downloads.Add(id);
         return Task.FromResult(Files.TryGetValue(id, out var data)
@@ -99,6 +100,23 @@ public sealed class PackUpdaterTests : IDisposable
         server.Packs.Clear();
         Assert.Equal(["gta-6"], (await updater.RefreshAsync(force: true)).Removed);
         Assert.Null(Content("gta-6"));
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"packs\":null}")]
+    public async Task MissingPackListMustKeepInstalledPacks(string malformedList)
+    {
+        server.Add("gta-6", 1, "one");
+        using var updater = Make();
+        await updater.RefreshAsync();
+
+        server.ListPayload = malformedList;
+        var result = await updater.RefreshAsync(force: true);
+        Assert.True(result.Failed);
+        Assert.Empty(result.Removed);
+        Assert.Equal("one", Content("gta-6"));
+        Assert.Single(updater.InstalledPacks);
     }
 
     /// <summary>Kullanıcının klasöre kendisi bıraktığı aynı adlı dosyanın üstüne yazılmaz, silinmez.</summary>

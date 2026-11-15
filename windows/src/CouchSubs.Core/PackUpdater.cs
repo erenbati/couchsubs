@@ -188,7 +188,8 @@ public sealed partial class PackUpdater : IDisposable
     {
         var data = await GetAsync("v1/packs", cancellationToken).ConfigureAwait(false);
         if (data is null) return null;
-        try { return JsonSerializer.Deserialize<Listing>(data)?.Packs ?? []; }
+        // Eksik/null liste başarısız yanıttır, boş liste değildir: aksi hâlde indirilmiş paketler silinir.
+        try { return JsonSerializer.Deserialize<Listing>(data)?.Packs; }
         catch (JsonException) { return null; }
     }
 
