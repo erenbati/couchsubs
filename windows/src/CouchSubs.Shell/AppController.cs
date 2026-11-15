@@ -1350,6 +1350,13 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     /// <summary>Ayarlarda listelenen paketler (açılışta arka planda yüklenince dolar).</summary>
     public IReadOnlyList<GamePackLibrary.Info> InstalledPacks { get => installedPacks; private set => Set(ref installedPacks, value); }
 
+    public void ReloadGamePacks()
+    {
+        if (services.GamePacks is not { } packs) return;
+        packs.Reload();
+        InstalledPacks = packs.Packs;
+    }
+
     /// <summary>Oynanan oyunun adı (bilinmiyorsa null): ana ekrandaki "Oynanan oyun: X · Değiştir".</summary>
     public string? PlayedGame { get => playedGame; private set => Set(ref playedGame, value); }
 
@@ -1447,7 +1454,12 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     private void StartPacksAndPool()
     {
         // Paketler ilk altyazıyı bekletmesin diye açılışta arka planda yüklenir.
-        if (services.GamePacks is { } packs) _ = Task.Run(() => { var list = packs.Packs; post(() => InstalledPacks = list); });
+        if (services.GamePacks is { } packs)
+            _ = Task.Run(() =>
+            {
+                packs.WarmUp();
+                post(() => InstalledPacks = packs.Packs);
+            });
         StartPackUpdates();
         if (services.Pool is not { } pool) return;
         pool.SetEnabled(settings.SharePool);
@@ -1477,8 +1489,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             var result = await updater.RefreshAsync(force, maxAge: maxAge).ConfigureAwait(false);
             if (!result.Changed || services.GamePacks is not { } packs) return;
             packs.Reload();
-            var list = packs.Packs;
-            post(() => InstalledPacks = list);
+            post(() => InstalledPacks = packs.Packs);
             SubtitleLog.Write("paketler güncellendi: " + string.Join(", ", result.Downloaded.Concat(result.Removed)));
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or HttpRequestException)

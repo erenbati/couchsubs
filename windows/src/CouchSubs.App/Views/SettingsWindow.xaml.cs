@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Navigation;
 using CouchSubs.Core;
 using CouchSubs.Core.LgTv;
 using CouchSubs.Shell;
+using Microsoft.Win32;
 
 namespace CouchSubs.App.Views;
 
@@ -153,6 +155,7 @@ public partial class SettingsWindow : Window
         if (e.PropertyName is nameof(AppController.Settings) or nameof(AppController.ShowsOnTv) or nameof(AppController.ShowsOnComputer))
             ShowStyleTitle();
         if (e.PropertyName == nameof(AppController.LastFrame)) ShowLiveFrame();
+        if (e.PropertyName == nameof(AppController.InstalledPacks)) ShowPacks();
     }
 
     /// <summary>Alan sekmesi açıkken önizleme oyunun görüntüsüyle saniyede bir yenilenir (çerçeve sürüklenirken beklenir).</summary>
@@ -227,6 +230,46 @@ public partial class SettingsWindow : Window
         var words = title.Split([' ', ':', '-', '(', ')'], StringSplitOptions.RemoveEmptyEntries);
         var letters = words.Where(word => char.IsLetterOrDigit(word[0])).Take(3).Select(word => char.ToUpperInvariant(word[0]));
         return string.Concat(letters);
+    }
+
+    private async void OnImportPack(object sender, RoutedEventArgs e)
+    {
+        var text = Localizer.Current;
+        var picker = new OpenFileDialog
+        {
+            Title = text["Import game pack"],
+            Filter = $"{text["Translation files"]} (*.json, *.txt, *.srt)|*.json;*.txt;*.srt",
+        };
+        if (picker.ShowDialog(this) != true) return;
+
+        var sourcePath = picker.FileName;
+        ImportPack.IsEnabled = false;
+        GamePackImportPreview preview;
+        try
+        {
+            preview = await Task.Run(() => GamePackImporter.Parse(File.ReadAllBytes(sourcePath), Path.GetFileName(sourcePath)));
+        }
+        catch (InvalidDataException)
+        {
+            if (IsLoaded)
+                MessageBox.Show(this, text["The translation file could not be imported. Check its format and encoding."],
+                    picker.Title, MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            if (IsLoaded)
+                MessageBox.Show(this, text["The translation file could not be read."], picker.Title,
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+        finally
+        {
+            ImportPack.IsEnabled = true;
+        }
+
+        if (IsLoaded && new GamePackImportWindow(preview, sourcePath) { Owner = this }.ShowDialog() == true)
+            controller.ReloadGamePacks();
     }
 
     private void OnGamePacks(object sender, RoutedEventArgs e) => Update(s => s with { GamePacks = GamePacks.IsChecked == true });

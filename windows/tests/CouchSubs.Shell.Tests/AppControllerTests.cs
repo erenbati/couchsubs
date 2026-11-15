@@ -118,6 +118,7 @@ internal sealed class FakeServices : IAppServices
     public bool HasOcrLanguage(string language) => HasOcrPack;
     public IDubbingModel? Dubbing { get; set; }
     public IDubbingModel? FastDubbing { get; set; }
+    public GamePackLibrary? GamePacks { get; set; }
     public FakeTranslation Translation { get; } = new();
     public IFirewall? Firewall { get; set; }
     ITranslationModel IAppServices.Translation => Translation;
@@ -314,6 +315,37 @@ public class AppControllerTests
 
     [Fact]
     public void FreshInstallStartsAtWelcome() => Assert.Equal(OnboardingStep.Welcome, Make().Step);
+
+    [Fact]
+    public async Task ReloadGamePacksRefreshesInstalledPacksAfterWritingAUserPack()
+    {
+        var directory = Directory.CreateTempSubdirectory("couchsubs-pack-");
+        try
+        {
+            var library = new GamePackLibrary(null, directory.FullName);
+            var startup = new TaskCompletionSource<Action>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var controller = new AppController(new FakeServices { GamePacks = library }, new MemoryStore(),
+                new MemorySettings(), new FakeSleep(), Localizer.ForLanguage("en"), action => startup.TrySetResult(action));
+            var publishStartupList = await startup.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Empty(controller.InstalledPacks);
+
+            File.WriteAllText(Path.Combine(directory.FullName, "community-test-game.json"),
+                """{"format":1,"id":"community-test-game","title":"Test Game","entries":{"ebf811f2fee9a8cc":"Yere yat!"}}""");
+            controller.ReloadGamePacks();
+
+            var pack = Assert.Single(controller.InstalledPacks);
+            Assert.Equal("Test Game", pack.Title);
+            Assert.Equal(1, pack.Entries);
+
+            // A startup update already queued on the dispatcher must not restore the cached empty list.
+            publishStartupList();
+            Assert.Equal(pack, Assert.Single(controller.InstalledPacks));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
 
     [Fact]
     public void CompleteSetupOpensMainScreen()

@@ -12736,6 +12736,22 @@
           }
         }
       }
+    },
+    "Translation files": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Translation files"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Çeviri dosyaları"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

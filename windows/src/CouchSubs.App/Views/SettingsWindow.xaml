@@ -240,6 +240,8 @@
                     </Grid>
                     <TextBlock Style="{StaticResource SecondaryText}" TextWrapping="Wrap" Margin="0,0,0,16"
                                Text="{t:T 'Ready-made Turkish translations for some games. A line found in a pack appears at once, without the translation engine.'}" />
+                    <Button x:Name="ImportPack" Content="{t:T 'Import pack…'}" Click="OnImportPack"
+                            HorizontalAlignment="Left" Margin="0,0,0,16" />
                     <ItemsControl x:Name="PackList" Margin="-8,0,-8,8" Focusable="False">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
