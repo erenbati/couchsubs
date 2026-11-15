@@ -19,10 +19,14 @@ public struct GamePackImportPreview: Sendable {
 public enum GamePackImporter {
     public enum ImportError: Error, Equatable {
         case unsupportedFileType, invalidUTF8, invalidJSON, unsupportedPackFormat
-        case blankTitle, emptyPack, destinationExists, sourceIsDestination
+        case blankTitle, emptyPack, destinationExists, sourceIsDestination, fileTooLarge
     }
 
+    /// Içe aktarılan çeviri dosyası için üst sınır (bellek taşmasını önler).
+    public static let maxFileBytes = 64 * 1024 * 1024
+
     public static func parse(_ data: Data, fileName: String) throws -> GamePackImportPreview {
+        guard data.count <= maxFileBytes else { throw ImportError.fileTooLarge }
         let bytes = data.starts(with: [0xef, 0xbb, 0xbf]) ? data.dropFirst(3) : data
         guard let source = String(data: bytes, encoding: .utf8) else { throw ImportError.invalidUTF8 }
 

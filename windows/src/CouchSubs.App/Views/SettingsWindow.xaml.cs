@@ -247,7 +247,11 @@ public partial class SettingsWindow : Window
         GamePackImportPreview preview;
         try
         {
-            preview = await Task.Run(() => GamePackImporter.Parse(File.ReadAllBytes(sourcePath), Path.GetFileName(sourcePath)));
+            preview = await Task.Run(() =>
+            {
+                if (new FileInfo(sourcePath).Length > GamePackImporter.MaxFileBytes) throw new InvalidDataException("The file is too large.");
+                return GamePackImporter.Parse(File.ReadAllBytes(sourcePath), Path.GetFileName(sourcePath));
+            });
         }
         catch (InvalidDataException)
         {

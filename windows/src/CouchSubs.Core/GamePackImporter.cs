@@ -30,10 +30,14 @@ public sealed class GamePackImportPreview
 
 public static partial class GamePackImporter
 {
+    /// <summary>İçe aktarılan çeviri dosyası için üst sınır (bellek taşmasını önler).</summary>
+    public const int MaxFileBytes = 64 * 1024 * 1024;
+
     private static readonly UTF8Encoding StrictUtf8 = new(false, throwOnInvalidBytes: true);
 
     public static GamePackImportPreview Parse(byte[] data, string fileName)
     {
+        if (data.Length > MaxFileBytes) throw new InvalidDataException("The file is too large.");
         var bytes = data.AsMemory();
         if (bytes.Span.StartsWith("\uFEFF"u8)) bytes = bytes[3..];
         string source;
