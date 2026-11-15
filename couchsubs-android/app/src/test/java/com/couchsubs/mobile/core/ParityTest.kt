@@ -65,6 +65,11 @@ class ParityTest {
     }
 
     @Test
+    fun cleanVowelReadingScoresHigherThanVowellessOcrWord() {
+        assertTrue(OcrNoise.score("Get to the gate now.") > OcrNoise.score("Gtt to the gate now."))
+    }
+
+    @Test
     fun garbledSentenceIsNotSentOnFirstFrame() {
         val s = SubtitleStabilizer()
         assertEquals(StabilizerAction.None, s.feed("Gtt solkolfege."))

@@ -79,6 +79,7 @@ public class ReadingChoiceTests
         Assert.True(OcrNoise.Score("CESARE: Wait for me!") > OcrNoise.Score("- CESAREiVJütt'h!"));
         Assert.True(OcrNoise.Score("We go to McDonald's now.") > 0);
         Assert.True(OcrNoise.Score("T hats the[lil Should be quiet now.") < OcrNoise.Score("That should be quiet now."));
+        Assert.True(OcrNoise.Score("Get to the gate now.") > OcrNoise.Score("Gtt to the gate now."));
     }
 
     /// Geçişte üst üste solan iki altyazının karışık okuması çöp sayılır; olağan cümleler, kısaltmalar ve "Hmm" sayılmaz.

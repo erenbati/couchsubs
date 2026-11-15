@@ -60,6 +60,7 @@ final class OcrNoiseTests: XCTestCase {
         XCTAssertGreaterThan(OcrNoise.score("CESARE: Wait for me!"), OcrNoise.score("- CESAREiVJütt'h!"))
         XCTAssertGreaterThan(OcrNoise.score("We go to McDonald's now."), 0)
         XCTAssertLessThan(OcrNoise.score("T hats the[lil Should be quiet now."), OcrNoise.score("That should be quiet now."))
+        XCTAssertGreaterThan(OcrNoise.score("Get to the gate now."), OcrNoise.score("Gtt to the gate now."))
     }
 
     /// Geçişte üst üste solan iki altyazının karışık okuması çöp sayılır; olağan cümleler, kısaltmalar ve "Hmm" sayılmaz.

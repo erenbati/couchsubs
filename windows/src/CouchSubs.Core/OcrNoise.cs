@@ -64,11 +64,11 @@ public static partial class OcrNoise
         foreach (var token in text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
         {
             var core = Split(token).Core;
-            var letters = core.Count(char.IsLetter);
-            if (letters == 0) continue;
+            var letters = new string(core.Where(char.IsLetter).ToArray());
+            if (letters.Length == 0) continue;
             // Sözcük ortasındaki parantez ("the[lil") de okuma karışıklığıdır.
-            var clean = CleanCore(core) == core && NormalCase(core) && core.IndexOfAny(['[', ']', '(', ')']) < 0;
-            score += clean ? letters : -2 * letters;
+            var clean = CleanCore(core) == core && NormalCase(core) && core.IndexOfAny(['[', ']', '(', ')']) < 0 && !Vowelless(letters);
+            score += clean ? letters.Length : -2 * letters.Length;
         }
         return score;
     }

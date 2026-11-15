@@ -48,10 +48,10 @@ object OcrNoise {
         var score = 0
         for (token in text.split(Regex("\\s+")).filter { it.isNotEmpty() }) {
             val core = split(token).second
-            val letters = core.count { it.isLetter() }
-            if (letters == 0) continue
-            val clean = cleanCore(core) == core && normalCase(core) && core.none { it in "[]()" }
-            score += if (clean) letters else -2 * letters
+            val letters = core.filter { it.isLetter() }
+            if (letters.isEmpty()) continue
+            val clean = cleanCore(core) == core && normalCase(core) && core.none { it in "[]()" } && !vowelless(letters)
+            score += if (clean) letters.length else -2 * letters.length
         }
         return score
     }

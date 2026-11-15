@@ -54,11 +54,12 @@ public enum OcrNoise {
         var score = 0
         for token in text.split(whereSeparator: \.isWhitespace).map(String.init) {
             let core = split(token).1
-            let letters = core.filter(\.isLetter).count
-            guard letters > 0 else { continue }
+            let letters = String(core.filter(\.isLetter))
+            guard !letters.isEmpty else { continue }
             // Sözcük ortasındaki parantez ("the[lil") de okuma karışıklığıdır.
             let clean = cleanCore(core) == core && normalCase(core) && !core.contains(where: { "[]()".contains($0) })
-            score += clean ? letters : -2 * letters
+                && !vowelless(letters)
+            score += clean ? letters.count : -2 * letters.count
         }
         return score
     }
