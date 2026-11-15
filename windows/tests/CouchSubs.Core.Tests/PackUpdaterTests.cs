@@ -77,6 +77,31 @@ public sealed class PackUpdaterTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedReplacementRetainsInstalledPackAndRetries()
+    {
+        server.Add("gta-6", 1, "one");
+        using var updater = Make();
+        Assert.Equal(["gta-6"], (await updater.RefreshAsync()).Downloaded);
+        var installedBefore = Assert.Single(updater.InstalledPacks);
+
+        server.Add("gta-6", 2, "two");
+        var file = Path.Combine(Packs, "gta-6.json.gz");
+        using (new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var failed = await updater.RefreshAsync(force: true);
+
+            Assert.Empty(failed.Downloaded);
+            Assert.Equal("one", Content("gta-6"));
+            Assert.Equal(installedBefore with { Version = -1 }, Assert.Single(updater.InstalledPacks));
+        }
+
+        var retried = await updater.RefreshAsync();
+        Assert.Equal(["gta-6"], retried.Downloaded);
+        Assert.Equal("two", Content("gta-6"));
+        Assert.Equal(2, Assert.Single(updater.InstalledPacks).Version);
+    }
+
+    [Fact]
     public async Task WrongChecksumIsNeverInstalled()
     {
         server.Add("gta-6", 1, "good");
