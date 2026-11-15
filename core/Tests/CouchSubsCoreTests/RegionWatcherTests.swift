@@ -21,10 +21,17 @@ final class RegionWatcherTests: XCTestCase {
 
     private final class Translator: TextTranslator {
         var calls: [String] = []
+        var failuresRemaining = 0
         func translate(_ text: String) async throws -> String {
             calls.append(text)
+            if failuresRemaining > 0 {
+                failuresRemaining -= 1
+                throw Failure.expected
+            }
             return "TR: " + text
         }
+
+        private enum Failure: Error { case expected }
     }
 
     private final class Server: RegionSending {
@@ -67,6 +74,25 @@ final class RegionWatcherTests: XCTestCase {
         XCTAssertEqual(reader.count, 1)
         XCTAssertEqual(translator.calls.count, 1)
         XCTAssertEqual(server.sent.count, 1)
+    }
+
+    func testFailedTranslationRetriesWithoutLosingPreviouslyShownText() async {
+        let reader = Reader(), translator = Translator(), server = Server()
+        let watcher = RegionWatcher(reader: reader, translator: translator, server: server)
+        reader.lines = [line("Talk to Arthur")]
+        await watcher.pass(frame(10), areas: [quest])
+        await watcher.pass(frame(10), areas: [quest])
+        XCTAssertEqual(server.sent.map(\.text), ["TR: Talk to Arthur"])
+
+        reader.lines = [line("Meet Arthur at the barn")]
+        translator.failuresRemaining = 1
+        await watcher.pass(frame(90), areas: [quest])
+        await watcher.pass(frame(90), areas: [quest])
+        XCTAssertEqual(server.sent.map(\.text), ["TR: Talk to Arthur"])
+
+        await watcher.pass(frame(90), areas: [quest])
+        XCTAssertEqual(translator.calls, ["Talk to Arthur", "Meet Arthur at the barn", "Meet Arthur at the barn"])
+        XCTAssertEqual(server.sent.map(\.text), ["TR: Talk to Arthur", "TR: Meet Arthur at the barn"])
     }
 
     func testMovingBackgroundWithTheSameTextIsNotTranslatedAgain() async {

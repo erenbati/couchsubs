@@ -22,9 +22,18 @@ public class RegionWatcherTests
     private sealed class Translator : ITextTranslator
     {
         public List<string> Calls { get; } = [];
+        public int FailuresRemaining;
         public Task<string> TranslateAsync(string text, CancellationToken cancellationToken = default)
         {
-            lock (Calls) Calls.Add(text);
+            lock (Calls)
+            {
+                Calls.Add(text);
+                if (FailuresRemaining > 0)
+                {
+                    FailuresRemaining--;
+                    return Task.FromException<string>(new InvalidOperationException("Expected test failure"));
+                }
+            }
             return Task.FromResult("TR: " + text);
         }
     }
@@ -67,6 +76,27 @@ public class RegionWatcherTests
         Assert.Equal(1, reader.Count);
         Assert.Single(translator.Calls);
         Assert.Single(server.Sent);
+    }
+
+    [Fact]
+    public async Task FailedTranslationRetriesWithoutLosingPreviouslyShownText()
+    {
+        var (reader, translator, server) = (new Reader(), new Translator(), new Server());
+        var watcher = new RegionWatcher(reader, translator, server);
+        reader.Lines = [Line("Talk to Arthur")];
+        await watcher.PassAsync(Shade(10), [Quest]);
+        await watcher.PassAsync(Shade(10), [Quest]);
+        Assert.Equal(["TR: Talk to Arthur"], server.Sent.Select(s => s.Text));
+
+        reader.Lines = [Line("Meet Arthur at the barn")];
+        translator.FailuresRemaining = 1;
+        await watcher.PassAsync(Shade(90), [Quest]);
+        await watcher.PassAsync(Shade(90), [Quest]);
+        Assert.Equal(["TR: Talk to Arthur"], server.Sent.Select(s => s.Text));
+
+        await watcher.PassAsync(Shade(90), [Quest]);
+        Assert.Equal(["Talk to Arthur", "Meet Arthur at the barn", "Meet Arthur at the barn"], translator.Calls);
+        Assert.Equal(["TR: Talk to Arthur", "TR: Meet Arthur at the barn"], server.Sent.Select(s => s.Text));
     }
 
     [Fact]

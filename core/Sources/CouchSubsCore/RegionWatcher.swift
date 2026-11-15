@@ -167,6 +167,7 @@ public final class RegionWatcher {
     /// Kararlı yazı: öncekinden farklıysa çevrilip gönderilir, boşsa kutu kalkar.
     private func commit(_ candidate: Candidate, area: ExtraArea) async {
         guard let state = states[area.id], state.shown != candidate.key else { return }
+        let previousShown = state.shown
         states[area.id]?.shown = candidate.key
         guard !candidate.key.isEmpty else {
             server.sendRegion(id: area.id, text: "", box: nil, lineHeight: nil)
@@ -180,6 +181,10 @@ public final class RegionWatcher {
             translated = try await translate(candidate.paragraphs, packHits: &fromPack)
         } catch {
             guard session == self.session else { return }
+            if states[area.id]?.shown == candidate.key {
+                states[area.id]?.shown = previousShown
+                states[area.id]?.candidate = candidate
+            }
             onLog?("ek alan \(area.name): \(SubtitleLog.excerpt(candidate.paragraphs.joined(separator: " "))) çevrilemedi (\(error))")
             return
         }

@@ -178,6 +178,7 @@ public sealed class RegionWatcher
     private async Task CommitAsync(Candidate candidate, WatchedArea area, State state, int started)
     {
         if (state.Shown == candidate.Key) return;
+        var previousShown = state.Shown;
         state.Shown = candidate.Key;
         if (candidate.Key.Length == 0)
         {
@@ -200,7 +201,14 @@ public sealed class RegionWatcher
         catch (Exception error)
         {
             if (Volatile.Read(ref session) == started)
+            {
+                if (state.Shown == candidate.Key)
+                {
+                    state.Shown = previousShown;
+                    state.Candidate = candidate;
+                }
                 Log?.Invoke($"ek alan {area.Name}: {SubtitleLog.Excerpt(string.Join(' ', candidate.Paragraphs))} çevrilemedi ({error.Message})");
+            }
             return;
         }
         if (Volatile.Read(ref session) != started || state.Shown != candidate.Key) return;
