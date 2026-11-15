@@ -114,7 +114,7 @@ internal fun LgInstallScreen(onBack: () -> Unit, brandPicker: @Composable () -> 
                         val installer = LgInstaller(JschShell(target, key), progress, log)
                         val result = installer.ensureInstalled(ipk, name, version)
                         // Masaüstündeki gibi: geliştirici modunun süresi günde bir uzatılır, kullanıcı TV'den uzatmaz.
-                        TvAppUpdate.renewLgSessionIfDue(installer)
+                        TvAppUpdate.renewLgSessionIfDue(target, installer)
                         return result
                     }
                     val saved = keys.load(target)

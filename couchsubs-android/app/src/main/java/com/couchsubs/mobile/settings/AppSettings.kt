@@ -13,6 +13,7 @@ import com.couchsubs.mobile.core.SubtitleTextColor
 import com.couchsubs.mobile.remoteplay.LoginPasscode
 import com.couchsubs.mobile.remoteplay.RegisteredConsole
 import com.couchsubs.mobile.tv.InstalledTv
+import com.couchsubs.mobile.tv.LgSessionRenewalPolicy
 import com.couchsubs.mobile.tv.TvBrand
 import org.json.JSONObject
 import java.security.KeyStore
@@ -307,10 +308,15 @@ class AppSettings(context: Context) {
                 .putString("tvApp.version", value.version)
         }.apply()
 
-    /** LG geliştirici modunun süresi en son ne zaman uzatıldı (ms); günde en çok bir kez uzatılır. */
-    var lgSessionRenewedAt: Long
-        get() = prefs.getLong("tvApp.lgSessionRenewed", 0L)
-        set(value) = prefs.edit().putLong("tvApp.lgSessionRenewed", value).apply()
+    /** LG geliştirici modu için son başarılı uzatma zamanı (ms), TV adresine göre saklanır. */
+    fun lgSessionRenewedAt(host: String): Long? {
+        val key = LgSessionRenewalPolicy.storageKey(host)
+        return if (prefs.contains(key)) prefs.getLong(key, 0L) else null
+    }
+
+    fun setLgSessionRenewedAt(host: String, value: Long) {
+        prefs.edit().putLong(LgSessionRenewalPolicy.storageKey(host), value).apply()
+    }
 
     fun apiKey(engine: EngineChoice): String? = secrets.get("key." + engine.name)
     fun setApiKey(engine: EngineChoice, key: String?) = secrets.put("key." + engine.name, key?.trim())

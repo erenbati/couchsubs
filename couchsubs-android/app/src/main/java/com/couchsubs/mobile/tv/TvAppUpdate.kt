@@ -37,7 +37,6 @@ sealed interface TvAppStatus {
 
 object TvAppUpdate {
     private const val TAG = "CouchSubsTvUpdate"
-    private const val LG_RENEW_INTERVAL_MS = 20 * 3600 * 1000L
 
     private val state = MutableStateFlow<TvAppStatus>(TvAppStatus.Unknown)
     val status: StateFlow<TvAppStatus> = state
@@ -109,7 +108,7 @@ object TvAppUpdate {
                 if (!LgInstaller.isDevModeOn(tv.host)) return null
                 val installer = LgInstaller(JschShell(tv.host, key), log = log)
                 val version = installer.installedVersion()
-                renewLgSessionIfDue(installer)
+                renewLgSessionIfDue(tv.host, installer)
                 version
             }
             TvBrand.ANDROID_TV -> {
@@ -122,11 +121,14 @@ object TvAppUpdate {
     }
 
     /** LG geliştirici modunun 1000 saatlik süresini günde en çok bir kez baştan başlatır (masaüstündeki gibi). */
-    fun renewLgSessionIfDue(installer: LgInstaller) {
+    fun renewLgSessionIfDue(host: String, installer: LgInstaller) {
         val settings = Services.settings
-        if (System.currentTimeMillis() - settings.lgSessionRenewedAt < LG_RENEW_INTERVAL_MS) return
-        val hours = runCatching { installer.renewSession() }.getOrNull() ?: return
-        settings.lgSessionRenewedAt = System.currentTimeMillis()
+        val hours = LgSessionRenewalPolicy.renewIfDue(
+            now = System.currentTimeMillis(),
+            lastRenewedAt = settings.lgSessionRenewedAt(host),
+            saveRenewedAt = { settings.setLgSessionRenewedAt(host, it) },
+            renew = { runCatching { installer.renewSession() }.getOrNull() },
+        ) ?: return
         Log.i(TAG, "LG geliştirici modu uzatıldı: $hours saat kaldı")
     }
 }

@@ -430,13 +430,33 @@ struct LGInstaller {
 }
 
 extension StoreKey {
-    /// LG geliştirici modunun en son uzatıldığı an (UserDefaults, Date).
-    static let lgSessionRenewedAt = "lgSessionRenewedAt"
+    /// LG geliştirici modu için son başarılı uzatma anı; TV adresine göre saklanır.
+    static func lgSessionRenewedAt(host: String) -> String {
+        "lgSessionRenewedAt.\(host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+    }
+}
+
+enum LGSessionRenewalPolicy {
+    private static let renewInterval: TimeInterval = 20 * 3600
+
+    static func storageKey(_ host: String) -> String {
+        StoreKey.lgSessionRenewedAt(host: host)
+    }
+
+    static func renewIfDue(
+        now: Date,
+        lastRenewedAt: Date?,
+        saveRenewedAt: (Date) -> Void,
+        renew: () -> Int?
+    ) -> Int? {
+        if let lastRenewedAt, now.timeIntervalSince(lastRenewedAt) < renewInterval { return nil }
+        guard let hours = renew() else { return nil }
+        saveRenewedAt(now)
+        return hours
+    }
 }
 
 enum LGPhoneInstall {
-    private static let renewInterval: TimeInterval = 20 * 3600
-
     /// Telefondaki LG paketi: içerik, sürümdeki adı ve sürümü.
     static func package() throws -> (ipk: [UInt8], name: String, version: String) {
         guard let name = TVPackages.lgName, let version = TVPackages.lgVersion else { throw LGInstallFailure(error: .packageMissing) }
@@ -452,16 +472,21 @@ enum LGPhoneInstall {
         guard let key = LGKeys.load(host), LGInstaller.isDevModeOn(host) else { return nil }
         let installer = LGInstaller(shell: SshShell(host: host, key: key))
         guard let version = try? installer.installedVersion() else { return nil }
-        renewSessionIfDue(installer)
+        renewSessionIfDue(installer, host: host)
         return version
     }
 
     /// LG geliştirici modunun 1000 saatlik süresini günde en çok bir kez baştan başlatır (masaüstü ve Android gibi).
-    static func renewSessionIfDue(_ installer: LGInstaller) {
+    static func renewSessionIfDue(_ installer: LGInstaller, host: String) {
         let defaults = UserDefaults.standard
-        if let last = defaults.object(forKey: StoreKey.lgSessionRenewedAt) as? Date, Date().timeIntervalSince(last) < renewInterval { return }
-        guard let hours = (try? installer.renewSession()) ?? nil else { return }
-        defaults.set(Date(), forKey: StoreKey.lgSessionRenewedAt)
+        let key = StoreKey.lgSessionRenewedAt(host: host)
+        let hours = LGSessionRenewalPolicy.renewIfDue(
+            now: Date(),
+            lastRenewedAt: defaults.object(forKey: key) as? Date,
+            saveRenewedAt: { defaults.set($0, forKey: key) },
+            renew: { (try? installer.renewSession()) ?? nil }
+        )
+        guard let hours else { return }
         InstallLog.shared.write("LG geliştirici modu uzatıldı: \(hours) saat kaldı")
     }
 }
@@ -581,7 +606,7 @@ struct LGInstallSection: View {
                         let installer = LGInstaller(shell: SshShell(host: target, key: key), progress: progress, log: log)
                         let result = try installer.ensureInstalled(ipk: package.ipk, packageName: package.name, version: package.version)
                         // Masaüstündeki gibi: geliştirici modunun süresi günde bir uzatılır, kullanıcı TV'den uzatmaz.
-                        LGPhoneInstall.renewSessionIfDue(installer)
+                        LGPhoneInstall.renewSessionIfDue(installer, host: target)
                         return result
                     }
                     guard let saved = LGKeys.load(target) else { return try attempt(fresh()) }
