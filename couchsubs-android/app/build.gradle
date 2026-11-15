@@ -185,16 +185,19 @@ tasks.register('tvReleasePackages') {
             if (!sums) throw new GradleException("${release.tag_name}: SHA256SUMS.txt yok")
             def lines = new String(fetch(sums.browser_download_url, false), 'UTF-8').readLines()
             def properties = ["release=${release.tag_name}"]
-            outDir.mkdirs()
+            // İki paket de indirilip denetlenmeden önbellek değiştirilmez: biri başarısızsa önceki eksiksiz sürüm kalır.
+            def verified = [:]
             wanted.each { item ->
                 def asset = release.assets.find { it.name ==~ item.pattern }
                 if (!asset) throw new GradleException("${release.tag_name}: ${item.pattern} yok")
                 def bytes = fetch(asset.browser_download_url, false)
                 def digest = java.security.MessageDigest.getInstance('SHA-256').digest(bytes).encodeHex().toString()
                 if (!lines.any { it.trim() == "${digest}  ${asset.name}".toString() }) throw new GradleException("${asset.name}: SHA-256 tutmuyor")
-                new File(outDir, item.file).bytes = bytes
+                verified[item.file] = bytes
                 properties << "${item.file}=${asset.name}".toString()
             }
+            outDir.mkdirs()
+            verified.each { name, bytes -> new File(outDir, name).bytes = bytes }
             new File(outDir, 'tv-packages.properties').text = properties.join('\n') + '\n'
             logger.lifecycle("TV paketleri: ${release.tag_name} (${wanted*.file.join(', ')})")
             // Telefon TV'deki eski uygulamayı bu paketlerle günceller: depodaki TV uygulaması sürümdekinden yeniyse
