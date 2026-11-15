@@ -416,7 +416,7 @@ public final class SubtitlePipeline {
             if let image = context?.makeImage() { _ = try? reader.read(image) }
         }
         let translator = self.translator
-        Task { _ = try? await translator.translate("Hello") }
+        Task { await translator.warmUp() }
     }
 
     /// Okuma durunca TV'deki son altyazıyı kaldırır.

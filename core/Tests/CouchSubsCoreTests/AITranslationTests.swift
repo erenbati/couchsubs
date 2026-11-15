@@ -88,6 +88,13 @@ private final class FakeAI: URLProtocol {
     }
 }
 
+private final class WarmupFallback: TextTranslator {
+    private(set) var warmUpCalls = 0
+
+    func warmUp() async { warmUpCalls += 1 }
+    func translate(_ text: String) async throws -> String { "yerel: " + text }
+}
+
 /// Windows'taki AiTranslatorTests ile aynı durumlar.
 final class AITranslationTests: XCTestCase {
     private let secret = "sk-SECRET-123"
@@ -147,6 +154,23 @@ final class AITranslationTests: XCTestCase {
         let messages = body["messages"] as? [[String: Any]] ?? []
         XCTAssertEqual(messages.map { $0["role"] as? String }, ["developer", "user"])
         XCTAssertEqual(messages[0]["content"] as? String, AIRequest.systemPrompt)
+    }
+
+    func testTranslatorWarmUpDoesNotSpendAIRequestOrSeedFirstSubtitleContext() async throws {
+        let fallback = WarmupFallback()
+        let budget = RequestBudget(perMinute: 1)
+        let translator = AITranslator(provider: .openAI, key: secret, model: nil, fallback: fallback,
+                                      session: FakeAI.session(), budget: budget)
+
+        await translator.warmUp()
+        XCTAssertEqual(FakeAI.requests.count, 0)
+        XCTAssertEqual(fallback.warmUpCalls, 1)
+
+        _ = try await translator.translate("First real subtitle.")
+
+        XCTAssertEqual(FakeAI.requests.count, 1)
+        XCTAssertFalse(user(0).contains("Hello"))
+        XCTAssertTrue(user(0).hasSuffix("[\"First real subtitle.\"]"))
     }
 
     func testClaudeRequest() async throws {

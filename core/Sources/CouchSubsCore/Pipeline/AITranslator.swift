@@ -32,6 +32,11 @@ public final class AITranslator: TextTranslator, OnlineTranslating {
         try await core.translate(text) { [fallback] line in try await fallback.translate(line) }
     }
 
+    /// Yalnız yerel yedeği hazırlar; AI isteği, dakika kotası veya konuşma bağlamı oluşturmaz.
+    public func warmUp() async {
+        await fallback.warmUp()
+    }
+
     /// Ekran çevirisi: bütün parçalar tek istekte gider; dakikalık hak parça başına harcanmaz.
     public func translateAll(_ texts: [String]) async throws -> [String] {
         try await core.translateAll(texts) { [fallback] line in try await fallback.translate(line) }

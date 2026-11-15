@@ -28,8 +28,17 @@ private final class FakeTranslator: TextTranslator {
     var error: Error?
     var failuresLeft = 0
     private(set) var requested: [String] = []
+    private(set) var warmUpCalls = 0
+    var onFirstOperation: (() -> Void)?
+
+    func warmUp() async {
+        warmUpCalls += 1
+        onFirstOperation?()
+    }
+
     func translate(_ text: String) async throws -> String {
         requested.append(text)
+        onFirstOperation?()
         if let error { throw error }
         if failuresLeft > 0 { failuresLeft -= 1; throw URLError(.timedOut) }
         return "TR: " + text
@@ -146,6 +155,19 @@ final class SubtitlePipelineTests: XCTestCase {
             if wait { await pipeline.waitForTranslations() }
             clock?.now += 50
         }
+    }
+
+    func testWarmUpDoesNotTranslateAPlaceholderSubtitle() async {
+        let translator = FakeTranslator()
+        let pipeline = SubtitlePipeline(reader: FakeReader([]), translator: translator, server: FakeSender())
+        let started = expectation(description: "translator warm-up started")
+        translator.onFirstOperation = { started.fulfill() }
+
+        pipeline.warmUp()
+        await fulfillment(of: [started], timeout: 1)
+
+        XCTAssertEqual(translator.warmUpCalls, 1)
+        XCTAssertTrue(translator.requested.isEmpty)
     }
 
     func testStableTextIsTranslatedAndSentOnce() async {
