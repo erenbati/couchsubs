@@ -34,6 +34,33 @@ final class GamePackImporterTests: XCTestCase {
         XCTAssertEqual(preview.conflictCount, 1)
     }
 
+    func testRepeatedJSONMembersReachThePairAccumulator() throws {
+        let fixtures = [
+            (#"{"Get Down!":"Yere yat!","Get Down!":"Çök!","Get Down!":"Çök!","Who is that?":"Kim o?","Who is that?":"Kim o?"}"#, "ce61a5b5526ea81a"),
+            (#"{"subtitles":{"Get Down!":"Yere yat!","Get Down!":"Çök!","Get Down!":"Çök!","Who is that?":"Kim o?","Who is that?":"Kim o?"}}"#, "ce61a5b5526ea81a"),
+            (#"{"format":1,"entries":{"0123456789abcdef":"Yere yat!","0123456789abcdef":"Çök!","0123456789abcdef":"Çök!","ffffffffffffffff":"Kim o?","ffffffffffffffff":"Kim o?"}}"#, "ffffffffffffffff"),
+        ]
+        for (source, survivingKey) in fixtures {
+            let preview = try parse(source, "repeats.json")
+            XCTAssertEqual(preview.entries, [survivingKey: "Kim o?"], source)
+            XCTAssertEqual(preview.duplicateCount, 2, source)
+            XCTAssertEqual(preview.conflictCount, 1, source)
+        }
+    }
+
+    func testNumericFormatRequiresAnEntriesObject() {
+        let malformed = [
+            #"{"format":1,"title":"Existing Game","entries":[]}"#,
+            #"{"format":1,"title":"Existing Game","entries":"text"}"#,
+            #"{"format":1,"title":"Existing Game","entries":[true,"Get Down!","Yere yat!"]}"#,
+            #"{"format":1,"title":"Existing Game","subtitles":{"Get Down!":"Yere yat!"}}"#,
+            #"{"format":2,"title":"Existing Game","entries":null}"#,
+        ]
+        for source in malformed {
+            XCTAssertThrowsError(try parse(source, "broken-pack.json"), source)
+        }
+    }
+
     func testTXTHandlesBOMCRLFAndBothDelimiters() throws {
         let preview = try parse("\u{FEFF}  # ignored\r\n\r\nGet Down! = Yere yat! = şimdi\r\nWho is that?\tKim o?\r\nbroken\r\nEmpty = \r\n\tMissing\r\nExtra\tfield\tline\r\n", "pairs.txt")
         XCTAssertEqual(preview.entries, ["ebf811f2fee9a8cc": "Yere yat! = şimdi", "ce61a5b5526ea81a": "Kim o?"])

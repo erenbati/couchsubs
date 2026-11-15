@@ -142,23 +142,90 @@ public enum GamePackImporter {
     }
 
     private static func parseJSON(_ data: Data, into pairs: inout Pairs) throws -> String? {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ImportError.invalidJSON
-        }
-        if let entries = object["entries"] as? [String: Any] {
-            guard let format = object["format"] as? NSNumber,
-                  CFGetTypeID(format) != CFBooleanGetTypeID(), format == 1 else {
-                throw ImportError.unsupportedPackFormat
-            }
-            for (key, target) in entries { pairs.add(key: hashedKey(key), target: target as? String) }
+        let object = try OrderedJSONObject.decode(data)
+        let format = object["format"] as? NSNumber
+        if let format, CFGetTypeID(format) != CFBooleanGetTypeID() {
+            guard format == 1 else { throw ImportError.unsupportedPackFormat }
+            guard let entries = OrderedJSONObject(object["entries"]) else { throw ImportError.invalidJSON }
+            for (key, target) in entries.members { pairs.add(key: hashedKey(key), target: target as? String) }
             return nonblank(object["title"] as? String) ?? nonblank(object["game"] as? String)
         }
-        if let subtitles = object["subtitles"] as? [String: Any] {
-            for (source, target) in subtitles { pairs.add(key: PackKey.key(source), target: target as? String) }
+        if OrderedJSONObject(object["entries"]) != nil { throw ImportError.unsupportedPackFormat }
+        if let subtitles = OrderedJSONObject(object["subtitles"]) {
+            for (source, target) in subtitles.members { pairs.add(key: PackKey.key(source), target: target as? String) }
             return nonblank(object["game"] as? String) ?? nonblank(object["title"] as? String)
         }
-        for (source, target) in object { pairs.add(key: PackKey.key(source), target: target as? String) }
+        for (source, target) in object.members { pairs.add(key: PackKey.key(source), target: target as? String) }
         return nil
+    }
+
+    private struct OrderedJSONObject {
+        let members: [(name: String, value: Any)]
+
+        init?(_ value: Any?) {
+            guard let list = value as? [Any], list.first as? Bool == true, list.count % 2 == 1 else { return nil }
+            members = stride(from: 1, to: list.count, by: 2).compactMap { index in
+                guard let name = list[index] as? String else { return nil }
+                return (name, list[index + 1])
+            }
+        }
+
+        subscript(_ name: String) -> Any? {
+            members.last { $0.name == name }?.value
+        }
+
+        static func decode(_ data: Data) throws -> Self {
+            // First validate the original syntax, including colons and commas.
+            // Foundation decodes objects as dictionaries. Decode a second time
+            // with each object represented as [true, key, value, ...] to retain
+            // every member. Input arrays carry a false tag so they stay distinct.
+            guard (try? JSONSerialization.jsonObject(with: data)) is [String: Any],
+                  let value = try? JSONSerialization.jsonObject(with: orderedRepresentation(data)),
+                  let object = Self(value) else {
+                throw ImportError.invalidJSON
+            }
+            return object
+        }
+
+        private static func orderedRepresentation(_ data: Data) -> Data {
+            var result = Data()
+            result.reserveCapacity(data.count)
+            var inString = false
+            var escaped = false
+            var afterTag = false
+            for byte in data {
+                if inString {
+                    result.append(byte)
+                    if escaped { escaped = false }
+                    else if byte == UInt8(ascii: "\\") { escaped = true }
+                    else if byte == UInt8(ascii: "\"") { inString = false }
+                    continue
+                }
+                if afterTag {
+                    switch byte {
+                    case 0x20, 0x09, 0x0a, 0x0d: continue
+                    case UInt8(ascii: "}"), UInt8(ascii: "]"): break
+                    default: result.append(UInt8(ascii: ","))
+                    }
+                    afterTag = false
+                }
+                switch byte {
+                case UInt8(ascii: "{"):
+                    result.append(contentsOf: "[true".utf8)
+                    afterTag = true
+                case UInt8(ascii: "["):
+                    result.append(contentsOf: "[false".utf8)
+                    afterTag = true
+                case UInt8(ascii: "}"): result.append(UInt8(ascii: "]"))
+                case UInt8(ascii: ":"): result.append(UInt8(ascii: ","))
+                case UInt8(ascii: "\""):
+                    inString = true
+                    result.append(byte)
+                default: result.append(byte)
+                }
+            }
+            return result
+        }
     }
 
     private static func hashedKey(_ key: String) -> String? {
