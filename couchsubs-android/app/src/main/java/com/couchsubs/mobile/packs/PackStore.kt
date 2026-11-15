@@ -148,7 +148,12 @@ class PackStore(
 class HttpPackServer(private val baseUrl: String) : PackServer {
     override fun list(): List<RemotePack> {
         val body = String(request("$baseUrl/v1/packs"), Charsets.UTF_8)
-        val packs = JSONObject(body).optJSONArray("packs") ?: return emptyList()
+        // Eksik/null ya da bozuk liste başarısız yanıttır, boş liste değildir: boş sayılırsa indirilmiş paketler silinir.
+        val packs = try {
+            JSONObject(body).optJSONArray("packs")
+        } catch (error: JSONException) {
+            null
+        } ?: throw PackDownloadException(null, "invalid pack list")
         return (0 until packs.length()).map { index ->
             val item = packs.getJSONObject(index)
             RemotePack(item.getString("id"), item.optString("title"), item.optLong("version"), item.getString("sha256"),
