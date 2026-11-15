@@ -8,6 +8,7 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.Locale
 
 private val turkish = Locale("tr", "TR")
@@ -28,8 +29,20 @@ class TranslationCache(private val file: File? = null, limit: Int = DEFAULT_LIMI
         const val FORMAT_VERSION = 1
 
         /** Motor ve dil çiftine göre dosya: `v1-mlkit_p2-en-tr.jsonl`. */
-        fun file(directory: File, engine: String, source: String, target: String): File =
-            File(directory, listOf("v$FORMAT_VERSION", engine, source, target).joinToString("-") { safe(it) } + ".jsonl")
+        fun file(directory: File, engine: String, source: String, target: String): File {
+            // Basit motor adlarında önceki dosya yolu korunur.
+            if (listOf(engine, source, target).all { legacySafe(it) }) {
+                return File(directory, listOf("v$FORMAT_VERSION", engine, source, target).joinToString("-") { safe(it) } + ".jsonl")
+            }
+            // Noktalama karakterlerini '_' yapmak farklı model kimliklerinin aynı dosyayı paylaşmasına yol açıyordu
+            // (Mac ve Windows ile aynı SHA-256 dosya adı).
+            val key = listOf(engine, source, target).joinToString("\u0000")
+            val digest = MessageDigest.getInstance("SHA-256").digest(key.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+            return File(directory, "v${FORMAT_VERSION}h-$digest.jsonl")
+        }
+
+        private fun legacySafe(part: String) = part.isNotEmpty() && part.all { it in 'a'..'z' || it in '0'..'9' || it == '-' }
 
         private val opened = mutableMapOf<String, TranslationCache>()
 
