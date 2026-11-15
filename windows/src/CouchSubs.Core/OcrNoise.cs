@@ -94,7 +94,19 @@ public static partial class OcrNoise
 
     /// <summary>Üç ve daha çok harfli, ünlüsüz ve kısaltma olmayan (tümü büyük harf değil) sözcük: İngilizcede olmaz ("Gtt", "rnnk").</summary>
     private static bool Vowelless(string letters) =>
-        letters.Length >= 3 && !letters.All(char.IsUpper) && letters.ToLowerInvariant().IndexOfAny("aeiouyäöüıàáâèéêìíîòóôùúû".ToCharArray()) < 0;
+        letters.Length >= 3 && !letters.All(char.IsUpper) && letters.ToLowerInvariant().IndexOfAny("aeiouyäöüıàáâèéêìíîòóôùúû".ToCharArray()) < 0
+        && !Interjections.Contains(Collapsed(letters.ToLowerInvariant()));
+
+    /// <summary>Ünlüsüz ama gerçek ünlemler ("Hmm", "Shh", "Brr", "Grr", "Psst", "Pfft", "Mmm", "Zzz", "Tsk"); art arda tekrarlar tek harf sayılır.</summary>
+    private static readonly HashSet<string> Interjections = ["hm", "m", "sh", "br", "gr", "pst", "pft", "tsk", "hrm", "z", "pht"];
+
+    private static string Collapsed(string text)
+    {
+        var result = new System.Text.StringBuilder();
+        foreach (var character in text)
+            if (result.Length == 0 || result[^1] != character) result.Append(character);
+        return result.ToString();
+    }
 
     /// <summary>"word", "WORD", "Word", "McDonald", "don't": büyük harf yalnız başta ya da baştan bir dizi.</summary>
     private static bool NormalCase(string core)

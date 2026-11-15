@@ -67,6 +67,7 @@ class ParityTest {
     @Test
     fun cleanVowelReadingScoresHigherThanVowellessOcrWord() {
         assertTrue(OcrNoise.score("Get to the gate now.") > OcrNoise.score("Gtt to the gate now."))
+        for (word in listOf("Hmm", "Shh", "Brr", "Psst", "Mmm")) assertTrue(word, OcrNoise.score("$word!") > 0)
     }
 
     @Test

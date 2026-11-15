@@ -76,7 +76,17 @@ object OcrNoise {
 
     /** Üç ve daha çok harfli, ünlüsüz ve kısaltma olmayan (tümü büyük harf değil) sözcük: İngilizcede olmaz ("Gtt", "rnnk"). */
     private fun vowelless(letters: String): Boolean =
-        letters.length >= 3 && !letters.all { it.isUpperCase() } && letters.lowercase().none { it in "aeiouyäöüıàáâèéêìíîòóôùúû" }
+        letters.length >= 3 && !letters.all { it.isUpperCase() } && letters.lowercase().none { it in "aeiouyäöüıàáâèéêìíîòóôùúû" } &&
+            collapsed(letters.lowercase()) !in interjections
+
+    /** Ünlüsüz ama gerçek ünlemler ("Hmm", "Shh", "Brr", "Grr", "Psst", "Pfft", "Mmm", "Zzz", "Tsk"); art arda tekrarlar tek harf sayılır. */
+    private val interjections = setOf("hm", "m", "sh", "br", "gr", "pst", "pft", "tsk", "hrm", "z", "pht")
+
+    private fun collapsed(text: String): String {
+        val result = StringBuilder()
+        for (character in text) if (result.isEmpty() || result.last() != character) result.append(character)
+        return result.toString()
+    }
 
     private fun normalCase(core: String): Boolean {
         val letters = core.filter { it.isLetter() }

@@ -84,6 +84,16 @@ public enum OcrNoise {
     private static func vowelless(_ letters: String) -> Bool {
         letters.count >= 3 && !letters.allSatisfy(\.isUppercase)
             && !letters.lowercased().contains(where: { "aeiouyäöüıàáâèéêìíîòóôùúû".contains($0) })
+            && !interjections.contains(collapsed(letters.lowercased()))
+    }
+
+    /// Ünlüsüz ama gerçek ünlemler ("Hmm", "Shh", "Brr", "Grr", "Psst", "Pfft", "Mmm", "Zzz", "Tsk"); art arda tekrarlar tek harf sayılır.
+    private static let interjections: Set<String> = ["hm", "m", "sh", "br", "gr", "pst", "pft", "tsk", "hrm", "z", "pht"]
+
+    private static func collapsed(_ text: String) -> String {
+        var result = ""
+        for character in text where character != result.last { result.append(character) }
+        return result
     }
 
     /// "word", "WORD", "Word", "McDonald", "don't": büyük harf yalnız başta ya da baştan bir dizi.
