@@ -4,9 +4,10 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 
-const dir = process.argv[2] ?? new URL("../../../core/Sources/CouchSubsCore/Resources/packs", import.meta.url).pathname;
+const dir = process.argv[2] ?? fileURLToPath(new URL("../../../core/Sources/CouchSubsCore/Resources/packs", import.meta.url));
 const version = Number(process.argv[3] ?? Math.floor(Date.now() / 1000));
 
 const packs = readdirSync(dir)
