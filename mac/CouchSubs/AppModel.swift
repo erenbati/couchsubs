@@ -1143,11 +1143,12 @@ final class AppModel: ObservableObject {
     /// LG geliştirici modunun 1000 saatlik süresini günde en çok bir kez baştan başlatır; kullanıcı TV'den uzatmak
     /// zorunda kalmaz.
     private func renewDevSessionIfDue(tv: LGTV, devKey: String) async {
-        let last = defaults.object(forKey: StoreKey.devSessionRenewed) as? Date ?? .distantPast
+        let key = StoreKey.devSessionRenewedFor(host: tv.host)
+        let last = defaults.object(forKey: key) as? Date ?? .distantPast
         guard Date().timeIntervalSince(last) > 20 * 3600 else { return }
         if let hours = await services.renewDevSession(host: tv.host, devKey: devKey) {
             devModeHoursLeft = hours
-            defaults.set(Date(), forKey: StoreKey.devSessionRenewed)
+            defaults.set(Date(), forKey: key)
         }
     }
 

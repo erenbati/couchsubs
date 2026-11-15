@@ -758,12 +758,14 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     /// </summary>
     private async Task RenewDevSessionIfDueAsync(LgTv target, string devKey)
     {
-        var last = store.Load<DateTimeOffset?>(StoreKeys.DevSessionRenewed) ?? DateTimeOffset.MinValue;
+        // Süre TV başına tutulur: ikinci TV'nin uzatması birincinin kaydıyla atlanmaz.
+        var key = StoreKeys.DevSessionRenewedFor(target.Host);
+        var last = store.Load<DateTimeOffset?>(key) ?? DateTimeOffset.MinValue;
         if (DateTimeOffset.UtcNow - last < TimeSpan.FromHours(20)) return;
         if (await services.RenewDevSessionAsync(target.Host, devKey) is { } hours)
         {
             DevModeHoursLeft = hours;
-            store.Save(StoreKeys.DevSessionRenewed, (DateTimeOffset?)DateTimeOffset.UtcNow);
+            store.Save(key, (DateTimeOffset?)DateTimeOffset.UtcNow);
         }
     }
 

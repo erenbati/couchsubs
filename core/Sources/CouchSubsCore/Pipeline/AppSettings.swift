@@ -13,6 +13,10 @@ public enum StoreKey {
     public static let tvAppVersion = "tvAppVersion"
     /// LG geliştirici modu süresinin son uzatıldığı an.
     public static let devSessionRenewed = "devSessionRenewed"
+    /// Aynı süre TV adresine göre tutulur; ikinci TV birincinin kaydıyla atlanmaz.
+    public static func devSessionRenewedFor(host: String) -> String {
+        "devSessionRenewed.\(host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+    }
     public static let settings = "settings"
     /// İkinci hesabın PS5 giriş şifresi (4 hane, isteğe bağlı); PS5 isterse oturum açılırken gönderilir.
     public static let loginPasscode = "loginPasscode"

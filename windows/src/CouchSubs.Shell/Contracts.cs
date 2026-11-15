@@ -19,6 +19,7 @@ public static class StoreKeys
     public const string TvAppVersion = "tvAppVersion";
     /// <summary>LG geliştirici modu süresinin son uzatıldığı an.</summary>
     public const string DevSessionRenewed = "devSessionRenewed";
+    public static string DevSessionRenewedFor(string host) => $"{DevSessionRenewed}.{host.Trim().ToLowerInvariant()}";
     /// <summary>Kullanıcının DeepL anahtarı (isteğe bağlı çevrimiçi çeviri).</summary>
     public const string DeepLKey = "deepLKey";
     /// <summary>Kullanıcının yapay zekâ anahtarları (isteğe bağlı çevrimiçi çeviri).</summary>
