@@ -8,7 +8,7 @@ kendisi bekler; bu sayfa aynı adımların ayrıntılı hâlidir. Önce TV'nizin
 |---|---|---|
 | **LG** (webOS 4 ve üstü) | Gerçek TV'de denendi. CouchSubs TV uygulamasını kendisi kurar | [LG](#lg-tv) |
 | **Samsung** (Tizen, 2019 ve sonrası) | Gerçek TV'de denendi (75" Neo QLED). CouchSubs kendisi kurar, bir kez Samsung girişi ister | [Samsung](#samsung-tv) |
-| **Samsung** (Tizen 3.0–4.0, 2017–2018) | Deneysel: bir kullanıcı UE43MU7000U'da (2017) elle kurup çalıştırdı; CouchSubs'ın kendi kurulumu bu TV'lerde henüz denenmedi | [Samsung](#20172018-samsung-tvler-deneysel) |
+| **Samsung** (Tizen 2.4–4.0, 2016–2018) | Deneysel: kullanıcılar UE43MU7000U'da (2017) ve 40KU7000'de (2016) elle kurup çalıştırdı; CouchSubs'ın kendi kurulumu bu TV'lerde henüz denenmedi | [Samsung](#20162018-samsung-tvler-deneysel) |
 | **Android TV / Google TV** (Vestel, Arçelik, Beko, Grundig, Philips ve diğerleri) | Gerçek TV'de denendi. CouchSubs ağ üzerinden kendisi kurar | [Android TV](#android-tv--google-tv) |
 | **Vestel, Arçelik, Beko, Grundig'in Linux modelleri, Philips Saphi ve Titan OS** | Desteklenmiyor: bu TV'lere uygulama kurmanın bir yolunu bulamadık | |
 
@@ -149,17 +149,17 @@ güncellemelerde giriş istenmez. Güncelleme için TV'nin geliştirici modunda 
 çıkarsa ekrandaki **Kurulum günlüğünü paylaş** ile günlüğü [Issues](https://github.com/yorulmazsinan/couchsubs/issues)
 sayfasına ekleyin.
 
-### 2017–2018 Samsung TV'ler (deneysel)
+### 2016–2018 Samsung TV'ler (deneysel)
 
-Tizen 3.0 (2017, ör. MU serisi) ve Tizen 4.0 (2018, ör. NU serisi) TV'lerde de kurulum aynı adımlarla denenir. Bu
+Tizen 2.4 (2016, ör. KU serisi), Tizen 3.0 (2017, ör. MU serisi) ve Tizen 4.0 (2018, ör. NU serisi) TV'lerde de kurulum aynı adımlarla denenir. Bu
 TV'lerde CouchSubs, kurmadan önce TV'ye özel cihaz profilini de gönderir (Tizen Studio'daki "Permit to install
 applications" adımı). Bir kullanıcı TV uygulamasını UE43MU7000U'da (Tizen 3.0) Tizen Studio ve Apps2Samsung ile elle
-kurdu; çeviri ve HDMI görüntüsü GTA V ve Mafia'da çalıştı. CouchSubs'ın otomatik kurulumu bu TV'lerde henüz
+kurdu; bir başka kullanıcı da 2016 model 40KU7000'de (Tizen 2.4) elle kurdu ve sorunsuz çalıştırdı (#71); çeviri ve HDMI görüntüsü GTA V ve Mafia'da çalıştı. CouchSubs'ın otomatik kurulumu bu TV'lerde henüz
 denenmedi; sonucu [Issues](https://github.com/yorulmazsinan/couchsubs/issues) sayfasına TV modelinizle yazarsanız
 desteği netleştiririz.
 
 - İlk açılışta **bağlantı hatası** görünürse TV'yi güç tuşunu basılı tutarak yeniden başlatın; o kullanıcıda böyle düzeldi.
-- 2016 ve önceki Samsung TV'ler (Tizen 2.x, Orsay) desteklenmez; Tizen 2.x'te CouchSubs bunu kurulumda söyler.
+- 2015 ve önceki Samsung TV'ler (Tizen 2.3 ve eskisi, Orsay) desteklenmez; CouchSubs bunu kurulumda söyler.
 
 ### TV kendiliğinden HDMI'ya geçiyorsa
 

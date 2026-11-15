@@ -3313,6 +3313,22 @@
         }
       }
     },
+    "No picture from the PS5. Is Remote Play turned off, or is the PS5 in rest mode? Check, then start again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No picture from the PS5. Is Remote Play turned off, or is the PS5 in rest mode? Check, then start again."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PS5 görüntüsü alınamıyor; PS Remote Play kapalı mı, PS5 uykuda mı? Kontrol edip yeniden başlatın."
+          }
+        }
+      }
+    },
     "The PS5 didn't accept this pairing. Pair the PS5 again with the second account in Settings.": {
       "localizations": {
         "en": {

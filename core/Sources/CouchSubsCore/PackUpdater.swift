@@ -158,6 +158,9 @@ public actor PackUpdater {
                 }
             } catch {
                 try? FileManager.default.removeItem(at: temporary)
+                if let existing, onDisk != nil {
+                    kept.append(Installed(id: existing.id, title: existing.title, version: -1, sha256: existing.sha256))
+                }
                 continue
             }
             kept.append(Installed(id: pack.id, title: pack.title, version: pack.version, sha256: wanted))

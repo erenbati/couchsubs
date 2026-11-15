@@ -44,7 +44,7 @@ class SamsungInstallerTest {
 
     @Test
     fun tizenVersionGate() {
-        val cases = listOf("2.4" to (true to false), "2.3.1" to (true to false), "3.0" to (false to true), "4.0" to (false to true),
+        val cases = listOf("2.3.1" to (true to false), "2.4" to (false to true), "2.4.0" to (false to true), "3.0" to (false to true), "4.0" to (false to true),
             "4.0.0" to (false to true), "5.0" to (false to false), "6.5" to (false to false), "9.0" to (false to false), "" to (false to false))
         for ((platform, expected) in cases) {
             assertEquals(platform, expected.first, SamsungInstaller.isTooOld(platform))

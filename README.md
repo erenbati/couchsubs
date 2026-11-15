@@ -76,7 +76,7 @@ kendisi bulur ve tek tıkla günceller. Kurulum istemeyenler için zip paketleri
 |---|---|
 | **LG** (webOS 4 ve üstü) | Gerçek TV'de denendi. Uygulamayı CouchSubs kendisi kurar |
 | **Samsung** (Tizen, 2019 ve sonrası) | Gerçek TV'de denendi (75" Neo QLED). Uygulamayı CouchSubs kendisi kurar; bir kez Samsung hesabıyla giriş istenir |
-| **Samsung** (Tizen 3.0–4.0, 2017–2018) | Deneysel: bir kullanıcı UE43MU7000U'da (2017) elle kurup çalıştırdı; CouchSubs'ın kendi kurulumu bu TV'lerde henüz denenmedi ([ayrıntı](docs/tv-kurulum.md#20172018-samsung-tvler-deneysel)) |
+| **Samsung** (Tizen 2.4–4.0, 2016–2018) | Deneysel: kullanıcılar UE43MU7000U'da (2017) ve 40KU7000'de (2016) elle kurup çalıştırdı; CouchSubs'ın kendi kurulumu bu TV'lerde henüz denenmedi ([ayrıntı](docs/tv-kurulum.md#20162018-samsung-tvler-deneysel)) |
 | **Android TV / Google TV** (Vestel, Arçelik, Beko, Grundig, Philips ve diğerleri) | Gerçek TV'de denendi. Uygulamayı CouchSubs ağ üzerinden kendisi kurar |
 | Vestel, Arçelik, Beko, Grundig'in Linux modelleri, Philips Saphi ve Titan OS | Desteklenmiyor: uygulama kurmanın bir yolunu bulamadık |
 
@@ -240,7 +240,7 @@ PlayStation Network account, and either a Mac on macOS 13 Ventura or later (Appl
 or 11 PC. Apple's free on-device translation needs macOS 26; on older macOS the game packs, Gemini (free key), DeepL or
 AI translation are used.
 
-**TVs:** LG, Samsung (2019 and later; 2017–2018 models experimental) and Android TV / Google TV such as Vestel,
+**TVs:** LG, Samsung (2019 and later; 2016–2018 models experimental) and Android TV / Google TV such as Vestel,
 Arçelik, Beko, Grundig and Philips, all tested on real TVs. CouchSubs installs the TV app on all of them. Mac and
 Windows are tested on real hardware.
 

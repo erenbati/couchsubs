@@ -22,6 +22,7 @@
     <string name="phase_not_found_host">PS5 %1$s adresinde bulunamadı. Açık ve aynı ağda olduğundan emin ol. Yeniden bağlanılıyor…</string>
     <string name="phase_network">PS5\'e ulaşılamıyor. Yeniden bağlanılıyor…</string>
     <string name="phase_registration_invalid">PS5 bu eşlemeyi kabul etmedi. Ayarlar\'dan PS5\'i ikinci hesapla yeniden eşle.</string>
+    <string name="phase_no_picture">PS5 görüntüsü alınamıyor; PS Remote Play kapalı mı, PS5 uykuda mı? Kontrol edip çeviriyi yeniden başlat.</string>
     <string name="phase_not_found">PS5 ağda bulunamadı. Telefon ve PS5 aynı ağda mı?</string>
     <string name="phase_asleep">PS5 dinlenme modundan uyanmadı.</string>
     <string name="phase_passcode">PS5 bu hesap için giriş şifresi istiyor. Ayarlar\'dan şifreyi gir ya da PS5\'te bu hesabın giriş şifresini kapat.</string>
@@ -241,7 +242,7 @@
     <string name="tvapp_update_short">Güncelleme var: %1$s</string>
     <string name="tvinstall_title">TV uygulamasını kur</string>
     <string name="tvinstall_body">CouchSubs TV uygulamasını Samsung TV\'ne bilgisayar olmadan, bu telefondan kurar. Telefon ve TV aynı Wi-Fi\'da olmalı.</string>
-    <string name="tvinstall_supported">Samsung TV\'ler ve akıllı monitörler (2017 ve sonrası).</string>
+    <string name="tvinstall_supported">Samsung TV\'ler ve akıllı monitörler (2016 ve sonrası; 2016–2018 modelleri deneysel).</string>
     <string name="tvinstall_tvs">Ağdaki Samsung TV\'ler</string>
     <string name="tvinstall_searching">TV\'ler aranıyor…</string>
     <string name="tvinstall_none">Samsung TV bulunamadı. TV açık ve aynı Wi-Fi\'da mı? Adresini aşağıya elle de yazabilirsin (TV\'de Ayarlar › Genel › Ağ › Ağ Durumu).</string>
@@ -276,7 +277,7 @@
     <string name="tvinstall_signin_browser">Tarayıcıda aç</string>
     <string name="tvinstall_maintenance">TV\'de “Sunucu bakım altında” yazıyorsa TV, Samsung\'un sunucularına ulaşamıyor: TV\'nin internet bağlantısını, tarih ve saatini kontrol et, TV\'yi yeniden başlatıp tekrar dene.</string>
     <string name="tvinstall_err_unreachable">TV bu telefonu kabul etmedi. TV\'deki geliştirici modu penceresinde Host PC IP\'nin bu telefonun adresi (%1$s) olduğunu kontrol et ve TV\'yi yeniden başlat (güç tuşunu yaklaşık 2 saniye basılı tut).</string>
-    <string name="tvinstall_err_too_old">Bu Samsung TV, CouchSubs TV uygulaması için çok eski (2017 ve sonraki modeller destekleniyor).</string>
+    <string name="tvinstall_err_too_old">Bu Samsung TV, CouchSubs TV uygulaması için çok eski (2016 ve sonraki modeller destekleniyor).</string>
     <string name="tvinstall_err_login">Samsung girişi tamamlanmadı. Tekrar dene ve açılan sayfada girişi bitir.</string>
     <string name="tvinstall_err_certificate">Samsung imza sertifikasını vermedi. Birkaç dakika sonra tekrar dene.</string>
     <string name="tvinstall_err_space">TV\'de boş alan kalmadı. TV\'den kullanmadığın bir uygulamayı kaldırıp tekrar dene.</string>

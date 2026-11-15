@@ -8,7 +8,7 @@ enum TVText {
     static var anyBody: String { String(localized: "Installs and updates the CouchSubs TV app on your Samsung, LG or Android TV from this phone, without a computer. Looking for the TV on your network; you can change the brand later.") }
     static var title: String { String(localized: "Install the TV app") }
     static var body: String { String(localized: "Installs the CouchSubs TV app on your Samsung TV from this phone, without a computer. The phone and the TV must be on the same Wi-Fi.") }
-    static var supported: String { String(localized: "Samsung TVs and smart monitors (2017 and later).") }
+    static var supported: String { String(localized: "Samsung TVs and smart monitors (2016 and later; 2016–2018 models are experimental).") }
     static var tvs: String { String(localized: "Samsung TVs on the network") }
     static var searching: String { String(localized: "Looking for TVs…") }
     static var none: String { String(localized: "No Samsung TV found. Is the TV on and on the same Wi-Fi? You can also type its address below (on the TV: Settings › General › Network › Network Status).") }
@@ -41,7 +41,7 @@ enum TVText {
     static var signinTitle: String { String(localized: "Samsung sign-in") }
     static var maintenance: String { String(localized: "If the TV shows “Server under maintenance”, it cannot reach Samsung's servers: check the TV's internet connection and its date and time, restart the TV and try again.") }
     static func errUnreachable(_ a0: String) -> String { String(format: String(localized: "The TV did not accept this phone. In the TV's Developer mode window, check that Host PC IP is this phone's address (%@), then restart the TV (hold the power button for about 2 seconds)."), a0) }
-    static var errTooOld: String { String(localized: "This Samsung TV is too old for the CouchSubs TV app (2017 models and later are supported).") }
+    static var errTooOld: String { String(localized: "This Samsung TV is too old for the CouchSubs TV app (2016 models and later are supported).") }
     static var errLogin: String { String(localized: "Samsung sign-in did not complete. Try again and finish signing in on the page that opens.") }
     static var errCertificate: String { String(localized: "Samsung did not issue the signing certificate. Try again in a few minutes.") }
     static var errSpace: String { String(localized: "The TV is out of free space. Remove an app you do not use from the TV and try again.") }
@@ -102,7 +102,7 @@ enum TVText {
     static var androidErrPairing: String { String(localized: "Pairing failed: the code is wrong or the pairing window on the TV closed. Open the window again, type the new code and port and try again.") }
     static var androidErrOtherCopy: String { String(localized: "CouchSubs on the TV is signed with another key or is newer, so this version cannot be installed over it. The button below removes the TV's copy and installs the new one. The TV app's settings are deleted.") }
     static var entry: String { String(localized: "Install the TV app from this phone") }
-    static var samsungNote: String { String(localized: "Samsung TVs and smart monitors (2017 and later).") }
+    static var samsungNote: String { String(localized: "Samsung TVs and smart monitors (2016 and later; 2016–2018 models are experimental).") }
     static var androidNote: String { String(localized: "Debugging must be on in the TV's developer options. You can turn it off after the install.") }
     static var lgNote: String { String(localized: "Needs LG's Developer Mode app on the TV and a free LG developer account.") }
     static var lgSessionNote: String { String(localized: "Developer mode stays on for at most 1000 hours. CouchSubs extends it by itself once a day while the phone can reach the TV.") }

@@ -504,8 +504,8 @@ static void cs_session_free(JNIEnv *env, cs_session *session)
 /* Oturumu başlatır; 0 dönerse lastError'a nedeni yazar. listener.onEvent(type, reason, text) libchiaki'nin iş
  * parçacığından çağrılır. Görüntü surface'e (ImageReader) çözülür. */
 JNIEXPORT jlong JNICALL JNI_FCN(sessionStart)(JNIEnv *env, jclass cls, jstring host_string, jbyteArray regist_key_array,
-		jbyteArray morning_array, jbyteArray account_array, jint width, jint height, jobject surface, jobject listener,
-		jobject outcome)
+		jbyteArray morning_array, jbyteArray account_array, jint width, jint height, jobject surface, jboolean swap_decoder,
+		jobject listener, jobject outcome)
 {
 	(void)cls;
 	cs_session *session = calloc(1, sizeof(cs_session));
@@ -517,7 +517,7 @@ JNIEXPORT jlong JNICALL JNI_FCN(sessionStart)(JNIEnv *env, jclass cls, jstring h
 	session->on_event = (*env)->GetMethodID(env, (*env)->GetObjectClass(env, listener), "onEvent", "(IILjava/lang/String;)V");
 
 	if(couchsubs_video_decoder_init(&session->decoder, &session->log, width, height) != CHIAKI_ERR_SUCCESS
-			|| !couchsubs_video_decoder_start(&session->decoder, env, surface))
+			|| !couchsubs_video_decoder_start(&session->decoder, env, surface, swap_decoder == JNI_TRUE))
 	{
 		set_object(env, outcome, "errors", "Ljava/lang/String;", (*env)->NewStringUTF(env, "H.264 decoder could not be opened"));
 		cs_session_free(env, session);

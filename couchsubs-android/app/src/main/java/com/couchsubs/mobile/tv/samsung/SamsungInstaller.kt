@@ -55,8 +55,8 @@ class SamsungInstaller(
         const val APP_ID = "CouchSubsT.CouchSubs"
         const val PACKAGE_ID = "CouchSubsT"
 
-        /** Desteklenen en eski Tizen: 3.0 (2017). Tizen 2.x'in kurulum yolu farklıdır; reddedilir. */
-        const val MINIMUM_TIZEN = "3.0"
+        /** Desteklenen en eski Tizen: 2.4 (2016, deneysel; #71 e göre elle kurulumu çalışıyor). 2.3 ve eskisi reddedilir. */
+        const val MINIMUM_TIZEN = "2.4"
 
         /** Bu sürüme kadar (dahil) TV, kurulumdan önce dağıtıcının cihaz profilini (device-profile.xml) ister. */
         const val DEVICE_PROFILE_UP_TO = "4.0"
@@ -141,7 +141,7 @@ class SamsungInstaller(
             val toolPath = capabilities["sdk_toolpath"]?.trim()?.takeIf { it.isNotEmpty() } ?: "/opt/usr/apps/tmp"
             log.write("TV: Tizen ${platform.ifEmpty { "?" }}, sdk_toolpath $toolPath")
             if (isTooOld(platform)) throw SamsungInstallException(SamsungInstallError.TOO_OLD, "Tizen $platform")
-            if (platform.isNotEmpty() && SamsungDiagnostics.isNewer("5.0", platform)) log.write("Tizen $platform: 2017–2018 TV'si, destek deneysel.")
+            if (platform.isNotEmpty() && SamsungDiagnostics.isNewer("5.0", platform)) log.write("Tizen $platform: 2016–2018 TV si, destek deneysel.")
 
             val onTv = readInstalledVersion(device)
             if (version != null && onTv != null && !SamsungDiagnostics.isNewer(version, onTv)) {

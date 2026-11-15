@@ -40,6 +40,51 @@ class PictureWatchdogTest {
         assertNotNull(watchdog.stalledMs(PictureWatchdog.STALL_AFTER_MS))
     }
 
+    /** İlk kare 5 sn'de gelmezse takılma sayılır (çözücü türü değiştirilip yeniden denenecek). */
+    @Test
+    fun firstPictureMissingForFiveSecondsIsStalled() {
+        val watchdog = PictureWatchdog()
+        watchdog.connected(0)
+        assertNull(watchdog.stalledMs(PictureWatchdog.FIRST_PICTURE_MS - 1))
+        assertNotNull(watchdog.stalledMs(PictureWatchdog.FIRST_PICTURE_MS))
+    }
+
+    /**
+     * Hata: hiç görüntü gelmeyen oturum her 8 sn'de bir sonsuza dek yeniden kuruluyordu ("Bağlantı koptu, yeniden
+     * bağlanılıyor"). Şimdi öbür çözücü türü denenir, art arda 3 görüntüsüz oturumdan sonra durulur.
+     */
+    @Test
+    fun noPictureSessionsSwapDecoderThenGiveUp() {
+        val watchdog = PictureWatchdog()
+        assertEquals(false, watchdog.swapDecoder)
+        watchdog.connected(0)
+        assertEquals(PictureWatchdog.Next.RECONNECT_OTHER_DECODER, watchdog.stalled())
+        assertEquals(true, watchdog.swapDecoder)
+        watchdog.ended()
+        watchdog.connected(10_000)
+        assertEquals(PictureWatchdog.Next.RECONNECT_OTHER_DECODER, watchdog.stalled())
+        assertEquals(false, watchdog.swapDecoder)
+        watchdog.ended()
+        watchdog.connected(20_000)
+        assertEquals(PictureWatchdog.Next.GIVE_UP, watchdog.stalled())
+        watchdog.reset()
+        assertEquals(0, watchdog.noPictureStreak)
+    }
+
+    /** Görüntü gelmiş oturum kesilirse aynı çözücüyle yeniden kurulur; görüntü sayacı sıfırlar. */
+    @Test
+    fun pictureResetsNoPictureStreak() {
+        val watchdog = PictureWatchdog()
+        watchdog.connected(0)
+        watchdog.stalled()
+        watchdog.ended()
+        watchdog.connected(10_000)
+        watchdog.picture(11_000)
+        assertEquals(0, watchdog.noPictureStreak)
+        assertEquals(false, watchdog.swapDecoder)
+        assertEquals(PictureWatchdog.Next.RECONNECT, watchdog.stalled())
+    }
+
     /** Bağlı değilken görüntü beklenmez; geç gelen eski kare de bekçiyi kurmaz. */
     @Test
     fun notConnectedIsNeverStalled() {

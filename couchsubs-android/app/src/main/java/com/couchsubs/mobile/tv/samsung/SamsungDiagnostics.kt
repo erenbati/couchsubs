@@ -9,7 +9,7 @@ enum class SamsungInstallError {
     UNREACHABLE,
     LOGIN_FAILED,
     CERTIFICATE_FAILED,
-    /** TV, Tizen 3.0'dan (2017) eski. */
+    /** TV, Tizen 2.4'ten (2016) eski. */
     TOO_OLD,
     INSTALL_FAILED,
     NOT_ENOUGH_SPACE,

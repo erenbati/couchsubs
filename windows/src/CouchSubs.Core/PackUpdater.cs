@@ -151,6 +151,7 @@ public sealed partial class PackUpdater : IDisposable
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException)
                 {
                     try { File.Delete(temporary); } catch (IOException) { }
+                    if (existing is not null && onDisk is not null) kept.Add(existing with { Version = -1 });
                     continue;
                 }
                 kept.Add(new Installed(pack.Id, pack.Title, pack.Version, wanted));

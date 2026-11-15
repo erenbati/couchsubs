@@ -131,6 +131,34 @@ final class PackUpdaterTests: XCTestCase {
         XCTAssertEqual(content("gta-6"), Data("one".utf8))
     }
 
+    func testFailedReplacementRetainsInstalledPackAndRetries() async throws {
+        server.add("gta-6", version: 1, data: Data("one".utf8))
+        let updater = makeUpdater()
+        let first = await updater.refresh()
+        XCTAssertEqual(first.downloaded, ["gta-6"])
+        let installedBefore = await updater.installed
+        XCTAssertEqual(installedBefore.count, 1)
+        let original = try XCTUnwrap(installedBefore.first)
+
+        server.add("gta-6", version: 2, data: Data("two".utf8))
+        let staging = packs.appendingPathComponent(".gta-6.download")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+        let failed = await updater.refresh(force: true)
+
+        XCTAssertEqual(failed.downloaded, [])
+        XCTAssertEqual(content("gta-6"), Data("one".utf8))
+        let retained = await updater.installed
+        XCTAssertEqual(retained, [
+            .init(id: "gta-6", title: "gta-6", version: -1, sha256: original.sha256)
+        ])
+
+        let retried = await updater.refresh()
+        XCTAssertEqual(retried.downloaded, ["gta-6"])
+        XCTAssertEqual(content("gta-6"), Data("two".utf8))
+        let installedAfter = await updater.installed
+        XCTAssertEqual(installedAfter.first?.version, 2)
+    }
+
     func testRemovedPackIsDeletedAndUnreachableServerKeepsPacks() async {
         server.add("gta-6", version: 1, data: Data("one".utf8))
         let updater = makeUpdater()

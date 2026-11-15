@@ -67,15 +67,50 @@ struct PictureWatchdog {
     static let stallAfter: TimeInterval = 8
     /// Yeniden bağlanırken ana ekranda "Yeniden bağlanılıyor… (…)" içinde görünen neden.
     static let reason = "no picture from the PS5"
+    /// Art arda bu kadar oturumda hiç görüntü gelmezse yeniden bağlanma bırakılır (Android'deki eşi ile aynı).
+    static let maxNoPictureSessions = 3
+
+    /// Takılma sonrası ne yapılacak.
+    enum Next: Equatable {
+        /// Yeniden kur.
+        case reconnect
+        /// Art arda `maxNoPictureSessions` oturumda hiç görüntü gelmedi: sonsuz "Yeniden bağlanılıyor…" yerine dur.
+        case giveUp
+    }
+
     /// Bağlıyken son görüntünün (ya da bağlanmanın) anı; bağlı değilken nil.
     private var since: Date?
+    /// Bu oturumda görüntü geldi mi.
+    private var hasPicture = false
+    /// Art arda hiç görüntü gelmeyen oturum sayısı; görüntü gelince sıfırlanır.
+    private(set) var noPictureSessions = 0
+
+    /// Kullanıcı başlattı ya da ağ değişti: sayaç sıfırdan.
+    mutating func reset() {
+        since = nil
+        hasPicture = false
+        noPictureSessions = 0
+    }
 
     /// Oturum bağlandı: süre bağlanma anından sayılır (ilk kare hiç gelmezse de yakalanır).
-    mutating func connected(at now: Date = Date()) { since = now }
+    mutating func connected(at now: Date = Date()) {
+        since = now
+        hasPicture = false
+    }
 
     /// Görüntü geldi.
     mutating func picture(at now: Date = Date()) {
-        if since != nil { since = now }
+        guard since != nil else { return }
+        since = now
+        hasPicture = true
+        noPictureSessions = 0
+    }
+
+    /// `stalled` boşluk bildirdi; oturum kapatılırken ne yapılacağı.
+    mutating func afterStall() -> Next {
+        if hasPicture { return .reconnect }
+        noPictureSessions += 1
+        return noPictureSessions >= Self.maxNoPictureSessions ? .giveUp : .reconnect
     }
 
     /// Oturum kapandı ya da yeniden kuruluyor.
@@ -106,6 +141,9 @@ public enum DisconnectReason: Equatable, Sendable {
     /// PS5 oturum isteğinde kaydı kabul etmedi (0x80108b09 kayıt geçersiz, 0x80108b02 hesap tanınmıyor). Yeniden denemek
     /// aynı yere çıkar; PS5 ikinci hesapla yeniden eşlenmelidir.
     case registrationInvalid
+    /// Bağlantı kuruluyor ama art arda `PictureWatchdog.maxNoPictureSessions` oturumda PS5'ten hiç görüntü gelmedi;
+    /// yeniden bağlanma bırakıldı (eskiden sonsuza kadar "Yeniden bağlanılıyor…").
+    case noPicture
     /// Kayıtlı adreste PS5 aramaya yanıt vermedi ve oturum da açılamadı (değer: adres).
     case notFound(String)
     case other(String)
@@ -332,6 +370,7 @@ public final class StreamSession: @unchecked Sendable {
         let current = bump(running: true)
         queue.async { [weak self] in
             self?.policy.reset()
+            self?.watch { $0.reset() }
             self?.connect(current)
         }
     }
@@ -350,6 +389,7 @@ public final class StreamSession: @unchecked Sendable {
             guard let self else { return }
             self.closeBox()
             self.policy.reset()
+            self.watch { $0.reset() }
             self.connect(current)
         }
     }
@@ -529,9 +569,16 @@ public final class StreamSession: @unchecked Sendable {
         queue.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self, self.box?.generation == boxGeneration, self.isCurrent(boxGeneration) else { return }
             guard let gap = self.watch({ $0.stalled() }) else { return self.scheduleWatch(boxGeneration) }
-            RemotePlayLog.write("PS5'ten \(Int(gap)) sn'dir görüntü gelmiyor (bağlantı açık); oturum yeniden kuruluyor")
+            let next = self.watch { $0.afterStall() }
+            let streak = self.watch { $0.noPictureSessions }
+            RemotePlayLog.write("PS5'ten \(Int(gap)) sn'dir görüntü gelmiyor (bağlantı açık, art arda görüntüsüz oturum \(streak)): \(next)")
             self.closeBox()
             self.policy.ended()
+            if next == .giveUp {
+                // Görüntü hiç gelmiyor: sonsuz yeniden bağlanma döngüsü yerine dur ve nedenini söyle.
+                _ = self.bump(running: false)
+                return self.emit(.disconnected(.noPicture))
+            }
             self.scheduleReconnect(boxGeneration, reason: .other(PictureWatchdog.reason))
         }
     }

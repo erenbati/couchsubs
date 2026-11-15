@@ -92,6 +92,27 @@ final class PictureWatchdogTests: XCTestCase {
         XCTAssertNotNil(watchdog.stalled(at: start.addingTimeInterval(PictureWatchdog.stallAfter)))
     }
 
+    /// Hata: hiç görüntü gelmeyen oturum sonsuza dek yeniden kuruluyordu ("Yeniden bağlanılıyor…"). Art arda 3
+    /// görüntüsüz oturumdan sonra durulur; görüntü gelirse sayaç sıfırlanır (Android'deki eşi ile aynı).
+    func testNoPictureSessionsGiveUpAfterThree() {
+        var watchdog = PictureWatchdog()
+        watchdog.connected(at: start)
+        XCTAssertEqual(watchdog.afterStall(), .reconnect)
+        watchdog.ended()
+        watchdog.connected(at: start)
+        watchdog.picture(at: start.addingTimeInterval(1))
+        XCTAssertEqual(watchdog.noPictureSessions, 0)
+        XCTAssertEqual(watchdog.afterStall(), .reconnect)
+        for _ in 1..<PictureWatchdog.maxNoPictureSessions {
+            watchdog.connected(at: start)
+            XCTAssertEqual(watchdog.afterStall(), .reconnect)
+        }
+        watchdog.connected(at: start)
+        XCTAssertEqual(watchdog.afterStall(), .giveUp)
+        watchdog.reset()
+        XCTAssertEqual(watchdog.noPictureSessions, 0)
+    }
+
     /// Bağlı değilken (bağlanıyor, koptu, durduruldu) görüntü beklenmez; geç gelen eski kare de bekçiyi kurmaz.
     func testNotConnectedIsNeverStalled() {
         var watchdog = PictureWatchdog()

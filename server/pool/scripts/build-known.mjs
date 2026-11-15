@@ -6,9 +6,10 @@
 //   npx wrangler r2 object put couchsubs-packs/auto/known-keys.bin --file known-keys.bin --remote
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 
-const dir = process.argv[2] ?? new URL("../../../core/Sources/CouchSubsCore/Resources/packs", import.meta.url).pathname;
+const dir = process.argv[2] ?? fileURLToPath(new URL("../../../core/Sources/CouchSubsCore/Resources/packs", import.meta.url));
 const keys = new Set();
 for (const name of readdirSync(dir).filter((n) => n.endsWith(".json.gz") && !n.startsWith("pool-"))) {
   const pack = JSON.parse(gunzipSync(readFileSync(join(dir, name))).toString("utf8"));

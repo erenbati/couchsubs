@@ -421,6 +421,7 @@ class TranslationService : Service() {
             DisconnectKind.NOT_FOUND -> state.detail?.let { getString(R.string.phase_not_found_host, it) } ?: getString(R.string.phase_not_found)
             DisconnectKind.NETWORK -> getString(R.string.phase_network)
             DisconnectKind.REGISTRATION_INVALID -> getString(R.string.phase_registration_invalid)
+            DisconnectKind.NO_PICTURE -> getString(R.string.phase_no_picture)
             DisconnectKind.CONSOLE_ASLEEP -> getString(R.string.phase_asleep)
             DisconnectKind.LOGIN_PASSCODE -> getString(R.string.phase_passcode)
             DisconnectKind.LOGIN_PASSCODE_INCORRECT -> getString(R.string.phase_passcode_incorrect)

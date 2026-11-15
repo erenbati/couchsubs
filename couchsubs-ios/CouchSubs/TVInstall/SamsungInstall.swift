@@ -551,7 +551,7 @@ enum SamsungLogin {
 final class SamsungInstaller {
     static let appId = "CouchSubsT.CouchSubs"
     static let packageId = "CouchSubsT"
-    static let minimumTizen = "3.0"
+    static let minimumTizen = "2.4"
     static let deviceProfileUpTo = "4.0"
 
     struct Result: Sendable {

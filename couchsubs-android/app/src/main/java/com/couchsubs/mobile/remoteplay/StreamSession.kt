@@ -8,6 +8,8 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.Log
+import com.couchsubs.mobile.account.Backend
+import com.couchsubs.mobile.account.Telemetry
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -23,6 +25,11 @@ enum class DisconnectKind {
      * aynı yere çıkar; PS5 ikinci hesapla yeniden eşlenmelidir.
      */
     REGISTRATION_INVALID,
+    /**
+     * Bağlantı kuruluyor ama art arda [PictureWatchdog.MAX_NO_PICTURE_SESSIONS] oturumda PS5'ten hiç görüntü gelmedi
+     * (iki çözücü türüyle de). Sonsuz "Bağlantı koptu, yeniden bağlanılıyor" döngüsü yerine durulur.
+     */
+    NO_PICTURE,
     OTHER;
 
     companion object {
@@ -54,6 +61,9 @@ enum class DisconnectKind {
         fun sessionRequestHint(lines: List<String>): DisconnectKind? = lines.mapNotNull(::sessionRequestHint).lastOrNull()
     }
 }
+
+/** Art arda oturumlarda PS5'ten hiç görüntü gelmedi (Crashlytics'e günlüğüyle birlikte gider). */
+class NoPictureException(message: String) : RuntimeException(message)
 
 /** PS5 oturum giriş şifresi (4 hane). PS5 ikinci hesapta şifre isterse Ayarlar'da kayıtlı şifre gönderilir. */
 object LoginPasscode {
@@ -110,21 +120,64 @@ class PictureWatchdog {
     companion object {
         /** IDR ile olağan toparlanma bir saniyeden kısa sürer; bundan uzun boşluk takılmadır. */
         const val STALL_AFTER_MS = 8_000L
+        /** Bağlandıktan sonra ilk kare bu sürede gelmezse çözücü türü değiştirilip yeniden denenir. */
+        const val FIRST_PICTURE_MS = 5_000L
+        /** Art arda bu kadar oturumda hiç görüntü gelmezse yeniden bağlanma bırakılır. */
+        const val MAX_NO_PICTURE_SESSIONS = 3
         /** Yeniden bağlanırken görünen neden. */
         const val REASON = "no picture from the PS5"
     }
 
+    /** Takılma sonrası ne yapılacak. */
+    enum class Next {
+        /** Oturumda görüntü gelmişti, sonra kesildi: aynı çözücüyle yeniden kur. */
+        RECONNECT,
+        /** Oturumda hiç görüntü gelmedi: çözücü türünü değiştirip ([swapDecoder]) yeniden kur. */
+        RECONNECT_OTHER_DECODER,
+        /** Art arda [MAX_NO_PICTURE_SESSIONS] oturumda görüntü yok: döngüyü bırak. */
+        GIVE_UP,
+    }
+
     /** Bağlıyken son görüntünün (ya da bağlanmanın) anı; bağlı değilken null. */
     private var since: Long? = null
+    /** Bu oturumda görüntü geldi mi. */
+    private var hasPicture = false
+    /** Art arda hiç görüntü gelmeyen oturum sayısı; görüntü gelince sıfırlanır. */
+    private var noPictureSessions = 0
+
+    /** Bir sonraki oturum, üreticiye göre seçilen çözücü türünün (yazılım/donanım) tersiyle başlasın mı. */
+    val swapDecoder: Boolean @Synchronized get() = noPictureSessions % 2 == 1
+
+    /** Art arda görüntüsüz oturum sayısı (tanı). */
+    val noPictureStreak: Int @Synchronized get() = noPictureSessions
+
+    /** Kullanıcı başlattı ya da ağ değişti: sayaç sıfırdan. */
+    @Synchronized fun reset() {
+        since = null
+        hasPicture = false
+        noPictureSessions = 0
+    }
 
     /** Oturum bağlandı: süre bağlanma anından sayılır (ilk kare hiç gelmezse de yakalanır). */
     @Synchronized fun connected(nowMs: Long) {
         since = nowMs
+        hasPicture = false
     }
 
     /** Görüntü geldi (kare iş parçacığından). */
     @Synchronized fun picture(nowMs: Long) {
-        if (since != null) since = nowMs
+        if (since != null) {
+            since = nowMs
+            hasPicture = true
+            noPictureSessions = 0
+        }
+    }
+
+    /** [stalledMs] boşluk bildirdi; oturum kapatılırken ne yapılacağı. */
+    @Synchronized fun stalled(): Next {
+        if (hasPicture) return Next.RECONNECT
+        noPictureSessions++
+        return if (noPictureSessions >= MAX_NO_PICTURE_SESSIONS) Next.GIVE_UP else Next.RECONNECT_OTHER_DECODER
     }
 
     /** Oturum kapandı ya da yeniden kuruluyor. */
@@ -132,11 +185,14 @@ class PictureWatchdog {
         since = null
     }
 
-    /** Bağlıyken [STALL_AFTER_MS]'den uzun süredir görüntü yoksa boşluğun süresi (ms); yoksa null. */
+    /**
+     * Bağlıyken [STALL_AFTER_MS]'den (oturumda henüz hiç görüntü gelmediyse [FIRST_PICTURE_MS]'den) uzun süredir
+     * görüntü yoksa boşluğun süresi (ms); yoksa null.
+     */
     @Synchronized fun stalledMs(nowMs: Long): Long? {
         val last = since ?: return null
         val gap = nowMs - last
-        return if (gap >= STALL_AFTER_MS) gap else null
+        return if (gap >= (if (hasPicture) STALL_AFTER_MS else FIRST_PICTURE_MS)) gap else null
     }
 }
 
@@ -183,6 +239,7 @@ class StreamSession(
         val current = bump(true)
         queue.execute {
             policy.reset()
+            watchdog.reset()
             connect(current)
         }
     }
@@ -208,6 +265,7 @@ class StreamSession(
         queue.execute {
             closeNative()
             policy.reset()
+            watchdog.reset()
             connect(current)
         }
     }
@@ -297,7 +355,10 @@ class StreamSession(
         val outcome = NativeOutcome()
         val listener = NativeSessionListener { type, reason, text -> handle(type, reason, text, current) }
         val c = console
-        val ptr = NativeBridge.sessionStart(c.host, c.registKey, c.morning, accountId, width, height, imageReader.surface, listener, outcome)
+        val swapDecoder = watchdog.swapDecoder
+        if (swapDecoder) Backend.breadcrumb("PS5: önceki oturumda görüntü gelmedi; öbür çözücü türüyle deneniyor")
+        val ptr = NativeBridge.sessionStart(c.host, c.registKey, c.morning, accountId, width, height, imageReader.surface,
+            swapDecoder, listener, outcome)
         if (ptr == 0L) {
             imageReader.close()
             Log.w(TAG, "PS5 oturumu başlatılamadı (${c.host}): ${outcome.errors}")
@@ -406,8 +467,21 @@ class StreamSession(
                     scheduleWatch(sessionGeneration)
                     return@schedule
                 }
-                Log.w(TAG, "PS5'ten ${gap / 1000} sn'dir görüntü gelmiyor (bağlantı açık); oturum yeniden kuruluyor")
+                val next = watchdog.stalled()
+                val streak = watchdog.noPictureStreak
+                val text = "PS5: ${gap / 1000} sn'dir görüntü yok (bağlantı açık, kare $framesReceived, " +
+                    "art arda görüntüsüz oturum $streak): ${next.name}"
+                Log.w(TAG, text)
+                Backend.breadcrumb(text)
+                Telemetry.event("no_picture", "next" to next.name.lowercase(), "streak" to streak, "frames" to framesReceived)
                 closeNative()
+                if (next == PictureWatchdog.Next.GIVE_UP) {
+                    // İki çözücü türüyle de görüntü gelmedi: sonsuz "yeniden bağlanılıyor" döngüsü yerine dur ve söyle.
+                    bump(false)
+                    Backend.recordError(NoPictureException(text))
+                    emit(SessionState.Disconnected(DisconnectKind.NO_PICTURE, PictureWatchdog.REASON))
+                    return@schedule
+                }
                 scheduleReconnect(sessionGeneration, SessionState.Disconnected(DisconnectKind.OTHER, PictureWatchdog.REASON))
             }, 1, TimeUnit.SECONDS)
         } catch (error: java.util.concurrent.RejectedExecutionException) {

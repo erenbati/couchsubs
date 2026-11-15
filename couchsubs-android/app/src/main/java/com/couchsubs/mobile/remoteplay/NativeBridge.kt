@@ -51,7 +51,10 @@ object NativeBridge {
     @JvmStatic external fun register(host: String, accountId: ByteArray, pin: Int, outcome: NativeOutcome)
     @JvmStatic external fun sessionStart(
         host: String, registKey: ByteArray, morning: ByteArray, accountId: ByteArray, width: Int, height: Int,
-        surface: Surface, listener: NativeSessionListener, outcome: NativeOutcome,
+        surface: Surface,
+        /** Üreticiye göre seçilen çözücü türünün (yazılım/donanım) tersiyle başla (önceki oturumda görüntü gelmedi). */
+        swapDecoder: Boolean,
+        listener: NativeSessionListener, outcome: NativeOutcome,
     ): Long
     @JvmStatic external fun sessionStop(ptr: Long)
     /** PS5'in istediği giriş şifresini (ASCII rakamlar) gönderir; 0 başarı. Olay geri çağrısından çağrılmamalı. */
