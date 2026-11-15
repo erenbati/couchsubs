@@ -2,6 +2,7 @@
 
 import CouchSubsCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Ayarların bölümleri; solda kenar çubuğunda listelenir, sağda seçili olan gösterilir.
 enum SettingsSection: CaseIterable, Identifiable {
@@ -567,10 +568,25 @@ private struct AboutCard: View {
 /// (Windows'taki ayarlarla aynı düzen).
 private struct GamePacksPage: View {
     @EnvironmentObject private var model: AppModel
+    @State private var choosingImport = false
+    @State private var readingImport = false
+    @State private var importSelection: GamePackImportSelection?
+    @State private var importError: String?
     private let columns = [GridItem(.flexible(), spacing: Theme.space("gap"), alignment: .top),
                            GridItem(.flexible(), spacing: Theme.space("gap"), alignment: .top)]
+    private let importTypes: [UTType] = [.json, .plainText] + [UTType(filenameExtension: "srt")].compactMap { $0 }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: Theme.space("gap")) {
+            packList
+        }
+        .fileImporter(isPresented: $choosingImport, allowedContentTypes: importTypes, onCompletion: readImport)
+        .sheet(item: $importSelection) { selection in
+            GamePackImportSheet(selection: selection)
+        }
+    }
+
+    @ViewBuilder private var packList: some View {
         HStack(alignment: .firstTextBaseline) {
             Text("Game packs").font(.csDisplay)
             Spacer()
@@ -582,6 +598,13 @@ private struct GamePacksPage: View {
             .font(.csBody)
             .foregroundStyle(Color.csSecondary)
             .fixedSize(horizontal: false, vertical: true)
+        Button("Import pack…") {
+            importError = nil
+            choosingImport = true
+        }
+        .buttonStyle(CSButtonStyle(kind: .secondary, height: "buttonLarge"))
+        .disabled(readingImport)
+        ErrorText(error: importError)
         if model.installedPacks.isEmpty {
             Card { HintText(text: "No game pack is installed.") }
         } else {
@@ -600,6 +623,139 @@ private struct GamePacksPage: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .tile()
+    }
+
+    private func readImport(_ result: Result<URL, Error>) {
+        guard case .success(let sourceURL) = result else {
+            importError = String(localized: "The translation file could not be read.")
+            return
+        }
+
+        readingImport = true
+        Task {
+            defer { readingImport = false }
+            do {
+                importSelection = try await Task.detached(priority: .userInitiated) {
+                    let access = sourceURL.startAccessingSecurityScopedResource()
+                    defer { if access { sourceURL.stopAccessingSecurityScopedResource() } }
+                    let data = try Data(contentsOf: sourceURL)
+                    let preview = try GamePackImporter.parse(data, fileName: sourceURL.lastPathComponent)
+                    return GamePackImportSelection(sourceURL: sourceURL, preview: preview)
+                }.value
+            } catch is GamePackImporter.ImportError {
+                importError = String(localized: "The translation file could not be imported. Check its format and encoding.")
+            } catch {
+                importError = String(localized: "The translation file could not be read.")
+            }
+        }
+    }
+}
+
+private struct GamePackImportSelection: Identifiable, Sendable {
+    let id = UUID()
+    let sourceURL: URL
+    let preview: GamePackImportPreview
+}
+
+private struct GamePackImportSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let selection: GamePackImportSelection
+    @State private var title: String
+    @State private var installing = false
+    @State private var confirmReplacement = false
+    @State private var installError: String?
+
+    init(selection: GamePackImportSelection) {
+        self.selection = selection
+        _title = State(initialValue: selection.preview.suggestedTitle ?? selection.sourceURL.deletingPathExtension().lastPathComponent)
+    }
+
+    private var canInstall: Bool {
+        !installing && !selection.preview.entries.isEmpty && !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.space("m")) {
+            Text("Import game pack").font(.csTitle)
+            VStack(alignment: .leading, spacing: Theme.space("xs")) {
+                Text("Game title")
+                TextField("Game title", text: $title)
+                    .labelsHidden()
+                    .disabled(installing)
+            }
+            Grid(alignment: .leading, horizontalSpacing: Theme.space("gap"), verticalSpacing: Theme.space("xs")) {
+                countRow("Usable entries", selection.preview.entries.count)
+                countRow("Invalid records", selection.preview.invalidCount)
+                countRow("Duplicate pairs", selection.preview.duplicateCount)
+                countRow("Conflicting entries", selection.preview.conflictCount)
+            }
+            if selection.preview.entries.isEmpty {
+                Text("The file contains no usable translations.")
+                    .foregroundStyle(Color.csWarning)
+            }
+            ErrorText(error: installError)
+            HStack {
+                if installing { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .buttonStyle(CSButtonStyle(kind: .secondary, height: "buttonLarge"))
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(installing)
+                Button("Install pack") { install(replacing: false) }
+                    .buttonStyle(CSButtonStyle(kind: .primary, height: "buttonLarge"))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canInstall)
+            }
+        }
+        .padding(Theme.space("screen"))
+        .frame(width: 440, alignment: .leading)
+        .appSurface()
+        .interactiveDismissDisabled(installing)
+        .alert("Replace game pack?", isPresented: $confirmReplacement) {
+            Button("Cancel", role: .cancel) {}
+            Button("Replace pack", role: .destructive) { install(replacing: true) }
+        } message: {
+            Text("A game pack with this ID already exists. Replacing it will overwrite the installed pack.")
+        }
+    }
+
+    private func countRow(_ label: LocalizedStringKey, _ count: Int) -> some View {
+        GridRow {
+            Text(label)
+            Text(count, format: .number).monospacedDigit()
+                .gridColumnAlignment(.trailing)
+        }
+    }
+
+    private func install(replacing: Bool) {
+        guard canInstall else { return }
+        installError = nil
+        installing = true
+        let title = self.title
+        let selection = self.selection
+        let packs = model.packs
+        Task {
+            defer { installing = false }
+            do {
+                model.installedPacks = try await Task.detached(priority: .userInitiated) {
+                    let sourceURL = selection.sourceURL
+                    let access = sourceURL.startAccessingSecurityScopedResource()
+                    defer { if access { sourceURL.stopAccessingSecurityScopedResource() } }
+                    try GamePackImporter.install(selection.preview, title: title, directory: GamePackLibrary.userDirectory,
+                                                 replacing: replacing, sourceURL: sourceURL)
+                    packs.reload()
+                    return packs.packs
+                }.value
+                dismiss()
+            } catch GamePackImporter.ImportError.destinationExists {
+                confirmReplacement = true
+            } catch GamePackImporter.ImportError.sourceIsDestination {
+                installError = String(localized: "The selected file is already at the install location. Choose a different game title.")
+            } catch {
+                installError = String(localized: "The game pack could not be installed.")
+            }
+        }
     }
 }
 

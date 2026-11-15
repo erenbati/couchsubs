@@ -12480,6 +12480,262 @@
           }
         }
       }
+    },
+    "Import pack…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import pack…"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paketi içe aktar…"
+          }
+        }
+      }
+    },
+    "Import game pack": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import game pack"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oyun paketini içe aktar"
+          }
+        }
+      }
+    },
+    "Game title": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Game title"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oyunun adı"
+          }
+        }
+      }
+    },
+    "Usable entries": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usable entries"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kullanılabilir satır"
+          }
+        }
+      }
+    },
+    "Invalid records": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invalid records"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geçersiz kayıt"
+          }
+        }
+      }
+    },
+    "Duplicate pairs": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Duplicate pairs"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yinelenen çeviri çifti"
+          }
+        }
+      }
+    },
+    "Conflicting entries": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conflicting entries"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Çakışan satır"
+          }
+        }
+      }
+    },
+    "Install pack": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Install pack"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paketi yükle"
+          }
+        }
+      }
+    },
+    "Replace game pack?": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replace game pack?"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oyun paketi değiştirilsin mi?"
+          }
+        }
+      }
+    },
+    "Replace pack": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replace pack"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paketi değiştir"
+          }
+        }
+      }
+    },
+    "A game pack with this ID already exists. Replacing it will overwrite the installed pack.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A game pack with this ID already exists. Replacing it will overwrite the installed pack."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu kimlikle kurulu bir oyun paketi zaten var. Değiştirirseniz yeni paket kurulu paketin üzerine yazılır."
+          }
+        }
+      }
+    },
+    "The translation file could not be read.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The translation file could not be read."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Çeviri dosyası okunamadı."
+          }
+        }
+      }
+    },
+    "The translation file could not be imported. Check its format and encoding.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The translation file could not be imported. Check its format and encoding."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Çeviri dosyası içe aktarılamadı. Biçimini ve karakter kodlamasını kontrol edin."
+          }
+        }
+      }
+    },
+    "The file contains no usable translations.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The file contains no usable translations."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dosyada kullanılabilir çeviri yok."
+          }
+        }
+      }
+    },
+    "The selected file is already at the install location. Choose a different game title.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The selected file is already at the install location. Choose a different game title."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seçilen dosya zaten yükleme konumunda. Farklı bir oyun adı seçin."
+          }
+        }
+      }
+    },
+    "The game pack could not be installed.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The game pack could not be installed."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oyun paketi yüklenemedi."
+          }
+        }
+      }
     }
   },
   "version": "1.0"
