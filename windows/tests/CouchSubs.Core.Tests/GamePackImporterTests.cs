@@ -205,6 +205,21 @@ public class GamePackImporterTests
     }
 
     [Fact]
+    public void SourceDestinationCheckReportsTheMatchWithoutChangingFiles()
+    {
+        using var temp = new TempDirectory();
+        var destination = Path.Combine(temp.Path, "community-test-game.json");
+        var original = Encoding.UTF8.GetBytes("""{"Get Down!":"Yere yat!"}""");
+        File.WriteAllBytes(destination, original);
+
+        Assert.True(GamePackImporter.IsSourceDestination(" Test Game ", temp.Path, destination));
+        var missingDirectory = Path.Combine(temp.Path, "missing");
+        Assert.False(GamePackImporter.IsSourceDestination("Test Game", missingDirectory, destination));
+        Assert.Equal(original, File.ReadAllBytes(destination));
+        Assert.Equal([destination], Directory.GetFileSystemEntries(temp.Path));
+    }
+
+    [Fact]
     public void InstallRefusesItsOwnSourcePathBeforeWriting()
     {
         using var temp = new TempDirectory();
@@ -237,6 +252,7 @@ public class GamePackImporterTests
         var source = Path.Combine(alias, Path.GetFileName(destination));
         var preview = GamePackImporter.Parse(File.ReadAllBytes(source), source);
 
+        Assert.True(GamePackImporter.IsSourceDestination("Test Game", directory, source));
         Assert.Throws<InvalidOperationException>(() =>
             GamePackImporter.Install(preview, "Test Game", directory, replacing: true, sourcePath: source));
 

@@ -37,30 +37,37 @@ public partial class GamePackImportWindow : Window
 
     private void OnInstall(object sender, RoutedEventArgs e)
     {
+        const string sourceIsDestination = "The selected file is already at the install location. Choose a different game title.";
         var title = GameTitle.Text.Trim();
         if (title.Length == 0 || preview.Entries.Count == 0) return;
         InstallError.Visibility = Visibility.Collapsed;
 
-        var directory = GamePackLibrary.UserDirectory;
-        var destination = Path.Combine(directory, GamePackImporter.MakeId(title) + ".json");
-        var replacing = File.Exists(destination);
-        if (replacing)
-        {
-            var text = Localizer.Current;
-            var answer = MessageBox.Show(this,
-                text["A game pack with this ID already exists. Replacing it will overwrite the installed pack."],
-                text["Replace game pack?"], MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
-            if (answer != MessageBoxResult.Yes) return;
-        }
-
         try
         {
+            var directory = GamePackLibrary.UserDirectory;
+            if (GamePackImporter.IsSourceDestination(title, directory, sourcePath))
+            {
+                ShowError(sourceIsDestination);
+                return;
+            }
+
+            var destination = Path.Combine(directory, GamePackImporter.MakeId(title) + ".json");
+            var replacing = File.Exists(destination);
+            if (replacing)
+            {
+                var text = Localizer.Current;
+                var answer = MessageBox.Show(this,
+                    text["A game pack with this ID already exists. Replacing it will overwrite the installed pack."],
+                    text["Replace game pack?"], MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+                if (answer != MessageBoxResult.Yes) return;
+            }
+
             GamePackImporter.Install(preview, title, directory, replacing, sourcePath: sourcePath);
             DialogResult = true;
         }
         catch (InvalidOperationException)
         {
-            ShowError("The selected file is already at the install location. Choose a different game title.");
+            ShowError(sourceIsDestination);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
         {

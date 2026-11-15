@@ -80,6 +80,10 @@ public static partial class GamePackImporter
         return "community-" + (slug.Length == 0 ? "game" : slug.ToString());
     }
 
+    /// <summary>Checks whether the selected source and generated destination point to the same file.</summary>
+    public static bool IsSourceDestination(string title, string directory, string sourcePath) =>
+        SameFile(Path.GetFullPath(sourcePath), DestinationPath(Path.GetFullPath(directory), MakeId(title)));
+
     public static string Install(GamePackImportPreview preview, string title, string directory, bool replacing,
         string? sourcePath = null)
     {
@@ -88,7 +92,7 @@ public static partial class GamePackImporter
 
         var id = MakeId(title);
         directory = Path.GetFullPath(directory);
-        var destination = Path.Combine(directory, id + ".json");
+        var destination = DestinationPath(directory, id);
         if (sourcePath is not null && SameFile(Path.GetFullPath(sourcePath), destination))
             throw new InvalidOperationException("The source file is the pack destination.");
 
@@ -109,6 +113,8 @@ public static partial class GamePackImporter
         }
         return destination;
     }
+
+    private static string DestinationPath(string fullDirectory, string id) => Path.Combine(fullDirectory, id + ".json");
 
     private static void Publish(string temporary, string destination, bool replacing)
     {
