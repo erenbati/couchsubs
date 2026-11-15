@@ -286,10 +286,19 @@ export async function runAutopack(env, now = new Date()) {
   const separate = new Set(state.namedGames ?? []);
   let rows;
   if (job.titleId === GENERAL) {
-    rows = (await env.DB.prepare(separate.size
-      ? "SELECT key, text, game FROM lines WHERE title_id IS NULL AND installs>=? ORDER BY installs DESC, last_seen DESC LIMIT 5000"
-      : "SELECT key, text FROM lines WHERE title_id IS NULL AND installs>=? ORDER BY installs DESC, last_seen DESC LIMIT 5000"
-    ).bind(MIN_INSTALLS).all()).results.filter((r) => !r.game || !separate.has(r.game));
+    if (separate.size) {
+      // Oyuna ayrılan satırları LIMIT'ten önce süz; aksi halde en çok okunan 5000 ad satırı ortak havuzu aç bırakır.
+      // Oyun adlarını JSON tek bir bağlı parametreyle taşıyarak D1 değişken sayısı sınırına takılmayız.
+      ({ results: rows } = await env.DB.prepare(
+        "SELECT key, text FROM lines WHERE title_id IS NULL AND installs>=? " +
+        "AND (game IS NULL OR game NOT IN (SELECT value FROM json_each(?))) " +
+        "ORDER BY installs DESC, last_seen DESC LIMIT 5000"
+      ).bind(MIN_INSTALLS, JSON.stringify([...separate])).all());
+    } else {
+      ({ results: rows } = await env.DB.prepare(
+        "SELECT key, text FROM lines WHERE title_id IS NULL AND installs>=? ORDER BY installs DESC, last_seen DESC LIMIT 5000"
+      ).bind(MIN_INSTALLS).all());
+    }
   } else if (job.titleId) {
     ({ results: rows } = await env.DB.prepare(
       "SELECT key, text FROM lines WHERE title_id=? AND installs>=? ORDER BY installs DESC LIMIT 5000"
