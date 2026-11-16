@@ -503,6 +503,7 @@ public final class AITranslationCore: @unchecked Sendable {
     private var speech: [String: [SpokenLine]] = [:]
     /// Son gösterilen satırlar, eskiden yeniye.
     private var recent: [AIContextLine] = []
+    private var recentGame: String?
     private var pausedUntil = Date.distantPast
     private var failure: AIFailure?
     private var rateLimited = false
@@ -564,10 +565,9 @@ public final class AITranslationCore: @unchecked Sendable {
         // Arama, HTTP isteği ve kayıt aynı oyunla yapılmalı; callback işlem sırasında değişebilir.
         let game = self.game?()?.trimmingCharacters(in: .whitespacesAndNewlines)
         // Bağlam, bu satırdan önce gösterilenlerdir; satırın kendisi bağlama girmez.
-        let context = lock.withLock { recent }
-        shown(text)
-        if let cached = cache.value(for: Self.cacheKey(text, game: game)) { return remember(cached, for: text) }
-        guard Date() >= lock.withLock({ pausedUntil }) else { return remember(try await fallback(text), for: text) }
+        let context = contextBeforeShowing(text, game: game)
+        if let cached = cache.value(for: Self.cacheKey(text, game: game)) { return remember(cached, for: text, game: game) }
+        guard Date() >= lock.withLock({ pausedUntil }) else { return remember(try await fallback(text), for: text, game: game) }
         let pieces = SubtitleSegmenter.split(text)
         names.learn(from: pieces)
         // Önbellekte duran cümleler yeniden gönderilmez.
@@ -577,7 +577,7 @@ public final class AITranslationCore: @unchecked Sendable {
         // Dakikalık hak bittiyse istek gönderilmez; satır sessizce yerel çeviriyle çevrilir (hata değildir).
         let allowed = sources.isEmpty || budget?.take() != false
         lock.withLock { rateLimited = !allowed }
-        guard allowed else { return remember(try await fallback(text), for: text) }
+        guard allowed else { return remember(try await fallback(text), for: text, game: game) }
         let translated: [String]
         do {
             translated = sources.isEmpty ? [] : try await request(sources, context: context, game: game)
@@ -594,11 +594,11 @@ public final class AITranslationCore: @unchecked Sendable {
                 rateLimited = true
                 pausedUntil = Date().addingTimeInterval(pause)
             }
-            return remember(try await fallback(text), for: text)
+            return remember(try await fallback(text), for: text, game: game)
         } catch {
             setFailure(error as? AIFailure ?? .unreachable)
             lock.withLock { pausedUntil = Date().addingTimeInterval(Self.retryAfter) }
-            return remember(try await fallback(text), for: text)
+            return remember(try await fallback(text), for: text, game: game)
         }
         for (index, sentence) in zip(missing, translated) {
             translations[index] = sentence
@@ -610,7 +610,7 @@ public final class AITranslationCore: @unchecked Sendable {
             speech[Self.cacheKey(text, game: game)] = SpeechScript.lines(pieces: pieces, translations: translations)
         }
         cache.store(result, for: Self.cacheKey(text, game: game))
-        return remember(result, for: text)
+        return remember(result, for: text, game: game)
     }
 
     /// "Ekranı çevir": birbirinden bağımsız parçalar (menü satırı, görev yazısı...) tek istekte, aynı sırada çevrilir.
@@ -676,18 +676,26 @@ public final class AITranslationCore: @unchecked Sendable {
         return game + "\u{001f}" + text
     }
 
-    private func shown(_ text: String) {
+    private func contextBeforeShowing(_ text: String, game: String?) -> [AIContextLine] {
         lock.withLock {
+            if recentGame != game {
+                recent.removeAll(keepingCapacity: true)
+                recentGame = game
+            }
+            let context = recent
             // Aynı satır yeniden okunduysa bağlam tekrarla dolmasın.
-            guard recent.last?.source != text else { return }
-            recent.append(AIContextLine(source: text))
-            if recent.count > Self.contextLines { recent.removeFirst() }
+            if recent.last?.source != text {
+                recent.append(AIContextLine(source: text))
+                if recent.count > Self.contextLines { recent.removeFirst() }
+            }
+            return context
         }
     }
 
     /// Gösterilen satırın çevirisi sonraki satırların bağlamına girer.
-    private func remember(_ translation: String, for text: String) -> String {
+    private func remember(_ translation: String, for text: String, game: String?) -> String {
         lock.withLock {
+            guard recentGame == game else { return }
             if let index = recent.lastIndex(where: { $0.source == text }) { recent[index].translation = translation }
         }
         return translation

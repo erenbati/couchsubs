@@ -390,6 +390,7 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
     private readonly ConcurrentDictionary<string, IReadOnlyList<SpokenLine>> _speech = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _names = new(StringComparer.Ordinal);
     private readonly List<AiContextLine> _recent = [];
+    private string? _recentGame;
     private readonly Func<string?>? _game;
     private DateTimeOffset _pausedUntil = DateTimeOffset.MinValue;
     private OnlineKeyState? _failure;
@@ -444,10 +445,9 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
         // Arama, HTTP isteği ve kayıt aynı oyunla yapılmalı; callback işlem sırasında değişebilir.
         var game = _game?.Invoke()?.Trim();
         // Bağlam, bu satırdan önce gösterilenlerdir; satırın kendisi bağlama girmez.
-        var context = Context();
-        Shown(text);
-        if (_cache.TryGet(CacheKey(text, game), out var cached)) return Remember(cached, text);
-        if (DateTimeOffset.UtcNow < _pausedUntil) return Remember(await FallbackAsync(text, cancellationToken).ConfigureAwait(false), text);
+        var context = ContextBeforeShowing(text, game);
+        if (_cache.TryGet(CacheKey(text, game), out var cached)) return Remember(cached, text, game);
+        if (DateTimeOffset.UtcNow < _pausedUntil) return Remember(await FallbackAsync(text, cancellationToken).ConfigureAwait(false), text, game);
 
         var pieces = SubtitleSegmenter.Split(text);
         foreach (var name in pieces.Select(SubtitleSegmenter.LabelName).OfType<string>())
@@ -460,7 +460,7 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
         var sources = missing.Select(i => SubtitleSegmenter.NormalizeCase(pieces[i].Text, names)).ToList();
         // Dakikalık hak bittiyse istek gönderilmez; satır sessizce yerel çeviriyle çevrilir (hata değildir).
         LastLineWasRateLimited = sources.Count > 0 && _budget is { } budget && !budget.TryTake();
-        if (LastLineWasRateLimited) return Remember(await FallbackAsync(text, cancellationToken).ConfigureAwait(false), text);
+        if (LastLineWasRateLimited) return Remember(await FallbackAsync(text, cancellationToken).ConfigureAwait(false), text, game);
 
         string[] translated;
         try
@@ -476,14 +476,14 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
             if (pause < TimeSpan.FromSeconds(1)) pause = TimeSpan.FromSeconds(1);
             LastLineWasRateLimited = true;
             _pausedUntil = DateTimeOffset.UtcNow + pause;
-            return Remember(await FallbackAsync(text, cancellationToken).ConfigureAwait(false), text);
+            return Remember(await FallbackAsync(text, cancellationToken).ConfigureAwait(false), text, game);
         }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or AiException
                                       && !cancellationToken.IsCancellationRequested)
         {
             Report(error is AiException ai ? ai.State : OnlineKeyState.Unreachable);
             _pausedUntil = DateTimeOffset.UtcNow + RetryAfter;
-            return Remember(await FallbackAsync(text, cancellationToken).ConfigureAwait(false), text);
+            return Remember(await FallbackAsync(text, cancellationToken).ConfigureAwait(false), text, game);
         }
         for (var i = 0; i < missing.Count; i++)
         {
@@ -497,7 +497,7 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
         _speech[CacheKey(text, game)] = SpeechScript.Lines(pieces, translations);
         var result = builder.ToString();
         _cache.Store(CacheKey(text, game), result);
-        return Remember(result, text);
+        return Remember(result, text, game);
     }
 
     public bool TranslatesTogether => true;
@@ -575,27 +575,32 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
             : _fallback?.SpokenLines(text) ?? [];
     }
 
-    private List<AiContextLine> Context()
-    {
-        lock (_recent) return [.. _recent];
-    }
-
-    private void Shown(string text)
+    private List<AiContextLine> ContextBeforeShowing(string text, string? game)
     {
         lock (_recent)
         {
+            if (!string.Equals(_recentGame, game, StringComparison.Ordinal))
+            {
+                _recent.Clear();
+                _recentGame = game;
+            }
+            var context = new List<AiContextLine>(_recent);
             // Aynı satır yeniden okunduysa bağlam tekrarla dolmasın.
-            if (_recent.Count > 0 && _recent[^1].Source == text) return;
-            _recent.Add(new AiContextLine(text));
-            if (_recent.Count > ContextLines) _recent.RemoveAt(0);
+            if (_recent.Count == 0 || _recent[^1].Source != text)
+            {
+                _recent.Add(new AiContextLine(text));
+                if (_recent.Count > ContextLines) _recent.RemoveAt(0);
+            }
+            return context;
         }
     }
 
     /// <summary>Gösterilen satırın çevirisi sonraki satırların bağlamına girer.</summary>
-    private string Remember(string translation, string text)
+    private string Remember(string translation, string text, string? game)
     {
         lock (_recent)
         {
+            if (!string.Equals(_recentGame, game, StringComparison.Ordinal)) return translation;
             var index = _recent.FindLastIndex(line => line.Source == text);
             if (index >= 0) _recent[index] = _recent[index] with { Translation = translation };
         }
