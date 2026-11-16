@@ -57,6 +57,7 @@ class XboxStreamSession(
     private val home = XboxHome(auth)
     private val machine = XboxSessionMachine()
     private val frameCounter = XboxFrameCounter()
+    private var frameSession: XboxFrameCounter.Session? = null
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "CouchSubs Xbox").apply { isDaemon = true } }
     private val timers = Executors.newSingleThreadScheduledExecutor { Thread(it, "CouchSubs Xbox timers").apply { isDaemon = true } }
     private val stopped = AtomicBoolean(false)
@@ -182,26 +183,31 @@ class XboxStreamSession(
             .also { audio.release() }
     }
 
-    private val sink = VideoSink { frame ->
-        val sessionFrames = frameCounter.recordFrame()
-        val now = SystemClock.elapsedRealtime()
-        if (sessionFrames == 1L) {
-            firstFrameAt = now
-            log("ilk kare ${frame.buffer.width}x${frame.buffer.height}")
-            if (machine.streaming()) onState(SessionState.Streaming)
-        }
-        if (now - lastConverted < FRAME_INTERVAL_MS) return@VideoSink
-        lastConverted = now
-        val i420 = frame.buffer.toI420() ?: return@VideoSink
-        try {
-            onFrame(VideoFrame(i420.dataY, i420.width, i420.height, i420.strideY))
-        } finally {
-            i420.release()
-        }
-    }
-
     private fun negotiate(id: String) {
-        frameCounter.beginSession()
+        val negotiatedFrames = frameCounter.beginSession()
+        frameSession = negotiatedFrames
+        val sink = VideoSink { frame ->
+            if (stopped.get()) return@VideoSink
+            val sessionFrames = frameCounter.recordFrame(negotiatedFrames) ?: return@VideoSink
+            val now = SystemClock.elapsedRealtime()
+            if (sessionFrames == 1L) {
+                firstFrameAt = now
+                log("ilk kare ${frame.buffer.width}x${frame.buffer.height}")
+                frameCounter.runIfCurrent(negotiatedFrames) {
+                    if (!stopped.get() && machine.streaming()) onState(SessionState.Streaming)
+                }
+            }
+            if (now - lastConverted < FRAME_INTERVAL_MS) return@VideoSink
+            lastConverted = now
+            val i420 = frame.buffer.toI420() ?: return@VideoSink
+            try {
+                if (frameCounter.framesInSession(negotiatedFrames) > 0) {
+                    onFrame(VideoFrame(i420.dataY, i420.width, i420.height, i420.strideY))
+                }
+            } finally {
+                i420.release()
+            }
+        }
         val done = CountDownLatch(1).also { ended = it }
         endReason = null
         val pcFactory = createFactory().also { factory = it }
@@ -275,7 +281,7 @@ class XboxStreamSession(
         val negotiatedAt = SystemClock.elapsedRealtime()
         while (!stopped.get()) {
             if (done.await(1, TimeUnit.SECONDS)) break
-            if (frameCounter.framesInSession == 0L && SystemClock.elapsedRealtime() - negotiatedAt > FIRST_FRAME_MS) {
+            if (frameCounter.framesInSession(negotiatedFrames) == 0L && SystemClock.elapsedRealtime() - negotiatedAt > FIRST_FRAME_MS) {
                 endReason = "Xbox'tan görüntü gelmedi"
                 throw XboxException(XboxError.CONSOLE_UNAVAILABLE, endReason!!)
             }
@@ -332,6 +338,8 @@ class XboxStreamSession(
     }
 
     private fun closePeer() {
+        frameSession?.let(frameCounter::endSession)
+        frameSession = null
         keepalive?.cancel(false)
         keepalive = null
         synchronized(channels) {

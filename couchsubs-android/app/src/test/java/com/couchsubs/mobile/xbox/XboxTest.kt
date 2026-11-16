@@ -352,16 +352,19 @@ class XboxChannelsTest {
 }
 
 class XboxSessionMachineTest {
-    @Test fun eachReconnectRecognizesItsFirstFrameWhileLifetimeCountContinues() {
+    @Test fun staleFramesFromPreviousConnectionDoNotAffectReconnect() {
         val frames = XboxFrameCounter()
-        assertEquals(1L, frames.recordFrame())
+        val previous = frames.beginSession()
+        assertEquals(1L, frames.recordFrame(previous))
         assertEquals(1L, frames.totalFrames)
 
-        frames.beginSession()
-        assertEquals(0L, frames.framesInSession)
-        assertEquals(1L, frames.recordFrame())
+        val current = frames.beginSession()
+        assertEquals(0L, frames.framesInSession(current))
+        assertNull(frames.recordFrame(previous))
+        assertEquals(0L, frames.framesInSession(current))
+        assertEquals(1L, frames.recordFrame(current))
         assertEquals(2L, frames.totalFrames)
-        assertEquals(1L, frames.framesInSession)
+        assertEquals(1L, frames.framesInSession(current))
     }
 
     @Test fun happyPath() {

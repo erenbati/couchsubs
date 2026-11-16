@@ -117,17 +117,43 @@ class XboxSessionMachine(val maxPolls: Int = 90, val pollIntervalMs: Long = 1000
 /** Ömür boyu tanı sayacını korurken her yeni WebRTC bağlantısının ilk karesini ayrı tanır. */
 internal class XboxFrameCounter {
     private val total = AtomicLong()
-    private val currentSession = AtomicLong()
+    private val lock = Any()
+    private var currentSession: Session? = null
+    private var currentSessionFrames = 0L
+
+    class Session internal constructor()
 
     val totalFrames: Long get() = total.get()
-    val framesInSession: Long get() = currentSession.get()
 
-    fun beginSession() {
-        currentSession.set(0)
+    fun beginSession(): Session = synchronized(lock) {
+        Session().also {
+            currentSession = it
+            currentSessionFrames = 0
+        }
     }
 
-    fun recordFrame(): Long {
+    fun endSession(session: Session) {
+        synchronized(lock) {
+            if (currentSession === session) {
+                currentSession = null
+                currentSessionFrames = 0
+            }
+        }
+    }
+
+    fun recordFrame(session: Session): Long? = synchronized(lock) {
+        if (currentSession !== session) return null
         total.incrementAndGet()
-        return currentSession.incrementAndGet()
+        ++currentSessionFrames
+    }
+
+    fun framesInSession(session: Session): Long = synchronized(lock) {
+        if (currentSession === session) currentSessionFrames else 0
+    }
+
+    fun runIfCurrent(session: Session, action: () -> Unit) {
+        synchronized(lock) {
+            if (currentSession === session) action()
+        }
     }
 }
