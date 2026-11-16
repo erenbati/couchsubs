@@ -80,7 +80,10 @@ async function readIndex(env: Env): Promise<PackInfo[] | null> {
     const object = await env.PACKS.get("index.json");
     if (!object) return null;
     const parsed = JSON.parse(await object.text()) as { packs?: unknown };
-    return Array.isArray(parsed?.packs) && parsed.packs.every(validPack) ? parsed.packs : null;
+    if (!Array.isArray(parsed?.packs) || !parsed.packs.every(validPack)) return null;
+    // Aynı kimliğin birden çok sürümü, istemcinin hangi paketi indireceğini belirsizleştirir.
+    if (new Set(parsed.packs.map((pack: PackInfo) => pack.id)).size !== parsed.packs.length) return null;
+    return parsed.packs;
   } catch {
     return null;
   }

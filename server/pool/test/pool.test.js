@@ -170,7 +170,7 @@ test("dışa aktarma oyuna göre süzülür (yalnız yönetici)", async () => {
 });
 
 test("oyunu bilinmeyen satırlar ortak pakete sıralanır (oyunu bilinenlerden sonra)", async () => {
-  const stored = new Map();
+  const stored = new Map([["index.json", JSON.stringify({ packs: [] })]]);
   const env = {
     AI: {},
     PACKS: {
@@ -209,6 +209,19 @@ test("kimliksiz oyun adları anahtara göre birleşir; tek kurulumun adı ayrı 
   assert.equal(jobs[0].lines, 500);
   assert.deepEqual(jobs[0].games, ["GTA 6", "Grand Theft Auto VI"]);
   assert.equal(jobPackId(jobs[0]), "pool-gta-6");
+});
+
+test("uzun oyun adları sunucunun kabul ettiği paket kimliği sınırında kalır", () => {
+  const id = jobPackId({ titleId: null, gameKey: "x".repeat(80) });
+  assert.match(id, /^[a-z0-9][a-z0-9-]{0,63}$/);
+});
+
+test("uzun oyun adlarının paket kimlikleri son karakterde ayrışır", () => {
+  const first = jobPackId({ titleId: null, gameKey: "x".repeat(79) + "a" });
+  const second = jobPackId({ titleId: null, gameKey: "x".repeat(79) + "b" });
+  assert.notEqual(first, second);
+  assert.match(first, /^[a-z0-9][a-z0-9-]{0,63}$/);
+  assert.match(second, /^[a-z0-9][a-z0-9-]{0,63}$/);
 });
 
 test("kimliksiz oyun adı kurulum başına bir oy yazar", async () => {

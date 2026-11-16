@@ -131,6 +131,18 @@ describe("RateLimiter", () => {
   });
 });
 
+it("rejects a pack index containing duplicate IDs instead of exposing ambiguous versions", async () => {
+  const first = index.packs[0];
+  const second = { ...first, title: "Wrong game", version: 4, sha256: "cd".repeat(32) };
+  const response = await handle(
+    get("/v1/packs"),
+    { PACKS: indexBucket(JSON.stringify({ packs: [first, second] })) },
+    new RateLimiter(),
+  );
+  expect(response.status).toBe(503);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+});
+
 it.each([
   ["weak ETag", 'W/"etag-1"'],
   ["ETag list", '"old-copy", W/"etag-1"'],

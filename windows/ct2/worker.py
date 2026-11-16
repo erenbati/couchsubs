@@ -2,6 +2,16 @@
 """Persistent, local CTranslate2 worker; protocol is one JSON object per line."""
 
 import json
+import os
+import sys
+
+cuda_dir = os.environ.get("COUCHSUBS_CUDA_DIR")
+if cuda_dir:
+    # CTranslate2 cuBLAS'ı dinamik yükler; dizin hem Python hem Win32 aramasına eklenir.
+    _cuda_dll_handle = os.add_dll_directory(cuda_dir)
+    import ctypes
+    ctypes.windll.kernel32.SetDllDirectoryW(cuda_dir)
+
 import sys
 
 

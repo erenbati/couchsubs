@@ -358,7 +358,9 @@ public sealed class LiveServices : IAppServices
     private sealed class MarianModel : ITranslationModel
     {
         private readonly Ct2ModelStore englishTurkish = new(Path.Combine(AppPaths.Models, "en-tr-ct2"));
+        private readonly CudaRuntimeStore cuda = new(Path.Combine(AppPaths.Data, "cuda-12.8"));
         private MarianTranslator? translator;
+        private Task? cudaDownload;
         private TranslationDevice device = TranslationDevice.Cpu;
         private int failed;
 
@@ -369,6 +371,14 @@ public sealed class LiveServices : IAppServices
         {
             if (device == selected) return;
             device = selected;
+            // NVIDIA sürücüsü (nvcuda.dll) yoksa ~565 MB indirme boşa gider; doğrudan CPU'ya düşülür.
+            if (selected == TranslationDevice.Gpu && File.Exists(Path.Combine(Environment.SystemDirectory, "nvcuda.dll")))
+            {
+                cudaDownload = cuda.StartDownload();
+                _ = cudaDownload.ContinueWith(task =>
+                    StartupGuard.Log("CUDA çalışma zamanı indirilemedi", task.Exception!),
+                    CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+            }
             translator?.Dispose();
             translator = null;
             Interlocked.Exchange(ref failed, 0);
@@ -416,7 +426,8 @@ public sealed class LiveServices : IAppServices
             {
                 created = new MarianTranslator(englishTurkish.InstallDirectory,
                     cache: TranslationCache.Shared(AppPaths.Translations, MarianTranslator.EngineId, "en", "tr"),
-                    useGpu: device == TranslationDevice.Gpu, onGpuFallback: () => GpuFallback?.Invoke());
+                    useGpu: device == TranslationDevice.Gpu, onGpuFallback: () => GpuFallback?.Invoke(),
+                    cudaReady: cudaDownload, cudaDirectory: cuda.InstallDirectory);
             }
             catch (Exception error)
             {
