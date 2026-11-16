@@ -32,9 +32,10 @@ test("İngilizce oyun satırları alınır", () => {
 function fakeDB() {
   const sightings = new Map(); // anahtar -> kurulumlar
   const lines = new Map();
-  const db = { writes: 0, lines, quota: 0, last: null };
+  const db = { writes: 0, lines, quotas: new Map(), last: null, beforeQuotaRead: null, failNextBatch: false };
+  const quotaKey = (install, day) => `${install}\u001f${day}`;
   const run = (sql, args) => {
-    if (sql.startsWith("SELECT count FROM quota")) return { count: db.quota };
+    if (sql.startsWith("SELECT count FROM quota")) return { count: db.quotas.get(quotaKey(args[0], args[1])) ?? 0 };
     if (sql.startsWith("SELECT")) {
       db.last = { sql, args };
       return { results: [] };
@@ -60,18 +61,40 @@ function fakeDB() {
       return { meta: { changes: 1 } };
     }
     if (sql.startsWith("INSERT INTO quota")) {
-      db.quota += args[2];
+      const key = quotaKey(args[0], args[1]);
+      const delta = args[2];
+      const expected = args[3];
+      const used = db.quotas.get(key) ?? 0;
+      if (args.length === 4 && used !== expected) return { meta: { changes: 0 } };
+      db.quotas.set(key, used + delta);
+      return { meta: { changes: 1 } };
+    }
+    if (sql.startsWith("UPDATE quota")) {
+      const key = quotaKey(args[1], args[2]);
+      db.quotas.set(key, (db.quotas.get(key) ?? 0) - args[0]);
       return { meta: { changes: 1 } };
     }
     throw new Error(sql);
   };
   db.prepare = (sql) => ({
     bind: (...args) => ({
-      first: async () => run(sql, args), run: async () => run(sql, args), all: async () => run(sql, args), sql, args,
+      first: async () => {
+        if (sql.startsWith("SELECT count FROM quota")) {
+          const result = run(sql, args);
+          await db.beforeQuotaRead?.();
+          return result;
+        }
+        return run(sql, args);
+      },
+      run: async () => run(sql, args), all: async () => run(sql, args), sql, args,
     }),
   });
   // D1'de toplu yazma tek işlemdir: bir deyim hata verirse hiçbiri yazılmaz.
   db.batch = async (stmts) => {
+    if (db.failNextBatch) {
+      db.failNextBatch = false;
+      throw new Error("injected batch failure");
+    }
     return stmts.map((s) => run(s.sql, s.args));
   };
   return db;
@@ -110,6 +133,45 @@ const postLines = (env, who, lines) => worker.fetch(new Request("https://pool.te
   method: "POST",
   body: JSON.stringify({ install: who, lines }),
 }), env);
+
+test("eşzamanlı gönderimler günlük kota sınırını aşamaz", async () => {
+  const DB = fakeDB();
+  const who = install(7);
+  const day = new Date().toISOString().slice(0, 10);
+  DB.quotas.set(`${who}\u001f${day}`, 4990);
+  let readers = 0;
+  let releaseReads;
+  const bothRead = new Promise((resolve) => { releaseReads = resolve; });
+  DB.beforeQuotaRead = async () => {
+    readers++;
+    if (readers === 2) releaseReads();
+    await bothRead;
+  };
+
+  const lines = Array.from({ length: 20 }, (_, i) => ({ text: `Keep moving ${i} now.` }));
+  const replies = await Promise.all([
+    postLines({ DB }, who, lines),
+    postLines({ DB }, who, lines),
+  ]);
+
+  assert.deepEqual(replies.map((reply) => reply.status).sort(), [200, 429]);
+  const accepted = replies.find((reply) => reply.status === 200);
+  assert.deepEqual(await accepted.json(), { accepted: 10, recorded: 10 });
+  assert.equal(DB.quotas.get(`${who}\u001f${day}`), 5000);
+  assert.equal(DB.lines.size, 0); // tek kurulumun gördüğü satırlar havuza girmez
+});
+
+test("ilk yazma toplu işlemi başarısızsa kota rezervasyonu geri alınır", async () => {
+  const DB = fakeDB();
+  const who = install(9);
+  const day = new Date().toISOString().slice(0, 10);
+  DB.quotas.set(`${who}\u001f${day}`, 12);
+  DB.failNextBatch = true;
+
+  const reply = await postLines({ DB }, who, [{ text: "Get down!" }]);
+  assert.equal(reply.status, 500);
+  assert.equal(DB.quotas.get(`${who}\u001f${day}`), 12);
+});
 
 test("oyun kimliği ve adı doğrulanır", () => {
   assert.equal(titleId("PPSA01234"), "PPSA01234");
