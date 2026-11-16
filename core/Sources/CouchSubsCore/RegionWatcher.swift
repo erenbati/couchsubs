@@ -36,6 +36,11 @@ public final class RegionWatcher {
         var candidate: Candidate?
         /// TV'de şu an çevirisi duran yazı (sadeleştirilmiş); boşsa kutu yok.
         var shown = ""
+        /// Son gönderilen çeviri, aynı yazı yeni bir konuma taşındığında yeniden kullanılır.
+        var renderedKey: String?
+        var renderedText: String?
+        var renderedBox: TextBox?
+        var renderedLineHeight: Double?
     }
 
     struct Candidate {
@@ -175,11 +180,25 @@ public final class RegionWatcher {
 
     /// Kararlı yazı: öncekinden farklıysa çevrilip gönderilir, boşsa kutu kalkar.
     private func commit(_ candidate: Candidate, area: ExtraArea) async {
-        guard let state = states[area.id], state.shown != candidate.key else { return }
+        guard var state = states[area.id] else { return }
+        if state.shown == candidate.key {
+            guard state.renderedKey == candidate.key,
+                  let renderedText = state.renderedText, !renderedText.isEmpty else { return }
+            guard state.renderedBox != candidate.box || state.renderedLineHeight != candidate.lineHeight else { return }
+            server.sendRegion(id: area.id, text: renderedText, box: candidate.box, lineHeight: candidate.lineHeight)
+            state.renderedBox = candidate.box
+            state.renderedLineHeight = candidate.lineHeight
+            states[area.id] = state
+            return
+        }
         let previousShown = state.shown
         states[area.id]?.shown = candidate.key
         guard !candidate.key.isEmpty else {
             server.sendRegion(id: area.id, text: "", box: nil, lineHeight: nil)
+            states[area.id]?.renderedKey = candidate.key
+            states[area.id]?.renderedText = ""
+            states[area.id]?.renderedBox = nil
+            states[area.id]?.renderedLineHeight = nil
             onLog?("ek alan \(area.name): boşaldı")
             return
         }
@@ -208,12 +227,20 @@ public final class RegionWatcher {
         }
         if same {
             server.sendRegion(id: area.id, text: "", box: nil, lineHeight: nil)
+            states[area.id]?.renderedKey = candidate.key
+            states[area.id]?.renderedText = ""
+            states[area.id]?.renderedBox = nil
+            states[area.id]?.renderedLineHeight = nil
             return
         }
         let joined = text.joined(separator: "\n")
         let origin = fromPack == candidate.paragraphs.count ? "paket" : fromPack > 0 ? "paket+motor" : "motor"
         onLog?("ek alan \(area.name): \(SubtitleLog.excerpt(candidate.paragraphs.joined(separator: " "))) → \(origin)")
         server.sendRegion(id: area.id, text: joined, box: candidate.box, lineHeight: candidate.lineHeight)
+        states[area.id]?.renderedKey = candidate.key
+        states[area.id]?.renderedText = joined
+        states[area.id]?.renderedBox = candidate.box
+        states[area.id]?.renderedLineHeight = candidate.lineHeight
     }
 
     /// Parçalar önce pakette aranır; kalanlar çeviri motoruna gider (yapay zekâda tek istekte).

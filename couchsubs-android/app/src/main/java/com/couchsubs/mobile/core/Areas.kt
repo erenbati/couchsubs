@@ -230,6 +230,10 @@ class RegionWatcher(
         var lastRead: String? = null
         var candidate: Candidate? = null
         var shown = ""
+        var renderedKey: String? = null
+        var renderedText: String? = null
+        var renderedBox: TextBox? = null
+        var renderedLineHeight: Double? = null
     }
 
     private val lock = Any()
@@ -319,11 +323,23 @@ class RegionWatcher(
     }
 
     private fun commit(candidate: Candidate, area: ExtraArea, state: State, started: Int) {
-        if (state.shown == candidate.key) return
+        if (state.shown == candidate.key) {
+            val text = state.renderedText
+            if (state.renderedKey != candidate.key || text.isNullOrEmpty()) return
+            if (state.renderedBox == candidate.box && state.renderedLineHeight == candidate.lineHeight) return
+            sender.sendRegion(area.id, text, candidate.box, candidate.lineHeight)
+            state.renderedBox = candidate.box
+            state.renderedLineHeight = candidate.lineHeight
+            return
+        }
         val previousShown = state.shown
         state.shown = candidate.key
         if (candidate.key.isEmpty()) {
             sender.sendRegion(area.id, "", null, null)
+            state.renderedKey = candidate.key
+            state.renderedText = ""
+            state.renderedBox = null
+            state.renderedLineHeight = null
             return
         }
         val translated = try {
@@ -340,8 +356,19 @@ class RegionWatcher(
         val text = candidate.paragraphs.zip(translated).map { (source, translation) -> translation.trim().ifEmpty { source } }
         // Çevirisi aslıyla aynı (ad, sayı, zaten hedef dilde): kutu gösterilmez.
         val same = candidate.paragraphs.zip(text).all { (a, b) -> TextMatch.isSimilar(TextMatch.normalize(a), TextMatch.normalize(b), 0.90) }
-        if (same) sender.sendRegion(area.id, "", null, null)
-        else sender.sendRegion(area.id, text.joinToString("\n"), candidate.box, candidate.lineHeight)
+        if (same) {
+            sender.sendRegion(area.id, "", null, null)
+            state.renderedText = ""
+            state.renderedBox = null
+            state.renderedLineHeight = null
+        } else {
+            val joined = text.joinToString("\n")
+            sender.sendRegion(area.id, joined, candidate.box, candidate.lineHeight)
+            state.renderedText = joined
+            state.renderedBox = candidate.box
+            state.renderedLineHeight = candidate.lineHeight
+        }
+        state.renderedKey = candidate.key
     }
 
     /** Çeviri durdu: süren tur bırakılır, TV'deki ek alan kutuları kalkar. */

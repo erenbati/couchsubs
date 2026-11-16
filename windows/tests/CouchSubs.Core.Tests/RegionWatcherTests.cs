@@ -46,9 +46,12 @@ public class RegionWatcherTests
 
     private sealed class Server : IRegionSender
     {
-        public List<(string Id, string Text, TextBox? Box)> Sent { get; } = [];
+        public List<(string Id, string Text, TextBox? Box, double? LineHeight)> Sent { get; } = [];
         public int Clears;
-        public void SendRegion(string id, string text, TextBox? box, double? lineHeight = null) { lock (Sent) Sent.Add((id, text, box)); }
+        public void SendRegion(string id, string text, TextBox? box, double? lineHeight = null)
+        {
+            lock (Sent) Sent.Add((id, text, box, lineHeight));
+        }
         public void ClearRegions() => Interlocked.Increment(ref Clears);
     }
 
@@ -63,7 +66,7 @@ public class RegionWatcherTests
     private static readonly WatchedArea Quest = new("q", "Quest", ExtraAreaPreset.Quest.Region());
     private static readonly WatchedArea Phone = new("p", "Phone", ExtraAreaPreset.Phone.Region());
 
-    private static TextLine Line(string text, double top = 0.2) => new(text, new TextBox(0.1, top, 0.9, top + 0.1));
+    private static TextLine Line(string text, double top = 0.2, double height = 0.1) => new(text, new TextBox(0.1, top, 0.9, top + height));
 
     [Fact]
     public async Task FailedReadRetriesOnAnUnchangedFrameThenStopsReading()
@@ -152,6 +155,26 @@ public class RegionWatcherTests
         Assert.Equal(1, reader.Count);
         Assert.Single(translator.Calls);
         Assert.Single(server.Sent);
+    }
+
+    [Fact]
+    public async Task SameTextAtNewGeometryUpdatesRegionWithoutRetranslating()
+    {
+        var reader = new Reader { Lines = [Line("Find the blacksmith", 0.2, 0.1)] };
+        var translator = new Translator();
+        var server = new Server();
+        var watcher = new RegionWatcher(reader, translator, server);
+        await watcher.PassAsync(Shade(10), [Quest]);
+        await watcher.PassAsync(Shade(10), [Quest]);
+        var first = server.Sent[0];
+
+        reader.Lines = [Line("Find the blacksmith", 0.45, 0.2)];
+        await watcher.PassAsync(Shade(60), [Quest]);
+
+        Assert.Equal(["TR: Find the blacksmith", "TR: Find the blacksmith"], server.Sent.Select(s => s.Text));
+        Assert.NotEqual(first.Box?.Top, server.Sent[1].Box?.Top);
+        Assert.NotEqual(first.LineHeight, server.Sent[1].LineHeight);
+        Assert.Equal(["Find the blacksmith"], translator.Calls);
     }
 
     [Fact]

@@ -37,6 +37,10 @@ public sealed class RegionWatcher
         public string? LastRead;
         public Candidate? Candidate;
         public string Shown = "";
+        public string? RenderedKey;
+        public string? RenderedText;
+        public TextBox? RenderedBox;
+        public double? RenderedLineHeight;
     }
 
     internal sealed record Candidate(IReadOnlyList<string> Paragraphs, TextBox? Box, double? LineHeight, string Key);
@@ -185,12 +189,24 @@ public sealed class RegionWatcher
 
     private async Task CommitAsync(Candidate candidate, WatchedArea area, State state, int started)
     {
-        if (state.Shown == candidate.Key) return;
+        if (state.Shown == candidate.Key)
+        {
+            if (state.RenderedKey != candidate.Key || string.IsNullOrEmpty(state.RenderedText)) return;
+            if (state.RenderedBox == candidate.Box && state.RenderedLineHeight == candidate.LineHeight) return;
+            server.SendRegion(area.Id, state.RenderedText, candidate.Box, candidate.LineHeight);
+            state.RenderedBox = candidate.Box;
+            state.RenderedLineHeight = candidate.LineHeight;
+            return;
+        }
         var previousShown = state.Shown;
         state.Shown = candidate.Key;
         if (candidate.Key.Length == 0)
         {
             server.SendRegion(area.Id, "", null);
+            state.RenderedKey = candidate.Key;
+            state.RenderedText = "";
+            state.RenderedBox = null;
+            state.RenderedLineHeight = null;
             Log?.Invoke($"ek alan {area.Name}: boşaldı");
             return;
         }
@@ -227,11 +243,19 @@ public sealed class RegionWatcher
         if (same)
         {
             server.SendRegion(area.Id, "", null);
+            state.RenderedKey = candidate.Key;
+            state.RenderedText = "";
+            state.RenderedBox = null;
+            state.RenderedLineHeight = null;
             return;
         }
         var origin = fromPack == candidate.Paragraphs.Count ? "paket" : fromPack > 0 ? "paket+motor" : "motor";
         Log?.Invoke($"ek alan {area.Name}: {SubtitleLog.Excerpt(string.Join(' ', candidate.Paragraphs))} → {origin}");
         server.SendRegion(area.Id, string.Join('\n', text), candidate.Box, candidate.LineHeight);
+        state.RenderedKey = candidate.Key;
+        state.RenderedText = string.Join('\n', text);
+        state.RenderedBox = candidate.Box;
+        state.RenderedLineHeight = candidate.LineHeight;
     }
 
     /// <summary>Çeviri durdu ya da hat yeniden kuruldu: süren tur bırakılır, TV'deki ek alan kutuları kalkar.</summary>
