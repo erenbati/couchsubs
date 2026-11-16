@@ -931,6 +931,58 @@ public class AppControllerRunTests
         Assert.Equal("Reads the Remote Play window on this PC when you start translating.", controller.Ps5StatusText);
     }
 
+    [Fact]
+    public void SelectedWindowSetupSkipsPsnPairingButRequiresExplicitTarget()
+    {
+        var store = new MemoryStore();
+        var settings = new MemorySettings();
+        var controller = AppControllerTests.Make(store: store, settings: settings);
+        controller.Advance();
+        Assert.Equal(OnboardingStep.SecondAccount, controller.Step);
+
+        controller.UseCaptureWindow();
+        Assert.Equal(OnboardingStep.Done, controller.Step);
+        Assert.Equal(FrameSource.CaptureWindow, controller.Settings.FrameSource);
+        Assert.Equal(SubtitleOutput.Computer, controller.Settings.Output);
+        Assert.False(controller.HasAccount);
+        Assert.False(controller.CanStart); // Never fall back to scanning the entire desktop.
+
+        var target = new WindowCaptureTarget("obs64", "Fullscreen Projector (Scene)");
+        controller.Settings = controller.Settings with { CaptureWindow = target };
+        Assert.True(controller.CanStart);
+        Assert.Equal(OnboardingStep.Done, AppControllerTests.Make(store: store, settings: settings).Step);
+        controller.Dispose();
+    }
+
+    [Fact]
+    public async Task SelectedWindowStartsAndSwitchesTargetsWithoutOpeningPs5Session()
+    {
+        var first = new WindowCaptureTarget("obs64", "Fullscreen Projector (Scene)");
+        var second = new WindowCaptureTarget("game", "Gameplay");
+        var settings = new MemorySettings();
+        settings.Save(new UserSettings
+        {
+            FrameSource = FrameSource.CaptureWindow,
+            CaptureWindow = first,
+            Output = SubtitleOutput.Computer,
+        });
+        var services = new FakeServices { RemotePlayIsInstalled = false };
+        var controller = AppControllerTests.Make(services: services, settings: settings);
+
+        await controller.StartAsync();
+        Assert.Equal([first], services.CaptureWindowStreams);
+        Assert.Empty(services.StreamPasscodes);
+        Assert.Empty(services.WindowStreams);
+        Assert.True(controller.IsRunning);
+
+        controller.Settings = controller.Settings with { CaptureWindow = second };
+        for (var i = 0; i < 200 && services.CaptureWindowStreams.Count < 2; i++) await Task.Delay(10);
+        Assert.Equal([first, second], services.CaptureWindowStreams);
+        Assert.Equal(2, services.Streams.Count);
+        Assert.True(controller.IsRunning);
+        controller.Dispose();
+    }
+
     /// Remote Play penceresinden okurken PS5 kaydı gerekmez: sihirbaz açılmaz, kurulum kaydı değişmez, çeviri pencere
     /// kaynağıyla (PS5'e bağlanmadan) başlar.
     [Fact]
