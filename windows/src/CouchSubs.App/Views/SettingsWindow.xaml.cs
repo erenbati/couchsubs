@@ -113,9 +113,12 @@ public partial class SettingsWindow : Window
     private void ShowFrameSource()
     {
         var window = controller.Settings.FrameSource == FrameSource.RemotePlayWindow;
+        var capture = controller.Settings.FrameSource == FrameSource.CaptureWindow;
         RemotePlayAppPanel.Visibility = window ? Visibility.Visible : Visibility.Collapsed;
         WindowSourceHint.Visibility = window ? Visibility.Visible : Visibility.Collapsed;
-        Ps5SourceHint.Visibility = window ? Visibility.Collapsed : Visibility.Visible;
+        CaptureWindowPanel.Visibility = capture ? Visibility.Visible : Visibility.Collapsed;
+        if (capture) RefreshCaptureWindows();
+        Ps5SourceHint.Visibility = window || capture ? Visibility.Collapsed : Visibility.Visible;
         SonyInstallRow.Visibility = ChiakiInstallRow.Visibility = window ? Visibility.Visible : Visibility.Collapsed;
         var sony = controller.RemotePlayInstalled(RemotePlayApp.Sony);
         var chiaki = controller.RemotePlayInstalled(RemotePlayApp.Chiaki);
@@ -148,6 +151,44 @@ public partial class SettingsWindow : Window
     {
         if (RemotePlayAppChoice.SelectedItem is ComboBoxItem { Tag: string tag })
             Update(s => s with { RemotePlayApp = Enum.Parse<RemotePlayApp>(tag) });
+    }
+
+    private bool refreshingCaptureWindows;
+
+    private void RefreshCaptureWindows()
+    {
+        if (refreshingCaptureWindows) return;
+        refreshingCaptureWindows = true;
+        try
+        {
+            var saved = controller.Settings.CaptureWindow;
+            var windows = controller.AvailableCaptureWindows();
+            CaptureWindowChoice.Items.Clear();
+            ComboBoxItem? selected = null;
+            foreach (var target in windows)
+            {
+                var option = new ComboBoxItem { Content = $"{target.Title} ({target.ProcessName})", Tag = target };
+                CaptureWindowChoice.Items.Add(option);
+                if (target == saved) selected = option;
+            }
+            if (saved is not null && selected is null)
+            {
+                selected = new ComboBoxItem { Content = $"{saved.Title} ({saved.ProcessName}) — {Localizer.Current["Not currently open"]}", Tag = saved };
+                CaptureWindowChoice.Items.Insert(0, selected);
+            }
+            CaptureWindowChoice.SelectedItem = selected;
+            CaptureWindowEmpty.Visibility = windows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        finally { refreshingCaptureWindows = false; }
+    }
+
+    private void OnRefreshCaptureWindows(object sender, RoutedEventArgs e) => RefreshCaptureWindows();
+
+    private void OnCaptureWindowChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (loading || refreshingCaptureWindows) return;
+        if (CaptureWindowChoice.SelectedItem is ComboBoxItem { Tag: WindowCaptureTarget target })
+            Update(s => s with { CaptureWindow = target });
     }
 
     private void OnAppearance(object sender, SelectionChangedEventArgs e)

@@ -473,6 +473,7 @@
                                 <ComboBox x:Name="FrameSourceChoice" SelectionChanged="OnFrameSource" MinWidth="260">
                                     <ComboBoxItem Content="{t:T 'The PS5 (second account)'}" Tag="Ps5" />
                                     <ComboBoxItem Content="{t:T 'Remote Play window on this PC'}" Tag="RemotePlayWindow" />
+                                    <ComboBoxItem Content="{t:T 'OBS projector or game window'}" Tag="CaptureWindow" />
                                 </ComboBox>
                             </StackPanel>
                             <StackPanel x:Name="RemotePlayAppPanel" Orientation="Horizontal" Margin="0,12,0,0">
@@ -485,6 +486,17 @@
                             </StackPanel>
                             <TextBlock x:Name="WindowSourceHint" Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,12,0,0"
                                        Text="{t:T 'Play in PS Remote Play or chiaki-ng on this PC; CouchSubs reads only that window, so no second account is needed. Show the subtitles on the computer screen.'}" />
+                            <StackPanel x:Name="CaptureWindowPanel" Margin="0,12,0,0" Visibility="Collapsed">
+                                <TextBlock Text="{t:T 'Open an OBS projector or game window, then select it below. Only that window is read: CouchSubs never switches to the whole desktop when it closes.'}"
+                                           Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                <DockPanel>
+                                    <Button Content="{t:T 'Refresh windows'}" DockPanel.Dock="Right" Margin="10,0,0,0"
+                                            Click="OnRefreshCaptureWindows" />
+                                    <ComboBox x:Name="CaptureWindowChoice" MinWidth="250" SelectionChanged="OnCaptureWindowChanged" />
+                                </DockPanel>
+                                <TextBlock x:Name="CaptureWindowEmpty" Style="{StaticResource HintText}" Margin="0,8,0,0"
+                                           Text="{t:T 'No suitable windows found. Open OBS or the game first, then refresh.'}" />
+                            </StackPanel>
                             <!-- Kurulu olanlar "Kurulu", olmayanlar resmi indirme sayfasına giden düğmeyle (ikisi de denenebilir). -->
                             <Grid x:Name="SonyInstallRow" Margin="0,12,0,0">
                                 <TextBlock Text="{t:T 'PS Remote Play (Sony)'}" VerticalAlignment="Center" />

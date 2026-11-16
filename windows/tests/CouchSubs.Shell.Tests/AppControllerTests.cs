@@ -216,6 +216,14 @@ internal sealed class FakeServices : IAppServices
         Streams.Add(stream);
         return stream;
     }
+    public List<WindowCaptureTarget> CaptureWindowStreams { get; } = [];
+    public IStreamSession MakeCaptureWindowStream(WindowCaptureTarget target)
+    {
+        CaptureWindowStreams.Add(target);
+        var stream = new FakeStream();
+        Streams.Add(stream);
+        return stream;
+    }
     public IKeeper MakeKeeper(LgTv tv, string? key, IReadOnlyDictionary<string, string> parameters, Func<bool> appConnected, Action<LgTv> onMoved,
                               Action<string> onKey)
     {

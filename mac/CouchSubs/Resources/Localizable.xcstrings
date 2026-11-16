@@ -14257,7 +14257,20 @@
           }
         }
       }
-    }
+    },
+    "Selected window": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Selected window"}},"tr":{"stringUnit":{"state":"translated","value":"Seçilen pencere"}}}},
+    "Choose an OBS or game window in Settings › Picture source.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Choose an OBS or game window in Settings › Picture source."}},"tr":{"stringUnit":{"state":"translated","value":"Ayarlar › Görüntü kaynağı bölümünden bir OBS veya oyun penceresi seçin."}}}},
+    "Reading the selected window": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Reading the selected window"}},"tr":{"stringUnit":{"state":"translated","value":"Seçilen pencere okunuyor"}}}},
+    "Ready to read %@ when translation starts.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Ready to read %@ when translation starts."}},"tr":{"stringUnit":{"state":"translated","value":"Çeviri başlayınca %@ penceresi okunacak."}}}},
+    "Waiting for the selected window: %@": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Waiting for the selected window: %@"}},"tr":{"stringUnit":{"state":"translated","value":"Seçilen pencere bekleniyor: %@"}}}},
+    "The selected window is black. Check the OBS projector or game window.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The selected window is black. Check the OBS projector or game window."}},"tr":{"stringUnit":{"state":"translated","value":"Seçilen pencere siyah görünüyor. OBS projektörünü veya oyun penceresini kontrol edin."}}}},
+    "Not currently open": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Not currently open"}},"tr":{"stringUnit":{"state":"translated","value":"Şu anda açık değil"}}}},
+    "OBS projector or game window": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"OBS projector or game window"}},"tr":{"stringUnit":{"state":"translated","value":"OBS projektörü veya oyun penceresi"}}}},
+    "Open an OBS projector or game window, then select it below. Only that window is read: CouchSubs never switches to the whole desktop when it closes.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Open an OBS projector or game window, then select it below. Only that window is read: CouchSubs never switches to the whole desktop when it closes."}},"tr":{"stringUnit":{"state":"translated","value":"OBS projektörünü veya oyun penceresini açıp aşağıdan seçin. CouchSubs yalnızca bu pencereyi okur; pencere kapanınca tüm masaüstüne geçmez."}}}},
+    "Refresh windows": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Refresh windows"}},"tr":{"stringUnit":{"state":"translated","value":"Pencereleri yenile"}}}},
+    "No suitable windows found. Open OBS or the game first, then refresh.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"No suitable windows found. Open OBS or the game first, then refresh."}},"tr":{"stringUnit":{"state":"translated","value":"Uygun pencere bulunamadı. Önce OBS'yi veya oyunu açın, sonra listeyi yenileyin."}}}},
+    "Have OBS or a game window on this PC?": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Have OBS or a game window on this PC?"}},"tr":{"stringUnit":{"state":"translated","value":"Bu bilgisayarda OBS veya oyun penceresi mi kullanıyorsunuz?"}}}},
+    "CouchSubs can read only the OBS projector or game window you select in Settings › Picture source. No second PSN account or additional capture app is needed.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"CouchSubs can read only the OBS projector or game window you select in Settings › Picture source. No second PSN account or additional capture app is needed."}},"tr":{"stringUnit":{"state":"translated","value":"CouchSubs, Ayarlar › Görüntü kaynağı bölümünde seçtiğiniz OBS projektörünü veya oyun penceresini okuyabilir. İkinci PSN hesabı ya da ek yakalama uygulaması gerekmez."}}}}
   },
   "version": "1.0"
 }

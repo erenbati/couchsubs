@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text;
 using CouchSubs.Core;
 using CouchSubs.RemotePlay;
 using CouchSubs.Shell;
@@ -40,6 +41,7 @@ public sealed class RemotePlayWindowStream : IStreamSession
     public event Action<RegisteredConsole>? ConsoleMoved { add { } remove { } }
 
     private readonly RemotePlayApp app;
+    private readonly WindowCaptureTarget? selectedWindow;
     private readonly string[] processNames;
     private readonly object gate = new();
     private int generation;
@@ -59,6 +61,16 @@ public sealed class RemotePlayWindowStream : IStreamSession
         };
     }
 
+    /// <summary>OBS veya oyun penceresi kullanıcı tarafından seçildi: uygulama açılmaz, tam ekran yakalanmaz.</summary>
+    public RemotePlayWindowStream(WindowCaptureTarget target)
+    {
+        if (string.IsNullOrWhiteSpace(target.ProcessName) || string.IsNullOrWhiteSpace(target.Title))
+            throw new ArgumentException("A process and window title must be selected.", nameof(target));
+        app = RemotePlayApp.Automatic;
+        selectedWindow = target;
+        processNames = [target.ProcessName];
+    }
+
     public void Start()
     {
         int current;
@@ -69,7 +81,7 @@ public sealed class RemotePlayWindowStream : IStreamSession
             reported = null;
         }
         Report(SessionState.Connecting);
-        OpenIfNeeded();
+        if (selectedWindow is null) OpenIfNeeded();
         StartSearch(current);
     }
 
@@ -148,7 +160,7 @@ public sealed class RemotePlayWindowStream : IStreamSession
             var noted = false;
             while (!token.IsCancellationRequested && IsCurrent(number))
             {
-                var window = FindGameWindow(processNames);
+                var window = FindGameWindow(processNames, selectedWindow?.Title);
                 if (window != IntPtr.Zero)
                 {
                     try
@@ -179,7 +191,9 @@ public sealed class RemotePlayWindowStream : IStreamSession
                 {
                     if (!noted)
                     {
-                        RemotePlayLog.Note("Remote Play penceresi bekleniyor (PS Remote Play ya da chiaki-ng)");
+                        RemotePlayLog.Note(selectedWindow is { } target
+                            ? $"Seçilen pencere bekleniyor: {target.ProcessName} / {target.Title}"
+                            : "Remote Play penceresi bekleniyor (PS Remote Play ya da chiaki-ng)");
                         noted = true;
                     }
                     Report(SessionState.Connecting);
@@ -211,13 +225,15 @@ public sealed class RemotePlayWindowStream : IStreamSession
     {
         if (black)
             Report(SessionState.Disconnected(DisconnectKind.Other,
-                Localizer.Current["The Remote Play window comes through black: this app may block screen capture. Try chiaki-ng."]));
+                selectedWindow is not null
+                    ? Localizer.Current["The selected window is black. Check the OBS projector or game window."]
+                    : Localizer.Current["The Remote Play window comes through black: this app may block screen capture. Try chiaki-ng."]));
         else
             Report(SessionState.Streaming);
     }
 
     /// <summary>Seçilen uygulamaların en büyük, görünür, simge durumunda olmayan üst düzey penceresi.</summary>
-    private static IntPtr FindGameWindow(string[] names)
+    private static IntPtr FindGameWindow(string[] names, string? selectedTitle = null)
     {
         var processes = new Dictionary<uint, bool>();
         var best = IntPtr.Zero;
@@ -236,7 +252,8 @@ public sealed class RemotePlayWindowStream : IStreamSession
                 catch (Exception) { wanted = false; }
                 processes[pid] = wanted;
             }
-            if (!wanted || !Native.GetWindowRect(hwnd, out var rect)) return true;
+            if (!wanted || (selectedTitle is not null && (pid == Environment.ProcessId || WindowTitle(hwnd) != selectedTitle))
+                || !Native.GetWindowRect(hwnd, out var rect)) return true;
             var (width, height) = (rect.Right - rect.Left, rect.Bottom - rect.Top);
             if (width < MinimumWidth || height < MinimumHeight) return true;
             var area = (long)width * height;
@@ -248,6 +265,39 @@ public sealed class RemotePlayWindowStream : IStreamSession
             return true;
         }, IntPtr.Zero);
         return best;
+    }
+
+    /// <summary>Yalnız kullanıcıya görünür ve uygulamanın kendisine ait olmayan pencereler seçilebilir.</summary>
+    public static IReadOnlyList<WindowCaptureTarget> ListCaptureWindows()
+    {
+        var windows = new List<WindowCaptureTarget>();
+        Native.EnumWindows((hwnd, _) =>
+        {
+            if (!Native.IsWindowVisible(hwnd) || Native.IsIconic(hwnd) || Native.GetWindow(hwnd, Native.GwOwner) != IntPtr.Zero
+                || !Native.GetWindowRect(hwnd, out var rect)
+                || rect.Right - rect.Left < MinimumWidth || rect.Bottom - rect.Top < MinimumHeight) return true;
+            Native.GetWindowThreadProcessId(hwnd, out var pid);
+            if (pid == Environment.ProcessId) return true; // CouchSubs altyazı penceresini seçip geri besleme oluşturma.
+            var title = WindowTitle(hwnd);
+            if (title.Length == 0) return true;
+            try
+            {
+                using var process = Process.GetProcessById((int)pid);
+                windows.Add(new WindowCaptureTarget(process.ProcessName, title));
+            }
+            catch (Exception) { /* Süreç arama sırasında kapanmış olabilir. */ }
+            return true;
+        }, IntPtr.Zero);
+        return [.. windows.Distinct().OrderBy(w => w.ProcessName).ThenBy(w => w.Title)];
+    }
+
+    private static string WindowTitle(IntPtr window)
+    {
+        var length = Native.GetWindowTextLength(window);
+        if (length <= 0) return "";
+        var buffer = new StringBuilder(Math.Min(length + 1, 1025));
+        Native.GetWindowText(window, buffer, buffer.Capacity);
+        return buffer.ToString().Trim();
     }
 
     /// <summary>Seçilen uygulamalardan hiçbiri açık değilse kurulu olan ilki açılır.</summary>
@@ -502,5 +552,7 @@ public sealed class RemotePlayWindowStream : IStreamSession
         [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr window, uint command);
         [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
         [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextLength(IntPtr window);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int maxCount);
     }
 }

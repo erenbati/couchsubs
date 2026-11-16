@@ -175,7 +175,13 @@ public static class TranslationEngines
 /// oyun bu bilgisayardaki PS Remote Play'de ya da chiaki-ng'de oynanır, CouchSubs yalnız o pencereyi okur; PS5'e ikinci
 /// oturum açılmadığı için ikinci hesap gerekmez (Mac'teki FrameSource ile aynı). Eski ayar dosyaları PS5 ile açılır.
 /// </summary>
-public enum FrameSource { Ps5, RemotePlayWindow }
+public enum FrameSource { Ps5, RemotePlayWindow, CaptureWindow }
+
+/// <summary>
+/// Kullanıcının açıkça seçtiği OBS projektörü veya oyun penceresi. PID/handle saklanmaz (yeniden açılışta değişir);
+/// hem süreç adı hem pencere başlığı eşleşmelidir. Pencere bulunmazsa başka kaynağa geçilmez.
+/// </summary>
+public sealed record WindowCaptureTarget(string ProcessName, string Title);
 
 /// <summary>Pencereden okunurken hangi Remote Play uygulaması: hangisi açıksa, yalnız Sony'ninki ya da yalnız chiaki-ng.</summary>
 public enum RemotePlayApp { Automatic, Sony, Chiaki }
@@ -257,6 +263,8 @@ public sealed record UserSettings
     public AppAppearance Appearance { get; init; } = AppAppearance.Dark;
     /// <summary>Görüntü PS5 bağlantısından mı, bu bilgisayardaki Remote Play penceresinden mi okunur.</summary>
     public FrameSource FrameSource { get; init; } = FrameSource.Ps5;
+    /// <summary>OBS veya başka bir açık pencere seçildiyse yalnız bu pencere yakalanır (varsayılan null).</summary>
+    public WindowCaptureTarget? CaptureWindow { get; init; }
     /// <summary>Pencereden okunurken hangi Remote Play uygulaması (bkz. <see cref="Shell.RemotePlayApp"/>).</summary>
     public RemotePlayApp RemotePlayApp { get; init; } = RemotePlayApp.Automatic;
 
@@ -427,6 +435,10 @@ public interface IAppServices
     IStreamSession MakeStream(RegisteredConsole console, byte[] accountId, string? loginPasscode);
     /// <summary>Görüntüyü bu bilgisayardaki Remote Play penceresinden (PS Remote Play ya da chiaki-ng) alan kaynak.</summary>
     IStreamSession MakeWindowStream(RemotePlayApp app) => throw new NotSupportedException();
+    /// <summary>Açıkça seçilen pencereyi okumak için aynı Windows Graphics Capture hattını kullanır.</summary>
+    IStreamSession MakeCaptureWindowStream(WindowCaptureTarget target) => throw new NotSupportedException();
+    /// <summary>Kullanıcının seçebileceği görünür pencereler. PSN veya ekran paylaşım izni gerekmez.</summary>
+    IReadOnlyList<WindowCaptureTarget> CaptureWindows() => [];
     /// <summary>Seçilen Remote Play uygulaması (PS Remote Play ya da chiaki-ng) bu bilgisayarda kurulu mu.</summary>
     bool RemotePlayInstalled(RemotePlayApp app) => true;
     /// <param name="appConnected">TV uygulaması bilgisayara bağlı mı (Samsung'da bağlıyken TV'ye dokunulmaz).</param>
