@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GENERAL, runAutopack } from "../src/autopack.js";
+import { GENERAL, parseReply, runAutopack } from "../src/autopack.js";
 
 test("general pool scans past separated game rows before applying the row limit", async () => {
   const now = new Date("2026-11-20T04:00:00Z");
@@ -72,4 +72,20 @@ test("general pool scans past separated game rows before applying the row limit"
   const translatedKeys = Object.keys(cache.lines);
   assert.equal(translatedKeys.length, 200);
   assert.ok(translatedKeys.every((key) => key.startsWith("2")));
+});
+
+
+test("AI parser ignores malformed item collections and IDs without misassigning subtitles", async () => {
+
+  const lines = [{ en: "Where are you going?" }, { en: "We have to leave now." }];
+  for (const items of [null, {}, 42, true]) {
+    const reply = { response: JSON.stringify({ items }) };
+    assert.deepEqual([...parseReply(reply, lines)], [], `malformed items: ${JSON.stringify(items)}`);
+  }
+  for (const id of [null, "", " ", true, false, {}, -1, 1.5, "0abc"]) {
+    const reply = { response: JSON.stringify({ items: [{ id, tr: "Yanlış satıra yazılmamalı." }] }) };
+    assert.deepEqual([...parseReply(reply, lines)], [], `invalid id: ${JSON.stringify(id)}`);
+  }
+  const valid = { response: JSON.stringify({ items: [{ id: "0", tr: "Nereye gidiyorsun?" }, { id: 1, tr: "Hemen gitmeliyiz." }] }) };
+  assert.deepEqual([...parseReply(valid, lines)], [[0, "Nereye gidiyorsun?"], [1, "Hemen gitmeliyiz."]]);
 });

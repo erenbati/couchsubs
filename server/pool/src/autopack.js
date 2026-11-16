@@ -153,10 +153,13 @@ export function parseReply(reply, items) {
     try { parsed = JSON.parse(text); } catch { return new Map(); }
   }
   const out = new Map();
-  for (const it of parsed?.items ?? []) {
-    const i = Number(it?.id);
+  if (!Array.isArray(parsed?.items)) return out;
+  for (const it of parsed.items) {
+    const id = it?.id;
+    if (typeof id !== "number" && !(typeof id === "string" && /^\d+$/.test(id))) continue;
+    const i = Number(id);
     const tr = typeof it?.tr === "string" ? it.tr.replace(/\s+/g, " ").trim() : "";
-    if (!Number.isInteger(i) || !items[i] || !tr) continue;
+    if (!Number.isSafeInteger(i) || !items[i] || !tr) continue;
     // Açıklama ya da birden çok satır yazmış, çok uzun ya da Türkçe değil: alınmaz.
     if (/[{}]/.test(tr) || tr.length > items[i].en.length * 3 + 40) continue;
     out.set(i, tr);
