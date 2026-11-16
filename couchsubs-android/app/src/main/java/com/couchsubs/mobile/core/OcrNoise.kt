@@ -19,12 +19,13 @@ object OcrNoise {
         val tokens = line.split(Regex("\\s+")).filter { it.isNotEmpty() }
         for ((index, token) in tokens.withIndex()) {
             val (lead, core, trail) = split(token)
-            // Tek başına "l" ya da "|" çoğu zaman yanlış okunmuş "I"dır; ardından küçük harfle süren sözcük gelmiyorsa
-            // altyazı kutusunun kenarıdır ("| Get in the car."), atılır.
+            // Tek başına "l" ya da "|" çoğu zaman yanlış okunmuş "I"dır; ardından küçük harfle başlayan sözcük yoksa
+            // ve token ?/! ile bitmiyorsa altyazı kutusunun kenarı olabilir.
             val pronoun = misreadI(core)
             if (pronoun != null) {
                 val next = if (index + 1 < tokens.size) tokens[index + 1].firstOrNull { it.isLetter() } ?: '\u0000' else '\u0000'
-                if (pronoun != "I" || next.isLowerCase()) kept.add(lead + pronoun + trail)
+                val endsQuestionOrExclamation = trail.any { it == '?' || it == '!' }
+                if (pronoun != "I" || next.isLowerCase() || endsQuestionOrExclamation) kept.add(lead + pronoun + trail)
                 continue
             }
             // Yalnız "?!", ".", "," gibi işaretlerden oluşan parça: satır başında ya da cümle bittikten sonra yazı tanımanın

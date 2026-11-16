@@ -65,6 +65,14 @@ class ParityTest {
     }
 
     @Test
+    fun finalMisreadPronounKeepsQuestionAndExclamationMarks() {
+        assertEquals("Who am I?", OcrNoise.clean("Who am l?"))
+        assertEquals("Where are you, I?", OcrNoise.clean("Where are you, |?"))
+        assertEquals("I don't know, I!", OcrNoise.clean("I don't know, l!"))
+        assertEquals("Leave it.", OcrNoise.clean("Leave it. l."))
+    }
+
+    @Test
     fun cleanVowelReadingScoresHigherThanVowellessOcrWord() {
         assertTrue(OcrNoise.score("Get to the gate now.") > OcrNoise.score("Gtt to the gate now."))
         for (word in listOf("Hmm", "Shh", "Brr", "Psst", "Mmm")) assertTrue(word, OcrNoise.score("$word!") > 0)

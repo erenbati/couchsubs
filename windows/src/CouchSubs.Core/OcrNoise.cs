@@ -25,11 +25,12 @@ public static partial class OcrNoise
             var token = tokens[index];
             var (lead, core, trail) = Split(token);
             // Tek başına "l" ya da "|" çoğu zaman yanlış okunmuş "I"dır ("l don't know", "|'ll go"); ardından küçük
-            // harfle süren sözcük gelmiyorsa altyazı kutusunun kenarıdır ("| Get in the car."), atılır.
+            // harfle başlayan sözcük yoksa ve token ?/! ile bitmiyorsa altyazı kutusunun kenarı olabilir.
             if (MisreadI(core) is { } pronoun)
             {
                 var next = index + 1 < tokens.Length ? tokens[index + 1].FirstOrDefault(char.IsLetter) : '\0';
-                if (pronoun != "I" || char.IsLower(next)) kept.Add(lead + pronoun + trail);
+                var endsQuestionOrExclamation = trail.IndexOfAny(['?', '!']) >= 0;
+                if (pronoun != "I" || char.IsLower(next) || endsQuestionOrExclamation) kept.Add(lead + pronoun + trail);
                 continue;
             }
             // Yalnız "?!", ".", "," gibi işaretlerden oluşan parça: satır başında ya da cümle bittikten sonra yazı
