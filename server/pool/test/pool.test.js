@@ -53,13 +53,14 @@ function fakeDB() {
       return { meta: { changes } };
     }
     if (sql.startsWith("INSERT INTO lines")) {
-      // Havuza yalnız en az iki kurulumun gördüğü satır girer (UPSERT'teki n>=2).
+      // Havuza yalnız iki kurulumdan sonra girer; sayı güncel distinct sightings'dir.
       const [k, text, , , title = null, game = null] = args;
       const n = sightings.get(k)?.size ?? 0;
       if (n < 2) return { meta: { changes: 0 } };
       const row = lines.get(k);
+      if (row && row.installs >= n) return { meta: { changes: 0 } };
       lines.set(k, row
-        ? { ...row, installs: row.installs + 1, title: row.title ?? title, game: row.game ?? game }
+        ? { ...row, installs: n, title: row.title ?? title, game: row.game ?? game }
         : { text, installs: n, title, game });
       return { meta: { changes: 1 } };
     }
@@ -116,13 +117,13 @@ test("gönderim süzer; tek kurulumun satırı havuza yazılmaz, ikinci kurulumd
   const env = { DB };
   const reply = await post(env, install(1), ["Oturum Açtı", "Get down!", "Get down!", "Who is that over there?"]);
   assert.deepEqual(await reply.json(), { accepted: 2, recorded: 2 });
-  // Yalnız 2 görülme + 1 kota; havuza hiçbir şey yazılmaz (lines'a deneme yoktur, yazılan satır 0).
+  // İki görülme + iki koşullu UPSERT + bir kota rezervasyonu; ilk kurulumda lines'a kayıt girmez.
   assert.equal(DB.lines.size, 0);
 
   // Aynı kurulum aynı satırları yeniden gönderirse yalnız görülme denemesi ve kota yazılır.
   DB.writes = 0;
   await post(env, install(1), ["Get down!", "Who is that over there?"]);
-  assert.equal(DB.writes, 3);
+  assert.equal(DB.writes, 5); // 2 idempotent sightings + 2 idempotent conditional UPSERT + 1 quota
   assert.equal(DB.lines.size, 0);
 
   // İkinci kurulum: satır havuza installs=2 ile girer; yalnız onun okuduğu satır.
@@ -178,16 +179,17 @@ test("ilk yazma toplu işlemi başarısızsa kota rezervasyonu geri alınır", a
   assert.equal(DB.quotas.get(`${who}\u001f${day}`), 12);
 });
 
-test("satır yazma toplu işlemi başarısızsa da kota rezervasyonu geri alınır", async () => {
+test("atomik görülme ve satır batch'i başarısızsa kota rezervasyonu geri alınır", async () => {
   const DB = fakeDB();
   const who = install(4);
   const day = new Date().toISOString().slice(0, 10);
   DB.quotas.set(`${who}\u001f${day}`, 12);
-  DB.failBatchOnCall = 2;
+  // İki aşama yerine görülme ve satır yazımı tek D1 batch transaction'ıdır.
+  DB.failBatchOnCall = 1;
 
   const reply = await postLines({ DB }, who, [{ text: "Get down!" }]);
   assert.equal(reply.status, 500);
-  assert.equal(DB.batchCalls, 2);
+  assert.equal(DB.batchCalls, 1);
   assert.equal(DB.quotas.get(`${who}\u001f${day}`), 12);
 });
 
@@ -338,4 +340,30 @@ test("export rejects negative and non-integer pagination before issuing SQL", as
   const valid = await get("limit=100000&min=3");
   assert.equal(valid.status, 200);
   assert.deepEqual(DB.last.args, [3, 20000]);
+});
+
+test("a failed line write does not silently lose its sighting on retry", async () => {
+  const DB = fakeDB();
+  const text = "Don't leave the engine running.";
+  const first = await postLines({ DB }, install(1), [{ text }]);
+  assert.equal(first.status, 200);
+  assert.equal(DB.lines.size, 0);
+
+  const original = DB.batch;
+  let failWhenWritingLine = true;
+  DB.batch = async (statements) => {
+    if (failWhenWritingLine && statements.some((s) => s.sql.startsWith("INSERT INTO lines"))) {
+      failWhenWritingLine = false;
+      // D1.batch rejects the entire transaction if a statement fails.
+      throw new Error("injected failure after sightings would otherwise commit");
+    }
+    return original(statements);
+  };
+  const failed = await postLines({ DB }, install(2), [{ text }]);
+  assert.equal(failed.status, 500);
+  assert.equal(DB.lines.size, 0);
+  const retry = await postLines({ DB }, install(2), [{ text }]);
+  assert.equal(retry.status, 200);
+  assert.equal(DB.lines.size, 1, "retry must still publish a line seen by two distinct installs");
+  assert.equal([...DB.lines.values()][0].installs, 2);
 });

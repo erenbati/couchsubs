@@ -126,28 +126,24 @@ async function submit(req, env) {
     // Günlükte (wrangler tail) yalnız sayılar ve oyun kimliğinin biçimi: oyun bilgisinin gelip gelmediği görülsün.
     console.log(JSON.stringify(submitSummary(body, lines)));
 
-    // D1'in günlük yazma kotası (ücretsiz 100.000 satır; tablo satırı ve her dizin girdisi ayrı sayılır) için: önce
-    // görülme kaydı (sightings, WITHOUT ROWID: satır başına tek yazma). Bu kurulum satırı zaten bildirdiyse (changes 0)
-    // hiçbir şeye dokunulmaz. Satır havuza (lines) yalnız ikinci farklı kurulumdan gelince yazılır: tek kurulumun
-    // gördüğü satır havuza hiç girmez (paket ve dışa aktarım zaten en az iki kurulum ister). Kota satırı
-    // istek başına tek yazmadır.
+    // Günlük D1 yazma kotası için: kurulumun görülme kaydı (sightings) ile en az iki kurulumun gördüğü
+    // satırın havuza eklenmesi (lines) aynı transaction içinde gerçekleşir. Tek kurulumda upsert etkisizdir;
+    // aynı kurulum tekrar gönderince de idempotent upsert hiçbir satırı değiştirmez.
     const now = new Date().toISOString();
     entries = [...fresh];
-    const seen = entries.length
-      ? await env.DB.batch(entries.map(([k]) =>
-        env.DB.prepare("INSERT OR IGNORE INTO sightings(key,install) VALUES(?,?)").bind(k, install)))
-      : [];
-    // Oyun bilgisi satırın ilk bilinen oyunudur: sonra gelen başka oyun üstüne yazmaz (COALESCE). Metin ve oyun
-    // bilgisi, satırı havuza sokan (ikinci) kurulumun isteğinden alınır.
-    const stmts = [];
-    entries.forEach(([k, line], i) => {
-      if (!(seen[i]?.meta?.changes > 0)) return;
-      stmts.push(env.DB.prepare(UPSERT).bind(k, line.text, now, now, line.title, line.game, k));
-    });
-    recorded = stmts.length;
-    if (stmts.length) await env.DB.batch(stmts);
+    // Görülme ve satır güncellemesini tek D1 batch transaction'ında yap: ikinci adım hata
+    // verirse yalnız sightings yazılı kalmamalı (yoksa tekrar göndermek satırı kalıcı olarak kaybettirir).
+    // UPSERT, distinct sightings sayısına göre idempotenttir; aynı kurulum tekrar gönderince sayıyı artırmaz.
+    const writes = [
+      ...entries.map(([k]) =>
+        env.DB.prepare("INSERT OR IGNORE INTO sightings(key,install) VALUES(?,?)").bind(k, install)),
+      ...entries.map(([k, line]) =>
+        env.DB.prepare(UPSERT).bind(k, line.text, now, now, line.title, line.game, k)),
+    ];
+    const results = writes.length ? await env.DB.batch(writes) : [];
+    recorded = results.slice(0, entries.length).filter((r) => r?.meta?.changes > 0).length;
   } catch (error) {
-    // Undo the reservation if filtering, hashing, or either primary write fails. A failed compensation
+    // Undo the reservation if filtering, hashing, or the atomic write batch fails. A failed compensation
     // leaves quota conservative rather than risking an over-limit counter.
     if (room > 0) {
       await env.DB.prepare("UPDATE quota SET count=count-? WHERE install=? AND day=? AND count>=?")
@@ -179,12 +175,13 @@ async function vote(env, install, entries) {
 }
 
 // Satırı görenlerin sayısı sightings'ten okunur (az önce yazılan görülme dahil); en az ikiyse lines'a girer ya da
-// sayacı bir artar. Tek kurulumda SELECT boş döner, yazma olmaz.
+// installs sayısı kesin distinct görülme sayısına eşitlenir. Tek kurulumda SELECT boş döner, yazma olmaz.
 export const UPSERT =
   "INSERT INTO lines(key,text,installs,first_seen,last_seen,title_id,game) " +
   "SELECT ?,?,n,?,?,?,? FROM (SELECT COUNT(*) AS n FROM sightings WHERE key=?) WHERE n>=2 " +
-  "ON CONFLICT(key) DO UPDATE SET installs=installs+1, last_seen=excluded.last_seen, " +
-  "title_id=COALESCE(lines.title_id,excluded.title_id), game=COALESCE(lines.game,excluded.game)";
+  "ON CONFLICT(key) DO UPDATE SET installs=excluded.installs, last_seen=excluded.last_seen, " +
+  "title_id=COALESCE(lines.title_id,excluded.title_id), game=COALESCE(lines.game,excluded.game) " +
+  "WHERE lines.installs < excluded.installs";
 
 async function exportLines(url, env) {
   const min = Number(url.searchParams.get("min") || 2);
