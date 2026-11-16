@@ -250,6 +250,14 @@
     <string name="settings_background_fit">Fit the text</string>
     <string name="settings_background_band">Full-width band</string>
     <string name="settings_background_note">Drag the slider all the way to the end to make the background fully solid and hide the English subtitle in the game. A full-width band also covers the sides.</string>
+    <string name="settings_placement">Subtitle position on TV</string>
+    <string name="settings_placement_cover">Cover</string>
+    <string name="settings_placement_above">Above</string>
+    <string name="settings_placement_below">Below</string>
+    <string name="settings_placement_fixed">Fixed</string>
+    <string name="settings_placement_note">Cover: the translation hides the English subtitle in the game. Choose Above or Below to see the English subtitle too, with the translation right above or below it.</string>
+    <string name="settings_position_height">Height on screen</string>
+    <string name="settings_placement_fixed_note">A sample subtitle appears on the TV when you let go of the slider. In fixed position you can also move subtitles with the ▲ and ▼ buttons on the TV remote.</string>
     <string name="settings_target">Subtitle target</string>
     <string name="settings_ps5">PS5 and connection</string>
     <string name="settings_passcode">PS5 login passcode</string>

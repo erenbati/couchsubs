@@ -42,6 +42,7 @@ import com.couchsubs.mobile.BuildConfig
 import com.couchsubs.mobile.R
 import com.couchsubs.mobile.Services
 import com.couchsubs.mobile.core.SubtitleBackgroundShape
+import com.couchsubs.mobile.core.SubtitlePlacement
 import com.couchsubs.mobile.core.SubtitleTextColor
 import com.couchsubs.mobile.core.TvDisplayMode
 import com.couchsubs.mobile.remoteplay.LoginPasscode
@@ -137,6 +138,8 @@ fun SettingsScreen(onBack: () -> Unit, onPacks: () -> Unit, onTarget: () -> Unit
     var screenOn by remember { mutableStateOf(settings.keepScreenOn) }
     var stackPrevious by remember { mutableStateOf(settings.stackPrevious) }
     var displayMode by remember { mutableStateOf(settings.tvDisplayMode) }
+    var placement by remember { mutableStateOf(settings.tvPlacement) }
+    var bottomPercent by remember { mutableStateOf(settings.tvBottomPercent.toFloat()) }
     var passcode by remember { mutableStateOf(settings.loginPasscode ?: "") }
     // Tuvaldeki dört seçenek: Ücretsiz, DeepL, Gemini, Diğer (OpenAI / Claude).
     val segment = when (engine) {
@@ -245,6 +248,32 @@ fun SettingsScreen(onBack: () -> Unit, onPacks: () -> Unit, onTarget: () -> Unit
                 settings.tvBackgroundShape = shape
             }
             Text(stringResource(R.string.settings_background_note), style = Tokens.Type.caption, color = Tokens.Color.secondary)
+            // TV'de çevirinin yeri (Mac ve Windows'taki Yeri seçimi, iPhone ile aynı): üstünde/altında seçilince oyundaki
+            // İngilizce altyazı da görünür; sabit yerde yükseklik kaydırıcıyla ayarlanır, bırakınca TV'de örnek altyazı çıkar.
+            if (settings.target == SubtitleTarget.TV) {
+                val placements = listOf(SubtitlePlacement.COVER, SubtitlePlacement.ABOVE, SubtitlePlacement.BELOW, SubtitlePlacement.FIXED)
+                TileLabel(stringResource(R.string.settings_placement))
+                Segmented(listOf(stringResource(R.string.settings_placement_cover), stringResource(R.string.settings_placement_above),
+                    stringResource(R.string.settings_placement_below), stringResource(R.string.settings_placement_fixed)),
+                    placements.indexOf(placement).coerceAtLeast(0)) {
+                    placement = placements[it]
+                    settings.tvPlacement = placement
+                }
+                if (placement == SubtitlePlacement.FIXED) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TileLabel(stringResource(R.string.settings_position_height))
+                        Spacer(Modifier.weight(1f))
+                        Text("%${bottomPercent.toInt()}", style = Tokens.Type.headline, color = Tokens.Color.text)
+                    }
+                    Slider(bottomPercent, { bottomPercent = it; settings.tvBottomPercent = it.toInt() }, valueRange = 0f..85f,
+                        onValueChangeFinished = { TranslationService.sendTestSubtitle(context.getString(R.string.test_subtitle_text)) },
+                        colors = SliderDefaults.colors(thumbColor = Tokens.Color.text, activeTrackColor = Tokens.Color.accent,
+                            inactiveTrackColor = Tokens.Color.borderStrong, activeTickColor = Color.Transparent, inactiveTickColor = Color.Transparent))
+                    Text(stringResource(R.string.settings_placement_fixed_note), style = Tokens.Type.caption, color = Tokens.Color.secondary)
+                } else {
+                    Text(stringResource(R.string.settings_placement_note), style = Tokens.Type.caption, color = Tokens.Color.secondary)
+                }
+            }
             RowItem(stringResource(R.string.settings_stack_previous)) { Switch(stackPrevious, { stackPrevious = it; settings.stackPrevious = it }) }
             Text(stringResource(R.string.settings_stack_previous_note), style = Tokens.Type.caption, color = Tokens.Color.secondary)
             // Yalnız Android TV uygulaması kullanır: bazı TV'lerde (ör. TCL) uygulama içindeki PS5 görüntüsü siyah kalıyor.
