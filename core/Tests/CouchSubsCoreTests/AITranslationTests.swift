@@ -534,11 +534,12 @@ final class AITranslationTests: XCTestCase {
     }
 
     func testContextDoesNotCrossGameChanges() async throws {
-        var game: String? = "First game"
-        let translator = withGame(TranslationCache(), game: { game })
+        let game = GameBox()
+        game.value = "First game"
+        let translator = withGame(TranslationCache(), game: { game.value })
 
         _ = try await translator.translate("This belongs to the first game.", fallback: local)
-        game = "Second game"
+        game.value = "Second game"
         _ = try await translator.translate("This belongs to the second game.", fallback: local)
 
         XCTAssertTrue(user(1).hasPrefix("Game: Second game\n"))
