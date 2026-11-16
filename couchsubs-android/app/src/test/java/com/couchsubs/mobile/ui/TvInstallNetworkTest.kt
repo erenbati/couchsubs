@@ -9,11 +9,22 @@ class TvInstallNetworkTest {
     @Test
     fun selectsWifiIpv4WhenVpnOrCellularIsTheDefaultNetwork() {
         val networks = listOf(
-            NetworkAddressCandidate(isWifi = true, isVpn = true, addresses = listOf(InetAddress.getByName("10.8.0.2"))),
-            NetworkAddressCandidate(isWifi = false, isVpn = false, addresses = listOf(InetAddress.getByName("10.0.0.4"))),
-            NetworkAddressCandidate(isWifi = true, isVpn = false, addresses = listOf(InetAddress.getByName("192.168.1.23"))),
+            NetworkAddressCandidate(isWifi = true, isEthernet = false, isVpn = true, addresses = listOf(InetAddress.getByName("10.8.0.2"))),
+            NetworkAddressCandidate(isWifi = false, isEthernet = false, isVpn = false, addresses = listOf(InetAddress.getByName("10.0.0.4"))),
+            NetworkAddressCandidate(isWifi = false, isEthernet = true, isVpn = false, addresses = listOf(InetAddress.getByName("192.168.1.45"))),
+            NetworkAddressCandidate(isWifi = true, isEthernet = false, isVpn = false, addresses = listOf(InetAddress.getByName("192.168.1.23"))),
         )
 
-        assertEquals("192.168.1.23", wifiIpv4Address(networks))
+        assertEquals("192.168.1.23", phoneIpv4Address(networks))
+    }
+
+    @Test
+    fun fallsBackToEthernetIpv4WhenWifiIsUnavailable() {
+        val networks = listOf(
+            NetworkAddressCandidate(isWifi = false, isEthernet = false, isVpn = true, addresses = listOf(InetAddress.getByName("10.8.0.2"))),
+            NetworkAddressCandidate(isWifi = false, isEthernet = true, isVpn = false, addresses = listOf(InetAddress.getByName("192.168.1.45"))),
+        )
+
+        assertEquals("192.168.1.45", phoneIpv4Address(networks))
     }
 }

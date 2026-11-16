@@ -385,23 +385,33 @@ internal fun phoneAddress(context: Context): String? = try {
         val capabilities = connectivity.getNetworkCapabilities(network)
         NetworkAddressCandidate(
             isWifi = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true,
+            isEthernet = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true,
             isVpn = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true,
             addresses = connectivity.getLinkProperties(network)?.linkAddresses?.map { it.address }.orEmpty(),
         )
     }
-    wifiIpv4Address(networks)
+    phoneIpv4Address(networks)
 } catch (error: Exception) {
     null
 }
 
-internal data class NetworkAddressCandidate(val isWifi: Boolean, val isVpn: Boolean, val addresses: List<InetAddress>)
+internal data class NetworkAddressCandidate(
+    val isWifi: Boolean,
+    val isEthernet: Boolean,
+    val isVpn: Boolean,
+    val addresses: List<InetAddress>,
+)
 
-internal fun wifiIpv4Address(networks: Iterable<NetworkAddressCandidate>): String? = networks.asSequence()
-    .filter { it.isWifi && !it.isVpn }
-    .flatMap { it.addresses.asSequence() }
-    .filterIsInstance<Inet4Address>()
-    .firstOrNull { !it.isLoopbackAddress }
-    ?.hostAddress
+internal fun phoneIpv4Address(networks: Iterable<NetworkAddressCandidate>): String? {
+    fun addressFor(transport: (NetworkAddressCandidate) -> Boolean): String? = networks.asSequence()
+        .filter { transport(it) && !it.isVpn }
+        .flatMap { it.addresses.asSequence() }
+        .filterIsInstance<Inet4Address>()
+        .firstOrNull { !it.isLoopbackAddress }
+        ?.hostAddress
+
+    return addressFor { it.isWifi } ?: addressFor { it.isEthernet }
+}
 
 internal fun shareLog(context: Context, file: File) {
     val text = runCatching { file.readText().takeLast(60_000) }.getOrDefault("")
