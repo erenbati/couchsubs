@@ -130,3 +130,12 @@ describe("RateLimiter", () => {
     expect(rate.take("ip", 0)).toBe(3600);
   });
 });
+
+it("returns 404 rather than crashing on invalid percent-encoded pack IDs", async () => {
+  const response = await handle(
+    get("/v1/packs/%E0%A4%A"),
+    env(),
+    new RateLimiter(),
+  );
+  expect(response.status).toBe(404);
+});
