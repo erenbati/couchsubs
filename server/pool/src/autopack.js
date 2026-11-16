@@ -170,6 +170,19 @@ async function getJson(env, name) {
   try { return JSON.parse(await object.text()); } catch { return null; }
 }
 
+// Kaybolan önbellek ilk çalıştırmada normaldir; mevcut ama bozuk önbelleği sıfırlamak mevcut paketi silebilir.
+async function loadCache(env, job) {
+  const object = await env.PACKS.get(cacheFile(job));
+  if (!object) return { lines: {}, skip: {}, fail: {} };
+  try {
+    const cache = JSON.parse(await object.text());
+    const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+    if (!record(cache) || !record(cache.lines) || !record(cache.skip)
+      || (cache.fail != null && !record(cache.fail))) return null;
+    return cache;
+  } catch { return null; }
+}
+
 const putJson = (env, name, value) =>
   env.PACKS.put(name, JSON.stringify(value), { httpMetadata: { contentType: "application/json" } });
 
@@ -281,7 +294,8 @@ export async function runAutopack(env, now = new Date()) {
 
   const known = await loadKnown(env);
   if (!known) return { phase: "waiting", reason: "auto/known-keys.bin yok" };
-  const cache = (await getJson(env, cacheFile(job))) ?? { lines: {}, skip: {}, fail: {} };
+  const cache = await loadCache(env, job);
+  if (!cache) return { phase: "waiting", reason: "auto/translation cache invalid" };
   cache.fail ??= {};
   const separate = new Set(state.namedGames ?? []);
   let rows;

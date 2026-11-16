@@ -73,3 +73,36 @@ test("general pool scans past separated game rows before applying the row limit"
   assert.equal(translatedKeys.length, 200);
   assert.ok(translatedKeys.every((key) => key.startsWith("2")));
 });
+
+test("autopack must not publish an empty pack when an existing translation cache is corrupted", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const state = {
+    night: "2026-11-20",
+    queue: [{ titleId: GENERAL, game: null, lines: 350 }],
+    translated: 0, done: [],
+  };
+  for (const cacheRaw of ["{broken", JSON.stringify({ lines: [], skip: {} }), JSON.stringify({ lines: null, skip: {} })]) {
+    const stored = new Map([
+      ["auto/state.json", JSON.stringify(state)],
+      ["index.json", JSON.stringify({ packs: [{ id: "pool-genel", version: 1 }] })],
+      ["auto/tr/GENEL.json", cacheRaw],
+    ]);
+    const writes = [];
+    const env = {
+      AI: {},
+      PACKS: {
+        get: async (name) => name === "auto/known-keys.bin"
+          ? { arrayBuffer: async () => new ArrayBuffer(0) }
+          : stored.has(name) ? { text: async () => stored.get(name) } : null,
+        put: async (name, value) => { writes.push(name); stored.set(name, value); },
+      },
+      DB: {
+        prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) }),
+      },
+    };
+    const result = await runAutopack(env, now);
+    assert.equal(result.phase, "waiting");
+    assert.deepEqual(writes, [], "corrupt cache must not cause pack or index writes");
+    assert.deepEqual(JSON.parse(stored.get("auto/state.json")), state);
+  }
+});
