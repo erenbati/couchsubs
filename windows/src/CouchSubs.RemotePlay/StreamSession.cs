@@ -359,7 +359,7 @@ public sealed class StreamSession : IStreamSession
             case NativeMethods.EventConnected:
                 queue.Post(() =>
                 {
-                    if (box?.Generation != eventGeneration) return;
+                    if (box?.Generation != eventGeneration || !IsCurrent(eventGeneration)) return;
                     policy.Reset();
                     watchdog.Connected(Environment.TickCount64);
                     Emit(SessionState.Streaming);
@@ -371,7 +371,7 @@ public sealed class StreamSession : IStreamSession
                 var (pin, stop) = LoginPasscode.Reply(loginPasscode, incorrect: quitReason == 1);
                 queue.Post(() =>
                 {
-                    if (box is not { } current || current.Generation != eventGeneration) return;
+                    if (box is not { } current || current.Generation != eventGeneration || !IsCurrent(eventGeneration)) return;
                     if (pin is not null)
                     {
                         RemotePlayLog.Note("PS5 giriş şifresi istedi; Ayarlar'daki şifre gönderiliyor");
@@ -390,7 +390,7 @@ public sealed class StreamSession : IStreamSession
                 queue.Post(() =>
                 {
                     // Eski bir oturumun (ör. ReconnectNow ile kapatılanın) kapanma olayı yeni oturumu etkilemez.
-                    if (box?.Generation != eventGeneration) return;
+                    if (box?.Generation != eventGeneration || !IsCurrent(eventGeneration)) return;
                     CloseBox();
                     if (reason.Kind == DisconnectKind.RegistrationInvalid)
                     {

@@ -1,6 +1,69 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+using System.Collections.Concurrent;
+using System.Reflection;
+using System.Runtime.InteropServices;
+
 namespace CouchSubs.RemotePlay.Tests;
+
+public class StaleSessionEventTests
+{
+    [Theory]
+    [InlineData(NativeMethods.EventConnected, 0)]
+    [InlineData(NativeMethods.EventLoginPin, 0)]
+    [InlineData(NativeMethods.EventQuit, NativeMethods.QuitNetwork)]
+    public async Task QueuedNativeEventsFromStoppedGenerationAreIgnored(int eventType, int quitReason)
+    {
+        var console = new RegisteredConsole("127.0.0.1", "test", new byte[16], new byte[16]);
+        var session = new StreamSession(console, new byte[8]);
+        var states = new ConcurrentQueue<SessionState>();
+        session.StateChanged += states.Enqueue;
+        var queue = (SerialQueue)typeof(StreamSession)
+            .GetField("queue", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(session)!;
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var handled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        object? box = null;
+        var boxHandle = default(GCHandle);
+
+        try
+        {
+            queue.Post(() =>
+            {
+                entered.Set();
+                release.Wait();
+            });
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(2)), "session queue did not reach the test barrier");
+
+            // Queue Connect first, then a native callback. Stop advances the generation and queues CloseBox
+            // behind both actions, reproducing a callback already waiting when Stop is called.
+            session.Start();
+            const int eventGeneration = 1;
+            var boxType = typeof(StreamSession).GetNestedType("SessionBox", BindingFlags.NonPublic)!;
+            var constructor = boxType.GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic, null,
+                [typeof(StreamSession), typeof(int)], null)!;
+            box = constructor.Invoke([session, eventGeneration]);
+            boxHandle = (GCHandle)boxType.GetField("handle", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(box)!;
+            typeof(StreamSession).GetField("box", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(session, box);
+            typeof(StreamSession).GetMethod("Handle", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(session, [eventType, quitReason, null, eventGeneration, null]);
+
+            session.Stop();
+            queue.Post(() => handled.TrySetResult(true));
+            release.Set();
+            await handled.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+            Assert.Empty(states);
+        }
+        finally
+        {
+            release.Set();
+            session.Dispose();
+            if (boxHandle.IsAllocated) boxHandle.Free();
+        }
+    }
+}
 
 public class ReconnectPolicyTests
 {
