@@ -53,14 +53,36 @@ const ENGLISH = new Set(("the a an to of and or but with for from my your his he
   "i you he she it we they me him us them this that what who where when why how not no yes do did don't can can't will " +
   "won't just get got go have has had all there here now up out if so like know want need come one some about").split(" "));
 
+const PACK_PREFIX = "pool-";
+const MAX_PACK_ID_LENGTH = 64;
+
+function hashPackSuffix(value) {
+  let hash = 14695981039346656037n;
+  for (const character of value) {
+    hash = BigInt.asUintN(64, (hash ^ BigInt(character.codePointAt(0))) * 1099511628211n);
+  }
+  return hash.toString(36).padStart(13, "0");
+}
+
+function prefixedPackId(suffix, identity = suffix) {
+  const full = `${PACK_PREFIX}${suffix}`;
+  if (full.length <= MAX_PACK_ID_LENGTH) return full;
+
+  // Kimlik biçimini 64 karakterde tutarken uzun oyun adlarının aynı pakete çarpışmasını önle.
+  const hash = hashPackSuffix(identity);
+  const prefixLength = MAX_PACK_ID_LENGTH - PACK_PREFIX.length - hash.length - 1;
+  return `${PACK_PREFIX}${suffix.slice(0, prefixLength)}-${hash}`;
+}
+
 /** Oyun kimliğinden paket kimliği: "PPSA01234" → "pool-ppsa01234" (server/packs'in kimlik biçimine uyar). */
 export function packId(titleId) {
-  return "pool-" + String(titleId).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const identity = String(titleId);
+  return prefixedPackId(identity.toLowerCase().replace(/[^a-z0-9]+/g, "-"), identity);
 }
 
 /** İşin paket kimliği: oyun kimliği varsa ondan, yoksa adın anahtarından ("gta 6" → "pool-gta-6"). */
 export function jobPackId(job) {
-  return job.titleId ? packId(job.titleId) : "pool-" + gameSlug(job.gameKey);
+  return job.titleId ? packId(job.titleId) : prefixedPackId(gameSlug(job.gameKey), String(job.gameKey));
 }
 
 /** Kimliksiz satırların oyun adları ("game" sütunu, yazımına göre sayılmış) anahtara göre birleşir; en az MIN_VOTERS
