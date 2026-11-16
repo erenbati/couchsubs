@@ -167,9 +167,9 @@ abstract class SentenceTranslator<C>(
     protected abstract fun request(sentences: List<String>, context: C, game: String?): List<String>
 
     /** Bu satırdan önce gösterilenler (bağlam); satırı da sonrakilerin bağlamına ekler. */
-    protected abstract fun context(text: String): C
+    protected abstract fun context(text: String, game: String?): C
 
-    protected open fun remember(text: String, translation: String) {}
+    protected open fun remember(text: String, translation: String, game: String?) {}
 
     /** Önbellek anahtarı (DeepL'de sözlük terimi içeren satıra sözlüğün izi girer; yapay zekâda oyun adı). */
     protected open fun cacheKey(text: String, game: String?): String = text
@@ -183,9 +183,9 @@ abstract class SentenceTranslator<C>(
     override fun translate(text: String): String {
         // Arama, istek ve kayıt aynı oyunla yapılır; oyun işlem sırasında değişse de sonuç başka oyuna yazılmaz.
         val game = game()
-        val context = context(text)
-        cache.get(cacheKey(text, game))?.let { return it.also { remember(text, it) } }
-        if (clock() < pausedUntil) return fallback(text)
+        val context = context(text, game)
+        cache.get(cacheKey(text, game))?.let { return it.also { remember(text, it, game) } }
+        if (clock() < pausedUntil) return fallback(text, game)
         val pieces = SubtitleSegmenter.split(text)
         for (name in pieces.mapNotNull(SubtitleSegmenter::labelName))
             name.split(' ').filter { it.length >= 2 }.forEach { names.add(it.lowercase(Locale.ROOT)) }
@@ -198,11 +198,11 @@ abstract class SentenceTranslator<C>(
         } catch (error: IOException) {
             report((error as? OnlineException)?.state ?: OnlineKeyState.UNREACHABLE)
             pausedUntil = clock() + 60_000
-            return fallback(text)
+            return fallback(text, game)
         } catch (error: JSONException) {
             report(OnlineKeyState.UNREACHABLE)
             pausedUntil = clock() + 60_000
-            return fallback(text)
+            return fallback(text, game)
         }
         for ((i, index) in missing.withIndex()) {
             translations[index] = translated[i]
@@ -210,12 +210,12 @@ abstract class SentenceTranslator<C>(
         }
         val result = pieces.indices.joinToString("") { translations[it] ?: pieces[it].text }
         cache.store(cacheKey(text, game), result)
-        remember(text, result)
+        remember(text, result, game)
         return result
     }
 
-    private fun fallback(text: String): String =
-        (local ?: throw IOException("no local translator")).translate(text).also { remember(text, it) }
+    private fun fallback(text: String, game: String?): String =
+        (local ?: throw IOException("no local translator")).translate(text).also { remember(text, it, game) }
 
     /** Toplu çeviride ("ekranı çevir") hizmet şu an dinleniyor mu (son hatadan sonra bir dakika denenmez). */
     protected fun paused(): Boolean = clock() < pausedUntil
@@ -250,9 +250,13 @@ class DeepLTranslator(
     private val http: Http = Http.Default,
     cache: TranslationCache = TranslationCache(),
     private val glossary: Glossary = Glossary.Empty,
+    private val playedGame: (() -> String?)? = null,
 ) : SentenceTranslator<String>(fallback, cache) {
     private val key = key.trim()
     private val recent = ArrayDeque<String>()
+    private var recentGame: String? = null
+
+    override fun game(): String? = playedGame?.invoke()?.trim()
 
     override fun cacheKey(text: String, game: String?) = DeepLMarkup.cacheKey(text, glossary)
     override val extraNames: Set<String> get() = glossary.capitalWords
@@ -285,7 +289,11 @@ class DeepLTranslator(
         }
     }
 
-    override fun context(text: String): String = synchronized(recent) {
+    override fun context(text: String, game: String?): String = synchronized(recent) {
+        if (recentGame != game) {
+            recent.clear()
+            recentGame = game
+        }
         val context = recent.joinToString("\n")
         if (recent.lastOrNull() != text) {
             recent.addLast(text)
@@ -550,8 +558,13 @@ class AiTranslator(
 
     private val key = key.trim()
     private val recent = ArrayDeque<AiRequest.ContextLine>()
+    private var recentGame: String? = null
 
-    override fun context(text: String): List<AiRequest.ContextLine> = synchronized(recent) {
+    override fun context(text: String, game: String?): List<AiRequest.ContextLine> = synchronized(recent) {
+        if (recentGame != game) {
+            recent.clear()
+            recentGame = game
+        }
         val context = recent.toList()
         if (recent.lastOrNull()?.source != text) {
             recent.addLast(AiRequest.ContextLine(text))
@@ -561,8 +574,9 @@ class AiTranslator(
     }
 
     /** Gösterilen satırın çevirisi sonraki satırların bağlamına girer. */
-    override fun remember(text: String, translation: String) {
+    override fun remember(text: String, translation: String, game: String?) {
         synchronized(recent) {
+            if (recentGame != game) return
             val index = recent.indexOfLast { it.source == text }
             if (index >= 0) recent[index] = recent[index].copy(translation = translation)
         }

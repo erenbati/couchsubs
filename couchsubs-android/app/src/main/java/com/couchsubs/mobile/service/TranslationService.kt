@@ -521,7 +521,8 @@ class TranslationService : Service() {
         val key = settings.apiKey(engine)?.takeIf { it.isNotBlank() } ?: return null
         return when (engine) {
             EngineChoice.FREE -> null
-            EngineChoice.DEEPL -> DeepLTranslator(key, free, cache = cache(DeepLTranslator.ENGINE_ID), glossary = glossaryInUse)
+            EngineChoice.DEEPL -> DeepLTranslator(key, free, cache = cache(DeepLTranslator.ENGINE_ID), glossary = glossaryInUse,
+                playedGame = { packs?.scopeTitle })
             else -> {
                 val provider = when (engine) {
                     EngineChoice.GEMINI -> AiProvider.GEMINI

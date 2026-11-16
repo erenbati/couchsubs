@@ -165,6 +165,46 @@ class OnlineTranslationTest {
     }
 
     @Test
+    fun deepLContextIsClearedWhenTheActiveGameChanges() {
+        val http = FakeHttp(200, "{\"translations\":[{\"text\":\"Çeviri\"}]}")
+        var game: String? = "First game"
+        val translator = DeepLTranslator("abc:fx", null, http, playedGame = { game })
+
+        translator.translate("The first game line is here.")
+        game = "Second game"
+        translator.translate("The second game line is here.")
+        val second = JSONObject(http.requests[1].third!!)
+        assertFalse(second.has("context"))
+
+        translator.translate("Another line follows here.")
+        val third = JSONObject(http.requests[2].third!!)
+        assertEquals("The second game line is here.", third.getString("context"))
+    }
+
+    @Test
+    fun aiContextIsClearedWhenTheActiveGameChanges() {
+        val http = FakeHttp(200, "{\"content\":[{\"type\":\"text\",\"text\":\"[\\\"Çeviri\\\"]\"}]}")
+        var game: String? = "First game"
+        val translator = AiTranslator(AiProvider.CLAUDE, "sk", AiModel("claude-x", "Hızlı"), null,
+            http, playedGame = { game })
+
+        translator.translate("This line belongs to the first game.")
+        game = "Second game"
+        translator.translate("This line belongs to the second game.")
+        val second = JSONObject(http.requests[1].third!!).getJSONArray("messages")
+            .getJSONObject(0).getString("content")
+        assertTrue(second.startsWith("Game: Second game\n"))
+        assertFalse(second.contains("English: This line belongs to the first game."))
+
+        translator.translate("Another line follows in the second game.")
+        val third = JSONObject(http.requests[2].third!!).getJSONArray("messages")
+            .getJSONObject(0).getString("content")
+        assertTrue(third.contains("English: This line belongs to the second game."))
+        assertTrue(third.contains("Turkish: Çeviri"))
+        assertFalse(third.contains("English: This line belongs to the first game."))
+    }
+
+    @Test
     fun translationsAcceptFencedArraysAndPlainText() {
         assertEquals(listOf("Bir", "İki"), AiRequest.translations("```json\n[\"Bir\", \"İki\"]\n```", 2))
         assertEquals(listOf("Koş!"), AiRequest.translations("\"Koş!\"", 1))
