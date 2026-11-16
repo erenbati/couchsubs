@@ -73,3 +73,41 @@ test("general pool scans past separated game rows before applying the row limit"
   assert.equal(translatedKeys.length, 200);
   assert.ok(translatedKeys.every((key) => key.startsWith("2")));
 });
+
+
+test("autopack never replaces an absent or unreadable pack index", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const job = { titleId: GENERAL, game: null, lines: 350 };
+  const cache = {
+    lines: Object.fromEntries(Array.from({ length: 300 }, (_, i) => {
+      const k = (BigInt(i) + 1n).toString(16).padStart(16, "0");
+      return [k, { k, en: "Get in the car, Lucia.", tr: "Arabaya bin, Lucia." }];
+    })),
+    skip: {}, fail: {},
+  };
+  for (const rawIndex of [null, "{broken json", JSON.stringify({ packs: null })]) {
+    const state = { night: "2026-11-20", queue: [job], translated: 0, done: [] };
+    const stored = new Map([
+      ["auto/state.json", JSON.stringify(state)],
+      ["auto/tr/GENEL.json", JSON.stringify(cache)],
+    ]);
+    if (rawIndex !== null) stored.set("index.json", rawIndex);
+    const writes = [];
+    const env = {
+      AI: {},
+      PACKS: {
+        get: async (name) => name === "auto/known-keys.bin"
+          ? { arrayBuffer: async () => new ArrayBuffer(0) }
+          : stored.has(name) ? { text: async () => stored.get(name) } : null,
+        put: async (name, value) => { writes.push(name); stored.set(name, value); },
+      },
+      DB: {
+        prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) }),
+      },
+    };
+
+    await assert.rejects(runAutopack(env, now), /index.*(missing|invalid|unavailable)/i);
+    assert.deepEqual(writes, [], `index was ${rawIndex}: no package or index may be overwritten`);
+    assert.deepEqual(JSON.parse(stored.get("auto/state.json")), state);
+  }
+});

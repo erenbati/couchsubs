@@ -170,7 +170,7 @@ test("dışa aktarma oyuna göre süzülür (yalnız yönetici)", async () => {
 });
 
 test("oyunu bilinmeyen satırlar ortak pakete sıralanır (oyunu bilinenlerden sonra)", async () => {
-  const stored = new Map();
+  const stored = new Map([["index.json", JSON.stringify({ packs: [] })]]);
   const env = {
     AI: {},
     PACKS: {
