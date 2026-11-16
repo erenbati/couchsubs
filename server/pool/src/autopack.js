@@ -198,7 +198,12 @@ async function getJson(env, name) {
 // Kaybolan önbellek ilk çalıştırmada normaldir; mevcut ama bozuk önbelleği sıfırlamak mevcut paketi silebilir.
 async function loadCache(env, job) {
   const object = await env.PACKS.get(cacheFile(job));
-  if (!object) return { lines: {}, skip: {}, fail: {} };
+  if (!object) {
+    // Yayınlanmış paketin önbelleği silindiyse sıfırdan oluşturmak mevcut çevirileri boş paketle değiştirir.
+    const packs = await readIndex(env);
+    if (packs.some((pack) => pack.id === jobPackId(job))) return null;
+    return { lines: {}, skip: {}, fail: {} };
+  }
   try {
     const cache = JSON.parse(await object.text());
     const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);

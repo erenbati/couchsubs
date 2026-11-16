@@ -11,7 +11,10 @@ test("general pool scans past separated game rows before applying the row limit"
     translated: 0,
     done: [],
   };
-  const stored = new Map([["auto/state.json", JSON.stringify(state)]]);
+  const stored = new Map([
+    ["auto/state.json", JSON.stringify(state)],
+    ["index.json", JSON.stringify({ packs: [] })],
+  ]);
   const rows = [
     ...Array.from({ length: 5_001 }, (_, i) => ({
       key: (0x1000000000000000n + BigInt(i)).toString(16).padStart(16, "0"),
@@ -188,4 +191,32 @@ test("autopack waits rather than using a truncated manual-key index", async () =
     assert.deepEqual(writes, []);
     assert.deepEqual(JSON.parse(stored.get("auto/state.json")), state);
   }
+});
+
+test("autopack preserves published translations when their R2 cache is missing", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const state = { night: "2026-11-20", queue: [{ titleId: GENERAL, game: null, lines: 350 }], translated: 0, done: [] };
+  const index = { packs: [{ id: "pool-genel", version: 4, entries: 350, sha256: "a".repeat(64) }] };
+  const stored = new Map([
+    ["auto/state.json", JSON.stringify(state)],
+    ["index.json", JSON.stringify(index)],
+    // A previous cache may disappear independently from the published pack in R2.
+  ]);
+  const writes = [];
+  const env = {
+    AI: {},
+    PACKS: {
+      get: async (name) => name === "auto/known-keys.bin"
+        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        : stored.has(name) ? { text: async () => stored.get(name) } : null,
+      put: async (name, data) => { writes.push(name); stored.set(name, data); },
+    },
+    DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) }) },
+  };
+
+  const result = await runAutopack(env, now);
+  assert.equal(result.phase, "waiting", "missing cache cannot be treated as an empty existing pack");
+  assert.deepEqual(writes, [], "neither the existing pack nor its index may be overwritten");
+  assert.deepEqual(JSON.parse(stored.get("index.json")), index);
+  assert.deepEqual(JSON.parse(stored.get("auto/state.json")), state);
 });
