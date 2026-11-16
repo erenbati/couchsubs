@@ -62,6 +62,8 @@ public class MainActivity extends Activity implements TvPage.Host {
     private boolean watching;
     /** Ekran önde mi; arka plandayken görüntü izlenmez. */
     private boolean resumed;
+    /** Kullanıcı HOME/başka uygulama seçti; bu arka plan geçişini TV'nin HDMI devri sanma. */
+    private boolean userInitiatedLeave;
     private final Runnable watchTick = this::checkFallback;
     private final Runnable hideHelpTask = this::hideHelp;
 
@@ -469,6 +471,7 @@ public class MainActivity extends Activity implements TvPage.Host {
     protected void onResume() {
         super.onResume();
         resumed = true;
+        userInitiatedLeave = false;
         if (tvView != null && tunedInput != null) tune(tunedInput);
     }
 
@@ -477,11 +480,18 @@ public class MainActivity extends Activity implements TvPage.Host {
     protected void onStop() {
         super.onStop();
         // TV kendi HDMI oynatıcısını öne çekti (bkz. FallbackWatch.TAKEOVER_MS): altyazı onun üstünde, katmanda çizilir.
-        if (!isFinishing() && tvView != null && watch.takenOver(SystemClock.elapsedRealtime(), overlayAllowed())) {
+        if (!userInitiatedLeave && !isFinishing() && tvView != null
+                && watch.takenOver(SystemClock.elapsedRealtime(), overlayAllowed())) {
             switchToOverlay(R.string.overlay_fallback);
             return;
         }
         if (page != null) page.background(true);
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        userInitiatedLeave = true;
     }
 
     @Override
