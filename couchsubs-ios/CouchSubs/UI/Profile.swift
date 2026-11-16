@@ -216,6 +216,30 @@ struct SettingsScreen: View {
                               selection: $model.settings.style.backgroundShape)
                 Text("Drag Background all the way to Solid to fully hide the English subtitle in the game. A full-width band also covers the sides.")
                     .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                // TV'de çevirinin yeri (Mac ve Windows'taki Yeri seçimi, Android ile aynı): üstünde/altında seçilince oyundaki
+                // İngilizce altyazı da görünür; sabit yerde yükseklik kaydırıcıyla ayarlanır, bırakınca TV'de örnek altyazı çıkar.
+                if model.settings.output.showsOnTV {
+                    Text("Subtitle position on TV").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                    SegmentedTabs(options: [SubtitlePlacement.cover: "Cover", .above: "Above", .below: "Below", .fixed: "Fixed"],
+                                  selection: $model.settings.style.placement)
+                    if model.settings.style.placement == .fixed {
+                        HStack {
+                            Text("Height on screen").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                            Spacer()
+                            Text(verbatim: "%\(model.settings.style.bottomPercent)").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                        }
+                        Slider(value: Binding(get: { Double(model.settings.style.bottomPercent) },
+                                              set: { model.settings.style.bottomPercent = Int($0.rounded()) }), in: 0...85) { editing in
+                            if !editing { model.sendTestSubtitle() }
+                        }
+                        .tint(Mobile.Palette.accent)
+                        Text("A sample subtitle appears on the TV when you let go of the slider. In fixed position you can also move subtitles with the ▲ and ▼ buttons on the TV remote.")
+                            .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                    } else {
+                        Text("Cover: the translation hides the English subtitle in the game. Choose Above or Below to see the English subtitle too, with the translation right above or below it.")
+                            .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                    }
+                }
                 Toggle(isOn: $model.settings.style.stackPrevious) {
                     VStack(alignment: .leading, spacing: Mobile.Space.hair) {
                         Text("Keep previous lines above in fast dialogue").font(Mobile.TypeScale.headline)

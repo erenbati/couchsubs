@@ -142,7 +142,7 @@
                                 <ComboBoxItem Content="{t:T 'GPU (Beta) · NVIDIA CUDA'}" Tag="Gpu" />
                             </ComboBox>
                             <TextBlock Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,8,0,0"
-                                       Text="{t:T 'CPU works on every computer. Try GPU with a compatible NVIDIA card and CUDA for faster translation; if unavailable, CouchSubs uses CPU.'}" />
+                                       Text="{t:T 'CPU works on every computer. GPU needs a compatible NVIDIA card; the first time you choose it, CouchSubs downloads about 565 MB of CUDA files from NVIDIA (about 790 MB on disk). If unavailable, CouchSubs uses CPU.'}" />
                             <TextBlock Foreground="{DynamicResource warningBrush}" TextWrapping="Wrap" Margin="0,8,0,0"
                                        Visibility="{Binding GpuFallbackWarning, Converter={StaticResource VisibleIf}}"
                                        Text="{t:T 'GPU could not be used; free translation is running on CPU.'}" />

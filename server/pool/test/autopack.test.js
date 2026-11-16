@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GENERAL, runAutopack } from "../src/autopack.js";
+import { GENERAL, parseReply, runAutopack } from "../src/autopack.js";
 
 test("general pool scans past separated game rows before applying the row limit", async () => {
   const now = new Date("2026-11-20T04:00:00Z");
@@ -74,17 +74,100 @@ test("general pool scans past separated game rows before applying the row limit"
   assert.ok(translatedKeys.every((key) => key.startsWith("2")));
 });
 
-test("autopack waits rather than using a truncated or unsorted manual-key index", async () => {
+
+test("AI parser ignores malformed item collections and IDs without misassigning subtitles", async () => {
+
+  const lines = [{ en: "Where are you going?" }, { en: "We have to leave now." }];
+  for (const items of [null, {}, 42, true]) {
+    const reply = { response: JSON.stringify({ items }) };
+    assert.deepEqual([...parseReply(reply, lines)], [], `malformed items: ${JSON.stringify(items)}`);
+  }
+  for (const id of [null, "", " ", true, false, {}, -1, 1.5, "0abc"]) {
+    const reply = { response: JSON.stringify({ items: [{ id, tr: "Yanlış satıra yazılmamalı." }] }) };
+    assert.deepEqual([...parseReply(reply, lines)], [], `invalid id: ${JSON.stringify(id)}`);
+  }
+  const valid = { response: JSON.stringify({ items: [{ id: "0", tr: "Nereye gidiyorsun?" }, { id: 1, tr: "Hemen gitmeliyiz." }] }) };
+  assert.deepEqual([...parseReply(valid, lines)], [[0, "Nereye gidiyorsun?"], [1, "Hemen gitmeliyiz."]]);
+});
+
+test("autopack never replaces an absent or unreadable pack index", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const job = { titleId: GENERAL, game: null, lines: 350 };
+  const cache = {
+    lines: Object.fromEntries(Array.from({ length: 300 }, (_, i) => {
+      const k = (BigInt(i) + 1n).toString(16).padStart(16, "0");
+      return [k, { k, en: "Get in the car, Lucia.", tr: "Arabaya bin, Lucia." }];
+    })),
+    skip: {}, fail: {},
+  };
+  for (const rawIndex of [null, "{broken json", JSON.stringify({ packs: null })]) {
+    const state = { night: "2026-11-20", queue: [job], translated: 0, done: [] };
+    const stored = new Map([
+      ["auto/state.json", JSON.stringify(state)],
+      ["auto/tr/GENEL.json", JSON.stringify(cache)],
+    ]);
+    if (rawIndex !== null) stored.set("index.json", rawIndex);
+    const writes = [];
+    const env = {
+      AI: {},
+      PACKS: {
+        get: async (name) => name === "auto/known-keys.bin"
+          ? { arrayBuffer: async () => new ArrayBuffer(0) }
+          : stored.has(name) ? { text: async () => stored.get(name) } : null,
+        put: async (name, value) => { writes.push(name); stored.set(name, value); },
+      },
+      DB: {
+        prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) }),
+      },
+    };
+
+    await assert.rejects(runAutopack(env, now), /index.*(missing|invalid|unavailable)/i);
+    assert.deepEqual(writes, [], `index was ${rawIndex}: no package or index may be overwritten`);
+    assert.deepEqual(JSON.parse(stored.get("auto/state.json")), state);
+  }
+});
+
+test("autopack must not publish an empty pack when an existing translation cache is corrupted", async () => {
   const now = new Date("2026-11-20T04:00:00Z");
   const state = {
     night: "2026-11-20",
     queue: [{ titleId: GENERAL, game: null, lines: 350 }],
     translated: 0, done: [],
   };
-  const malformed = [
-    new Uint8Array(9).buffer,
-    BigUint64Array.from([2n, 1n]).buffer,
-  ];
+  for (const cacheRaw of ["{broken", JSON.stringify({ lines: [], skip: {} }), JSON.stringify({ lines: null, skip: {} })]) {
+    const stored = new Map([
+      ["auto/state.json", JSON.stringify(state)],
+      ["index.json", JSON.stringify({ packs: [{ id: "pool-genel", version: 1 }] })],
+      ["auto/tr/GENEL.json", cacheRaw],
+    ]);
+    const writes = [];
+    const env = {
+      AI: {},
+      PACKS: {
+        get: async (name) => name === "auto/known-keys.bin"
+          ? { arrayBuffer: async () => new ArrayBuffer(0) }
+          : stored.has(name) ? { text: async () => stored.get(name) } : null,
+        put: async (name, value) => { writes.push(name); stored.set(name, value); },
+      },
+      DB: {
+        prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) }),
+      },
+    };
+    const result = await runAutopack(env, now);
+    assert.equal(result.phase, "waiting");
+    assert.deepEqual(writes, [], "corrupt cache must not cause pack or index writes");
+    assert.deepEqual(JSON.parse(stored.get("auto/state.json")), state);
+  }
+});
+
+test("autopack waits rather than using a truncated manual-key index", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const state = {
+    night: "2026-11-20",
+    queue: [{ titleId: GENERAL, game: null, lines: 350 }],
+    translated: 0, done: [],
+  };
+  const malformed = [new Uint8Array(9).buffer];
   for (const bytes of malformed) {
     const stored = new Map([["auto/state.json", JSON.stringify(state)]]);
     const writes = [];

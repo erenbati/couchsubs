@@ -120,6 +120,7 @@ FFmpeg is built from the unmodified upstream release with the configuration in
 | Component | License | Source |
 |---|---|---|
 | OPUS-MT English→Turkish translation model (`opus-mt-tc-big-en-tr`, CTranslate2 conversion) | CC BY 4.0 | Language Technology Research Group, University of Helsinki — https://huggingface.co/Helsinki-NLP/opus-mt-tc-big-en-tr, conversion https://huggingface.co/Unbakedcookie/live-translator-models |
+| NVIDIA CUDA 12.8 cuBLAS and runtime (Windows GPU option only) | NVIDIA CUDA Toolkit license; downloaded license at `cuda-12.8/CUDA-LICENSE.txt` | https://developer.download.nvidia.com/compute/cuda/redist/ |
 
 The model is downloaded as a SHA-256-verified CTranslate2 float16 conversion from the pinned source above. CouchSubs uses int8 computation on CPU and float16 on a compatible NVIDIA CUDA GPU.
 
