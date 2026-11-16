@@ -731,8 +731,11 @@ final class PhoneModel: ObservableObject {
         let online: TextTranslator & OnlineTranslating
         if let provider = engine.aiProvider {
             let model = provider.model(settings.model(for: provider)).id
+            // Oyun paketi eşleştiyse oyunun adı modele bağlam olarak gider; önbellek de oyuna göre ayrılır (Mac ile aynı).
+            let packs = self.packs
             online = AITranslator(provider: provider, key: key, model: model, fallback: local,
-                                  cache: Self.translationCache(engine: provider.engineID(model: model), source: source, target: target))
+                                  cache: Self.translationCache(engine: provider.engineID(model: model), source: source, target: target),
+                                  game: { packs.scopeTitle })
         } else {
             online = DeepLTranslator(key: key, fallback: local,
                                      cache: Self.translationCache(engine: DeepLTranslator.engineID, source: source, target: target))

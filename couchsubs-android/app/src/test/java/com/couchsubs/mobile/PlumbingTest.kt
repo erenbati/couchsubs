@@ -144,6 +144,27 @@ class OnlineTranslationTest {
     }
 
     @Test
+    fun aiCacheIsScopedByTheGameAndTheGameGoesToTheModel() {
+        val http = FakeHttp(200, "{\"content\":[{\"type\":\"text\",\"text\":\"[\\\"Banka kapalı.\\\"]\"}]}")
+        var game: String? = null
+        val translator = AiTranslator(AiProvider.CLAUDE, "sk", AiModel("claude-x", "Hızlı"), null, http, playedGame = { game })
+        translator.translate("The bank is close.")
+        // Oyun bilinmiyorken eski (oyunsuz) kayıt kullanılır.
+        translator.translate("The bank is close.")
+        assertEquals(1, http.requests.size)
+        game = " Red Dead Redemption 2 "
+        translator.translate("The bank is close.")
+        assertEquals(2, http.requests.size)
+        val body = JSONObject(http.requests.last().third!!).getJSONArray("messages").getJSONObject(0).getString("content")
+        assertTrue(body.startsWith("Game: Red Dead Redemption 2\n"))
+        translator.translate("The bank is close.")
+        assertEquals(2, http.requests.size)
+        game = "Mafia"
+        translator.translateAll(listOf("The bank is close."))
+        assertEquals(3, http.requests.size)
+    }
+
+    @Test
     fun translationsAcceptFencedArraysAndPlainText() {
         assertEquals(listOf("Bir", "İki"), AiRequest.translations("```json\n[\"Bir\", \"İki\"]\n```", 2))
         assertEquals(listOf("Koş!"), AiRequest.translations("\"Koş!\"", 1))

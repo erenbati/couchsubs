@@ -176,6 +176,19 @@ class AppSettings(context: Context) {
         get() = enumOr(prefs.getString("tvDisplayMode", null), com.couchsubs.mobile.core.TvDisplayMode.IN_APP)
         set(value) = prefs.edit().putString("tvDisplayMode", value.name).apply()
 
+    /**
+     * TV'de çevirinin yeri: İngilizce altyazının üstünü örtsün (varsayılan), üstünde, altında ya da sabit yükseklikte.
+     * Üstünde/altında seçilince oyundaki İngilizce altyazı da görünür (Mac ve Windows'taki Yeri seçimi, iPhone ile aynı).
+     */
+    var tvPlacement: SubtitlePlacement
+        get() = enumOr(prefs.getString("tvPlacement", null), SubtitlePlacement.COVER)
+        set(value) = prefs.edit().putString("tvPlacement", value.name).apply()
+
+    /** Sabit yerdeyken altyazının ekranın altından yüksekliği, yüzde (0-85; TV uygulamasıyla aynı sınır). */
+    var tvBottomPercent: Int
+        get() = prefs.getInt("tvBottomPercent", 7).coerceIn(0, 85)
+        set(value) = prefs.edit().putInt("tvBottomPercent", value.coerceIn(0, 85)).apply()
+
     /** TV'deki yazı boyu: 36, 46, 58, 72. */
     var tvFontSize: Int
         get() = prefs.getInt("tvFontSize", 46)
@@ -186,8 +199,8 @@ class AppSettings(context: Context) {
      * (iPhone ile aynı: %120 → 55); eskiden ölçek yalnız telefon ekranını değiştiriyor, TV hep 46 kalıyordu.
      */
     val style: SubtitleStyle
-        get() = SubtitleStyle(fontSize = scaledFontSize(tvFontSize, subtitleScale), placement = SubtitlePlacement.COVER,
-            background = tvBackground, backgroundShape = tvBackgroundShape, textColor = textColor, stackPrevious = stackPrevious,
+        get() = SubtitleStyle(fontSize = scaledFontSize(tvFontSize, subtitleScale), placement = tvPlacement,
+            bottomPercent = tvBottomPercent, background = tvBackground, backgroundShape = tvBackgroundShape, textColor = textColor, stackPrevious = stackPrevious,
             displayMode = tvDisplayMode)
 
     /** Altyazının arandığı bölge (Ayarlar › Altyazı alanı; iPhone ile aynı hazır seçimler ve Özel). */
@@ -243,7 +256,8 @@ class AppSettings(context: Context) {
     fun onStyleChanged(action: () -> Unit): SharedPreferences.OnSharedPreferenceChangeListener {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == "subtitleScale" || key == "textColor" || key == "tvFontSize" ||
-                key == "tvBackground" || key == "tvBackgroundShape" || key == "stackPrevious" || key == "tvDisplayMode") action()
+                key == "tvBackground" || key == "tvBackgroundShape" || key == "stackPrevious" || key == "tvDisplayMode" ||
+                key == "tvPlacement" || key == "tvBottomPercent") action()
         }
         prefs.registerOnSharedPreferenceChangeListener(listener)
         return listener

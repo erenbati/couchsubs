@@ -13,6 +13,8 @@ private final class FakeAI: URLProtocol {
     nonisolated(unsafe) static var timeout = false
     /// Verilirse hizmetin döndüğü metin bu olur.
     nonisolated(unsafe) static var replyText: String?
+    /// İstek uçuşta iken oyun değişimini taklit eder; yanıt verilmeden çağrılır.
+    nonisolated(unsafe) static var onRequest: (() -> Void)?
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -31,6 +33,7 @@ private final class FakeAI: URLProtocol {
         }
         let body = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
         Self.requests.append((request, body))
+        Self.onRequest?()
         if Self.timeout {
             client?.urlProtocol(self, didFailWithError: URLError(.timedOut))
             return
@@ -104,6 +107,7 @@ final class AITranslationTests: XCTestCase {
         FakeAI.failure = nil
         FakeAI.timeout = false
         FakeAI.replyText = nil
+        FakeAI.onRequest = nil
     }
 
     /// Her çevirmen kendi dakikalık hakkıyla kurulur; testler uygulamanın ortak hakkını tüketmesin.
@@ -120,6 +124,166 @@ final class AITranslationTests: XCTestCase {
     private func local(_ text: String) async throws -> String { "yerel: " + text }
 
     private func user(_ index: Int) -> String { FakeAI.userText(FakeAI.requests[index].body, url: FakeAI.requests[index].request.url!) }
+
+    private func withGame(_ cache: TranslationCache, game: @escaping @Sendable () -> String?) -> AITranslationCore {
+        AITranslationCore(provider: .openAI, key: secret, session: FakeAI.session(), cache: cache,
+                          budget: RequestBudget(perMinute: 1000), game: game)
+    }
+
+    func testGameCacheSeparatesGamesAndReusesTheSameGame() async throws {
+        for screen in [false, true] {
+            FakeAI.requests = []
+            let box = GameBox()
+            box.value = "City game"
+            let core = withGame(TranslationCache(), game: { box.value })
+            func translate() async throws -> String {
+                if screen { return try await core.translateAll(["The bank is close."], fallback: local)[0] }
+                return try await core.translate("The bank is close.", fallback: local)
+            }
+            FakeAI.replyText = #"["Banka yakında."]"#
+            let first = try await translate()
+            let repeatFirst = try await translate()
+            XCTAssertEqual(first, "Banka yakında.")
+            XCTAssertEqual(repeatFirst, first)
+            XCTAssertEqual(FakeAI.requests.count, 1)
+            box.value = "River game"
+            FakeAI.replyText = #"["Kıyı yakında."]"#
+            let second = try await translate()
+            XCTAssertEqual(second, "Kıyı yakında.")
+            XCTAssertEqual(FakeAI.requests.count, 2)
+            XCTAssertTrue(user(0).hasPrefix("Game: City game\n"))
+            if FakeAI.requests.count > 1 { XCTAssertTrue(user(1).hasPrefix("Game: River game\n")) }
+            box.value = "City game"
+            let back = try await translate()
+            XCTAssertEqual(back, first)
+            XCTAssertEqual(FakeAI.requests.count, 2)
+        }
+    }
+
+    func testGameCacheAlsoSeparatesSentencePieces() async throws {
+        let box = GameBox()
+        box.value = "One"
+        let core = withGame(TranslationCache(), game: { box.value })
+        _ = try await core.translate("Stay close.", fallback: local)
+        box.value = "Two"
+        _ = try await core.translate("Stay close. Run!", fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 2)
+        XCTAssertTrue(user(1).hasSuffix("[\"Stay close.\",\"Run!\"]"))
+        _ = try await core.translate("Run!", fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 2)
+    }
+
+    func testGameCacheKeepsLegacyEntriesOnlyForUnknownGame() async throws {
+        for screen in [false, true] {
+            FakeAI.requests = []
+            let cache = TranslationCache()
+            cache.store("Eski çeviri.", for: "Stay close.")
+            let box = GameBox()
+            let core = withGame(cache, game: { box.value })
+            func translate() async throws -> String {
+                if screen { return try await core.translateAll(["Stay close."], fallback: local)[0] }
+                return try await core.translate("Stay close.", fallback: local)
+            }
+            let unknown = try await translate()
+            XCTAssertEqual(unknown, "Eski çeviri.")
+            box.value = "   "
+            let blank = try await translate()
+            XCTAssertEqual(blank, unknown)
+            XCTAssertTrue(FakeAI.requests.isEmpty)
+            box.value = "  One  "
+            let known = try await translate()
+            XCTAssertEqual(known, "[tr] Stay close.")
+            if !FakeAI.requests.isEmpty { XCTAssertTrue(user(0).hasPrefix("Game: One\n")) }
+            box.value = "One"
+            let trimmed = try await translate()
+            XCTAssertEqual(trimmed, known)
+            XCTAssertEqual(FakeAI.requests.count, 1)
+            box.value = nil
+            let unknownAgain = try await translate()
+            XCTAssertEqual(unknownAgain, unknown)
+            XCTAssertEqual(cache.value(for: "Stay close."), unknown)
+        }
+    }
+
+    func testGameCacheSnapshotsGameBeforeRequestAndStoresUnderThatGame() async throws {
+        for screen in [false, true] {
+            FakeAI.requests = []
+            let box = GameBox()
+            box.value = "One"
+            let cache = TranslationCache()
+            FakeAI.onRequest = { box.value = "Two" }
+            let core = withGame(cache, game: { box.reads += 1; return box.value })
+            if screen { _ = try await core.translateAll(["Stay close."], fallback: local) }
+            else { _ = try await core.translate("Stay close.", fallback: local) }
+            XCTAssertEqual(box.reads, 1)
+            XCTAssertTrue(user(0).hasPrefix("Game: One\n"))
+            let other = withGame(cache, game: { "Two" })
+            if screen { _ = try await other.translateAll(["Stay close."], fallback: local) }
+            else { _ = try await other.translate("Stay close.", fallback: local) }
+            XCTAssertEqual(FakeAI.requests.count, 2)
+            let original = withGame(cache, game: { "One" })
+            if screen { _ = try await original.translateAll(["Stay close."], fallback: local) }
+            else { _ = try await original.translate("Stay close.", fallback: local) }
+            XCTAssertEqual(FakeAI.requests.count, 2)
+        }
+    }
+
+    func testGameCachePersistsSpeechPiecesWithoutLeakingAcrossGames() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("couchsubs-game-cache-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("cache.jsonl")
+        let text = "KRATOS: We go now. Stay close."
+        let box = GameBox()
+        box.value = "One"
+        let first = withGame(TranslationCache(file: file), game: { box.value })
+        _ = try await first.translate(text, fallback: local)
+        let expected = first.spokenLines(for: text, fallback: { _ in [] })
+        XCTAssertEqual(expected.count, 2)
+        XCTAssertTrue(expected.allSatisfy { $0.speaker == "KRATOS" })
+        box.value = "Two"
+        XCTAssertTrue(first.spokenLines(for: text, fallback: { _ in [] }).isEmpty)
+        box.value = "One"
+        let reloaded = withGame(TranslationCache(file: file), game: { box.value })
+        XCTAssertEqual(reloaded.spokenLines(for: text, fallback: { _ in [] }), expected)
+        _ = try await reloaded.translate(text, fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 1)
+        box.value = "Two"
+        XCTAssertTrue(reloaded.spokenLines(for: text, fallback: { _ in [] }).isEmpty)
+        FakeAI.replyText = #"["Gidelim.","Yakında kal."]"#
+        _ = try await reloaded.translate(text, fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 2)
+        XCTAssertEqual(reloaded.spokenLines(for: text, fallback: { _ in [] }).first?.turkish, "Gidelim.")
+        box.value = "One"
+        XCTAssertEqual(reloaded.spokenLines(for: text, fallback: { _ in [] }), expected)
+    }
+
+    func testGameCacheSpeechCanUseWholeScreenEntryWithoutSentenceEntries() async throws {
+        let cache = TranslationCache()
+        let text = "We go now. Stay close."
+        _ = try await withGame(cache, game: { "One" }).translateAll([text], fallback: local)
+        let lines = withGame(cache, game: { "One" }).spokenLines(for: text, fallback: { _ in [] })
+        XCTAssertEqual(lines, [SpokenLine(english: text, turkish: "[tr] " + text)])
+        XCTAssertTrue(withGame(cache, game: { "Two" }).spokenLines(for: text, fallback: { _ in [] }).isEmpty)
+    }
+
+    func testGameCacheScreenBatchesKeepTheInitialGame() async throws {
+        let box = GameBox()
+        box.value = "One"
+        let cache = TranslationCache()
+        let texts = (0...AITranslationCore.screenBatch).map { "Menu item \($0)" }
+        FakeAI.onRequest = { box.value = "Two" }
+        let core = withGame(cache, game: { box.reads += 1; return box.value })
+        let result = try await core.translateAll(texts, fallback: local)
+        XCTAssertEqual(result, texts.map { "[tr] " + $0 })
+        XCTAssertEqual(box.reads, 1)
+        XCTAssertEqual(FakeAI.requests.count, 2)
+        XCTAssertTrue(user(0).hasPrefix("Game: One\n"))
+        XCTAssertTrue(user(1).hasPrefix("Game: One\n"))
+        _ = try await withGame(cache, game: { "One" }).translateAll(texts, fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 2)
+        _ = try await withGame(cache, game: { "Two" }).translateAll(texts, fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 4)
+    }
 
     // MARK: - İstek
 
@@ -771,4 +935,5 @@ final class AITranslationTests: XCTestCase {
 
 private final class GameBox: @unchecked Sendable {
     var value: String?
+    var reads = 0
 }

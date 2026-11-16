@@ -15,6 +15,168 @@ public class AiTranslatorTests
 {
     private const string Secret = "sk-SECRET-123";
 
+    private static AiTranslator WithGame(FakeAi fake, TranslationCache cache, Func<string?> game) =>
+        new(AiProvider.OpenAi, Secret, null, new FakeLocal(), new HttpClient(fake), cache,
+            new RequestBudget(1000), game: game);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GameCacheSeparatesGamesAndReusesTheSameGame(bool screen)
+    {
+        string? game = "City game";
+        var fake = new FakeAi((request, body) => Wrap(request,
+            UserText(request, body).StartsWith("Game: City game\n") ? "[\"Banka yakında.\"]" : "[\"Kıyı yakında.\"]"));
+        var translator = WithGame(fake, new TranslationCache(), () => game);
+        const string text = "The bank is close.";
+        async Task<string> Translate() => screen
+            ? (await translator.TranslateAllAsync([text]))[0] : await translator.TranslateAsync(text);
+        Assert.Equal("Banka yakında.", await Translate());
+        Assert.Equal("Banka yakında.", await Translate());
+        Assert.Single(fake.Requests);
+        game = "River game";
+        Assert.Equal("Kıyı yakında.", await Translate());
+        Assert.Equal(2, fake.Requests.Count);
+        game = "City game";
+        Assert.Equal("Banka yakında.", await Translate());
+        Assert.Equal(2, fake.Requests.Count);
+    }
+
+    [Fact]
+    public async Task GameCacheAlsoSeparatesSentencePieces()
+    {
+        var fake = new FakeAi();
+        string? game = "One";
+        var translator = WithGame(fake, new TranslationCache(), () => game);
+        await translator.TranslateAsync("Stay close.");
+        game = "Two";
+        await translator.TranslateAsync("Stay close. Run!");
+        Assert.Equal(2, fake.Requests.Count);
+        Assert.EndsWith("[\"Stay close.\",\"Run!\"]", User(fake, 1));
+        await translator.TranslateAsync("Run!");
+        Assert.Equal(2, fake.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GameCacheKeepsLegacyEntriesOnlyForUnknownGame(bool screen)
+    {
+        var cache = new TranslationCache();
+        cache.Store("Stay close.", "Eski çeviri.");
+        string? game = null;
+        var fake = new FakeAi();
+        var translator = WithGame(fake, cache, () => game);
+        async Task<string> Translate() => screen
+            ? (await translator.TranslateAllAsync(["Stay close."]))[0] : await translator.TranslateAsync("Stay close.");
+        Assert.Equal("Eski çeviri.", await Translate());
+        game = "   ";
+        Assert.Equal("Eski çeviri.", await Translate());
+        Assert.Empty(fake.Requests);
+        game = "  One  ";
+        Assert.Equal("[tr] Stay close.", await Translate());
+        Assert.StartsWith("Game: One\n", User(fake, 0));
+        game = "One";
+        Assert.Equal("[tr] Stay close.", await Translate());
+        Assert.Single(fake.Requests);
+        game = null;
+        Assert.Equal("Eski çeviri.", await Translate());
+        Assert.True(cache.TryGet("Stay close.", out var legacy));
+        Assert.Equal("Eski çeviri.", legacy);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GameCacheSnapshotsGameBeforeRequestAndStoresUnderThatGame(bool screen)
+    {
+        var reads = 0;
+        string? game = "One";
+        var fake = new FakeAi((request, body) => { game = "Two"; return Echo(request, body); });
+        var cache = new TranslationCache();
+        var translator = WithGame(fake, cache, () => { reads++; return game; });
+        if (screen) await translator.TranslateAllAsync(["Stay close."]);
+        else await translator.TranslateAsync("Stay close.");
+        Assert.Equal(1, reads);
+        Assert.StartsWith("Game: One\n", User(fake, 0));
+        var other = WithGame(fake, cache, () => "Two");
+        if (screen) await other.TranslateAllAsync(["Stay close."]);
+        else await other.TranslateAsync("Stay close.");
+        Assert.Equal(2, fake.Requests.Count);
+        var original = WithGame(fake, cache, () => "One");
+        if (screen) await original.TranslateAllAsync(["Stay close."]);
+        else await original.TranslateAsync("Stay close.");
+        Assert.Equal(2, fake.Requests.Count);
+    }
+
+    [Fact]
+    public async Task GameCachePersistsSpeechPiecesWithoutLeakingAcrossGames()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "couchsubs-game-cache-" + Guid.NewGuid());
+        var file = Path.Combine(directory, "cache.jsonl");
+        try
+        {
+            const string text = "KRATOS: We go now. Stay close.";
+            var fake = new FakeAi((request, body) => Wrap(request,
+                UserText(request, body).StartsWith("Game: Two\n") ? "[\"Gidelim.\",\"Yakında kal.\"]" : EchoText(UserText(request, body))));
+            string? game = "One";
+            var first = WithGame(fake, new TranslationCache(file), () => game);
+            await first.TranslateAsync(text);
+            var expected = first.SpokenLines(text);
+            Assert.Equal(2, expected.Count);
+            Assert.All(expected, line => Assert.Equal("KRATOS", line.Speaker));
+            game = "Two";
+            Assert.Empty(first.SpokenLines(text));
+            game = "One";
+            var reloaded = WithGame(fake, new TranslationCache(file), () => game);
+            Assert.Equal(expected, reloaded.SpokenLines(text));
+            await reloaded.TranslateAsync(text);
+            Assert.Single(fake.Requests);
+            game = "Two";
+            Assert.Empty(reloaded.SpokenLines(text));
+            await reloaded.TranslateAsync(text);
+            Assert.Equal(2, fake.Requests.Count);
+            Assert.Equal("Gidelim.", reloaded.SpokenLines(text)[0].Turkish);
+            game = "One";
+            Assert.Equal(expected, reloaded.SpokenLines(text));
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public async Task GameCacheSpeechCanUseWholeScreenEntryWithoutSentenceEntries()
+    {
+        var cache = new TranslationCache();
+        var fake = new FakeAi();
+        const string text = "We go now. Stay close.";
+        await WithGame(fake, cache, () => "One").TranslateAllAsync([text]);
+        var reloaded = WithGame(fake, cache, () => "One");
+        var line = Assert.Single(reloaded.SpokenLines(text));
+        Assert.Equal(text, line.English);
+        Assert.Equal("[tr] " + text, line.Turkish);
+        Assert.Empty(WithGame(fake, cache, () => "Two").SpokenLines(text));
+    }
+
+    [Fact]
+    public async Task GameCacheScreenBatchesKeepTheInitialGame()
+    {
+        var reads = 0;
+        string? game = "One";
+        var fake = new FakeAi((request, body) => { game = "Two"; return Echo(request, body); });
+        var cache = new TranslationCache();
+        var texts = Enumerable.Range(0, AiTranslator.ScreenBatch + 1).Select(i => $"Menu item {i}").ToArray();
+        var translator = WithGame(fake, cache, () => { reads++; return game; });
+        Assert.Equal(texts.Select(text => "[tr] " + text), await translator.TranslateAllAsync(texts));
+        Assert.Equal(1, reads);
+        Assert.Equal(2, fake.Requests.Count);
+        Assert.StartsWith("Game: One\n", User(fake, 0));
+        Assert.StartsWith("Game: One\n", User(fake, 1));
+        await WithGame(fake, cache, () => "One").TranslateAllAsync(texts);
+        Assert.Equal(2, fake.Requests.Count);
+        await WithGame(fake, cache, () => "Two").TranslateAllAsync(texts);
+        Assert.Equal(4, fake.Requests.Count);
+    }
+
     /// <summary>Yapay zekâ hizmetlerinin yerine geçen sahte sunucu: istekleri saklar, cümleleri "[tr] cümle" diye çevirir.</summary>
     private sealed class FakeAi(Func<HttpRequestMessage, string, HttpResponseMessage>? reply = null) : HttpMessageHandler
     {

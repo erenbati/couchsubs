@@ -434,13 +434,19 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
 
     public event Action<OnlineKeyState?>? FailureChanged;
 
+    // Oyun bilinmiyorsa eski kayıtlar geçerlidir; biliniyorsa yalnız o oyunun sonucu kullanılır.
+    private static string CacheKey(string text, string? game) =>
+        string.IsNullOrEmpty(game) ? text : game + "\u001f" + text;
+
     public async Task<string> TranslateAsync(string text, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(text);
+        // Arama, HTTP isteği ve kayıt aynı oyunla yapılmalı; callback işlem sırasında değişebilir.
+        var game = _game?.Invoke()?.Trim();
         // Bağlam, bu satırdan önce gösterilenlerdir; satırın kendisi bağlama girmez.
         var context = Context();
         Shown(text);
-        if (_cache.TryGet(text, out var cached)) return Remember(cached, text);
+        if (_cache.TryGet(CacheKey(text, game), out var cached)) return Remember(cached, text);
         if (DateTimeOffset.UtcNow < _pausedUntil) return Remember(await FallbackAsync(text, cancellationToken).ConfigureAwait(false), text);
 
         var pieces = SubtitleSegmenter.Split(text);
@@ -449,7 +455,7 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
                 _names[word.ToLowerInvariant()] = 0;
         var names = _names.Keys.ToHashSet(StringComparer.Ordinal);
         // Önbellekte duran cümleler yeniden gönderilmez.
-        var translations = pieces.Select(p => p.Translate && _cache.TryGet(p.Text, out var known) ? known : null).ToList();
+        var translations = pieces.Select(p => p.Translate && _cache.TryGet(CacheKey(p.Text, game), out var known) ? known : null).ToList();
         var missing = Enumerable.Range(0, pieces.Count).Where(i => pieces[i].Translate && translations[i] is null).ToList();
         var sources = missing.Select(i => SubtitleSegmenter.NormalizeCase(pieces[i].Text, names)).ToList();
         // Dakikalık hak bittiyse istek gönderilmez; satır sessizce yerel çeviriyle çevrilir (hata değildir).
@@ -459,7 +465,7 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
         string[] translated;
         try
         {
-            translated = sources.Count == 0 ? [] : await RequestAsync(sources, context, cancellationToken).ConfigureAwait(false);
+            translated = sources.Count == 0 ? [] : await RequestAsync(sources, context, game, cancellationToken).ConfigureAwait(false);
             Report(null);
         }
         catch (AiRateLimitedException limited) when (!cancellationToken.IsCancellationRequested)
@@ -482,15 +488,15 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
         for (var i = 0; i < missing.Count; i++)
         {
             translations[missing[i]] = translated[i];
-            _cache.Store(pieces[missing[i]].Text, translated[i]);
+            _cache.Store(CacheKey(pieces[missing[i]].Text, game), translated[i]);
         }
 
         var builder = new StringBuilder();
         for (var i = 0; i < pieces.Count; i++) builder.Append(translations[i] ?? pieces[i].Text);
         if (_speech.Count >= 512) _speech.Clear();
-        _speech[text] = SpeechScript.Lines(pieces, translations);
+        _speech[CacheKey(text, game)] = SpeechScript.Lines(pieces, translations);
         var result = builder.ToString();
-        _cache.Store(text, result);
+        _cache.Store(CacheKey(text, game), result);
         return Remember(result, text);
     }
 
@@ -506,7 +512,8 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
     public async Task<IReadOnlyList<string>> TranslateAllAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(texts);
-        var results = texts.Select(text => _cache.TryGet(text, out var known) ? known : null).ToArray();
+        var game = _game?.Invoke()?.Trim();
+        var results = texts.Select(text => _cache.TryGet(CacheKey(text, game), out var known) ? known : null).ToArray();
         var missing = Enumerable.Range(0, texts.Count).Where(i => results[i] is null).ToList();
         var failed = DateTimeOffset.UtcNow < _pausedUntil;
         for (var start = 0; start < missing.Count && !failed; start += ScreenBatch)
@@ -518,7 +525,7 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
             try
             {
                 var sentences = chunk.Select(i => texts[i]).ToList();
-                using var request = AiRequest.Build(Provider, _key, Model, sentences, [], _game?.Invoke(), Server, maxOutputTokens: AiRequest.ScreenOutputTokens);
+                using var request = AiRequest.Build(Provider, _key, Model, sentences, [], game, Server, maxOutputTokens: AiRequest.ScreenOutputTokens);
                 using var response = await _screenHttp.SendAsync(request, cancellationToken).ConfigureAwait(false);
                 var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
@@ -531,7 +538,7 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
                 for (var i = 0; i < chunk.Count; i++)
                 {
                     results[chunk[i]] = translated[i];
-                    _cache.Store(texts[chunk[i]], translated[i]);
+                    _cache.Store(CacheKey(texts[chunk[i]], game), translated[i]);
                 }
             }
             catch (AiRateLimitedException limited) when (!cancellationToken.IsCancellationRequested)
@@ -560,10 +567,13 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
         return [.. results.Select(result => result ?? "")];
     }
 
-    public IReadOnlyList<SpokenLine> SpokenLines(string text) =>
-        _speech.TryGetValue(text, out var lines) ? lines
-        : SpeechScript.FromCache(text, _cache) is { Count: > 0 } cached ? cached
-        : _fallback?.SpokenLines(text) ?? [];
+    public IReadOnlyList<SpokenLine> SpokenLines(string text)
+    {
+        var game = _game?.Invoke()?.Trim();
+        return _speech.TryGetValue(CacheKey(text, game), out var lines) ? lines
+            : SpeechScript.FromCache(text, _cache, part => CacheKey(part, game)) is { Count: > 0 } cached ? cached
+            : _fallback?.SpokenLines(text) ?? [];
+    }
 
     private List<AiContextLine> Context()
     {
@@ -603,9 +613,9 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
         _fallback is null ? throw new TranslatorException(TranslatorStatus.NeedsDownload)
             : await _fallback.TranslateAsync(text, cancellationToken).ConfigureAwait(false);
 
-    private async Task<string[]> RequestAsync(List<string> sentences, List<AiContextLine> context, CancellationToken cancellationToken)
+    private async Task<string[]> RequestAsync(List<string> sentences, List<AiContextLine> context, string? game, CancellationToken cancellationToken)
     {
-        using var request = AiRequest.Build(Provider, _key, Model, sentences, context, _game?.Invoke(), Server);
+        using var request = AiRequest.Build(Provider, _key, Model, sentences, context, game, Server);
         using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)

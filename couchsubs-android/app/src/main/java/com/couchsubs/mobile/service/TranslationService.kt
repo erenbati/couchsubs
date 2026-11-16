@@ -530,7 +530,8 @@ class TranslationService : Service() {
                 }
                 val models = aiModels()[provider.id].orEmpty()
                 val model = models.firstOrNull { it.id == settings.aiModel } ?: models.firstOrNull() ?: return null
-                AiTranslator(provider, key, model, free, cache = cache(AiTranslator.engineId(provider, model)))
+                AiTranslator(provider, key, model, free, cache = cache(AiTranslator.engineId(provider, model)),
+                    playedGame = { packs?.scopeTitle })
             }
         }
     }

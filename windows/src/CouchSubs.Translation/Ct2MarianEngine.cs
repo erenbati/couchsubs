@@ -17,20 +17,29 @@ internal sealed class Ct2MarianEngine : ISentenceEngine
     private readonly int maxOutputTokens;
     private readonly int beams;
     private readonly Action? onGpuFallback;
+    private readonly Task? cudaReady;
+    private readonly string? cudaDirectory;
     private Process worker;
     private bool gpuActive;
+    private bool gpuAttempted;
     private bool disposed;
 
-    public Ct2MarianEngine(string modelDirectory, int maxOutputTokens, int beams, bool useGpu, Action? onGpuFallback)
+    internal bool GpuActive => gpuActive;
+
+    public Ct2MarianEngine(string modelDirectory, int maxOutputTokens, int beams, bool useGpu, Action? onGpuFallback,
+        Task? cudaReady = null, string? cudaDirectory = null)
     {
         this.modelDirectory = modelDirectory;
         this.maxOutputTokens = maxOutputTokens;
         this.beams = Math.Max(1, beams);
         this.onGpuFallback = onGpuFallback;
+        this.cudaReady = useGpu ? cudaReady : null;
+        this.cudaDirectory = cudaDirectory;
         tokenizer = MarianTokenizer.Load(Path.Combine(modelDirectory, ModelStore.SourceSpmFile),
             Path.Combine(modelDirectory, ModelStore.VocabFile));
-        if (useGpu)
+        if (useGpu && (cudaReady is null || cudaReady.IsCompletedSuccessfully))
         {
+            gpuAttempted = true;
             try { worker = Start("cuda"); gpuActive = true; return; }
             catch (Exception error)
             {
@@ -62,6 +71,11 @@ internal sealed class Ct2MarianEngine : ISentenceEngine
             WorkingDirectory = runtime,
         };
         info.Environment["PYTHONIOENCODING"] = "utf-8";
+        if (device == "cuda" && cudaDirectory is not null)
+        {
+            info.Environment["COUCHSUBS_CUDA_DIR"] = cudaDirectory;
+            info.Environment["PATH"] = cudaDirectory + Path.PathSeparator + info.Environment["PATH"];
+        }
         info.ArgumentList.Add("-u");
         info.ArgumentList.Add(script);
         info.ArgumentList.Add(modelDirectory);
@@ -85,6 +99,30 @@ internal sealed class Ct2MarianEngine : ISentenceEngine
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
+        if (!gpuAttempted && cudaReady is { IsCompleted: true })
+        {
+            gpuAttempted = true;
+            if (cudaReady.IsCompletedSuccessfully)
+            {
+                try
+                {
+                    var cudaWorker = Start("cuda");
+                    Stop(worker);
+                    worker = cudaWorker;
+                    gpuActive = true;
+                }
+                catch (Exception error)
+                {
+                    Debug.WriteLine($"CTranslate2 CUDA unavailable after download: {error}");
+                    onGpuFallback?.Invoke();
+                }
+            }
+            else
+            {
+                Debug.WriteLine($"CUDA runtime download failed: {cudaReady.Exception}");
+                onGpuFallback?.Invoke();
+            }
+        }
         try { return TranslateCurrent(sentence, cancellationToken); }
         catch (Exception error) when (gpuActive && error is not OperationCanceledException)
         {

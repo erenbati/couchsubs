@@ -215,7 +215,10 @@ export function packBody(id, title, cache, known, titleId = null) {
 }
 
 async function readIndex(env) {
-  return (await getJson(env, "index.json"))?.packs ?? [];
+  const index = await getJson(env, "index.json");
+  // Eksik/bozuk indeks, boş bir indeks değildir: aksi halde sonraki paket mevcut listeyi siler.
+  if (!Array.isArray(index?.packs)) throw new Error("autopack index unavailable or invalid");
+  return index.packs;
 }
 
 async function buildPack(env, job, cache, known) {

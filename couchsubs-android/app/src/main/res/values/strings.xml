@@ -256,6 +256,14 @@
     <string name="settings_background_fit">Yazı kadar</string>
     <string name="settings_background_band">Tam genişlik bant</string>
     <string name="settings_background_note">Kaydırıcıyı sonuna çekince arka plan tamamen opak olur, oyundaki İngilizce yazı kapanır. Tam genişlik bant yanları da örter.</string>
+    <string name="settings_placement">TV\'de altyazının yeri</string>
+    <string name="settings_placement_cover">Örtsün</string>
+    <string name="settings_placement_above">Üstünde</string>
+    <string name="settings_placement_below">Altında</string>
+    <string name="settings_placement_fixed">Sabit</string>
+    <string name="settings_placement_note">Örtsün: çeviri oyundaki İngilizce altyazının üstünü kapatır. Üstünde ya da Altında seçerseniz İngilizce altyazı da görünür, çeviri onun hemen üstüne ya da altına gelir.</string>
+    <string name="settings_position_height">Ekrandaki yükseklik</string>
+    <string name="settings_placement_fixed_note">Kaydırıcıyı bırakınca TV\'de örnek altyazı çıkar. Sabit yerdeyken altyazıyı TV kumandasının ▲ ve ▼ tuşlarıyla da taşıyabilirsiniz.</string>
     <string name="settings_target">Altyazı hedefi</string>
     <string name="settings_ps5">PS5 ve bağlantı</string>
     <string name="settings_passcode">PS5 giriş şifresi</string>

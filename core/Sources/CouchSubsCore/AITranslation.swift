@@ -561,15 +561,17 @@ public final class AITranslationCore: @unchecked Sendable {
     }
 
     public func translate(_ text: String, fallback: (String) async throws -> String) async throws -> String {
+        // Arama, HTTP isteği ve kayıt aynı oyunla yapılmalı; callback işlem sırasında değişebilir.
+        let game = self.game?()?.trimmingCharacters(in: .whitespacesAndNewlines)
         // Bağlam, bu satırdan önce gösterilenlerdir; satırın kendisi bağlama girmez.
         let context = lock.withLock { recent }
         shown(text)
-        if let cached = cache.value(for: text) { return remember(cached, for: text) }
+        if let cached = cache.value(for: Self.cacheKey(text, game: game)) { return remember(cached, for: text) }
         guard Date() >= lock.withLock({ pausedUntil }) else { return remember(try await fallback(text), for: text) }
         let pieces = SubtitleSegmenter.split(text)
         names.learn(from: pieces)
         // Önbellekte duran cümleler yeniden gönderilmez.
-        var translations: [String?] = pieces.map { $0.translate ? cache.value(for: $0.text) : nil }
+        var translations: [String?] = pieces.map { $0.translate ? cache.value(for: Self.cacheKey($0.text, game: game)) : nil }
         let missing = pieces.indices.filter { pieces[$0].translate && translations[$0] == nil }
         let sources = missing.map { SubtitleSegmenter.normalizeCase(pieces[$0].text, names: names.all) }
         // Dakikalık hak bittiyse istek gönderilmez; satır sessizce yerel çeviriyle çevrilir (hata değildir).
@@ -578,7 +580,7 @@ public final class AITranslationCore: @unchecked Sendable {
         guard allowed else { return remember(try await fallback(text), for: text) }
         let translated: [String]
         do {
-            translated = sources.isEmpty ? [] : try await request(sources, context: context)
+            translated = sources.isEmpty ? [] : try await request(sources, context: context, game: game)
             setFailure(nil)
         } catch is CancellationError {
             throw CancellationError()
@@ -600,14 +602,14 @@ public final class AITranslationCore: @unchecked Sendable {
         }
         for (index, sentence) in zip(missing, translated) {
             translations[index] = sentence
-            cache.store(sentence, for: pieces[index].text)
+            cache.store(sentence, for: Self.cacheKey(pieces[index].text, game: game))
         }
         let result = zip(pieces, translations).map { $1 ?? $0.text }.joined()
         lock.withLock {
             if speech.count >= 512 { speech.removeAll() }
-            speech[text] = SpeechScript.lines(pieces: pieces, translations: translations)
+            speech[Self.cacheKey(text, game: game)] = SpeechScript.lines(pieces: pieces, translations: translations)
         }
-        cache.store(result, for: text)
+        cache.store(result, for: Self.cacheKey(text, game: game))
         return remember(result, for: text)
     }
 
@@ -617,7 +619,8 @@ public final class AITranslationCore: @unchecked Sendable {
     /// kullanıcının tuşa basmasıyla gider: ortak hak o an bitmiş olsa da gönderilir (hakkı sayılır). Hata ya da dakikalık
     /// sınırda parçalar yerel çeviriyle çevrilir; o da yoksa hata yukarı çıkar ve ekranda gösterilir.
     public func translateAll(_ texts: [String], fallback: (String) async throws -> String) async throws -> [String] {
-        var results: [String?] = texts.map { cache.value(for: $0) }
+        let game = self.game?()?.trimmingCharacters(in: .whitespacesAndNewlines)
+        var results: [String?] = texts.map { cache.value(for: Self.cacheKey($0, game: game)) }
         let missing = texts.indices.filter { results[$0] == nil }
         var failed = Date() < lock.withLock({ pausedUntil })
         for chunk in stride(from: 0, to: missing.count, by: Self.screenBatch).map({ Array(missing[$0..<min($0 + Self.screenBatch, missing.count)]) })
@@ -628,12 +631,12 @@ public final class AITranslationCore: @unchecked Sendable {
             do {
                 let sentences = chunk.map { texts[$0] }
                 let request = AIRequest.make(provider: provider, key: key, model: model, sentences: sentences, context: [],
-                                             game: game?(), server: server, maxOutputTokens: AIRequest.screenOutputTokens)
+                                             game: game, server: server, maxOutputTokens: AIRequest.screenOutputTokens)
                 let translated = try await Self.send(request, provider: provider, count: sentences.count, session: screenSession)
                 setFailure(nil)
                 for (index, translation) in zip(chunk, translated) {
                     results[index] = translation
-                    cache.store(translation, for: texts[index])
+                    cache.store(translation, for: Self.cacheKey(texts[index], game: game))
                 }
             } catch is CancellationError {
                 throw CancellationError()
@@ -661,9 +664,16 @@ public final class AITranslationCore: @unchecked Sendable {
     }
 
     public func spokenLines(for text: String, fallback: (String) -> [SpokenLine]) -> [SpokenLine] {
-        if let lines = lock.withLock({ speech[text] }) { return lines }
-        let cached = SpeechScript.fromCache(text, cache: cache)
+        let game = self.game?()?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let lines = lock.withLock({ speech[Self.cacheKey(text, game: game)] }) { return lines }
+        let cached = SpeechScript.fromCache(text, cache: cache, cacheKey: { Self.cacheKey($0, game: game) })
         return cached.isEmpty ? fallback(text) : cached
+    }
+
+    // Oyun bilinmiyorsa eski kayıtlar geçerlidir; biliniyorsa yalnız o oyunun sonucu kullanılır.
+    private static func cacheKey(_ text: String, game: String?) -> String {
+        guard let game, !game.isEmpty else { return text }
+        return game + "\u{001f}" + text
     }
 
     private func shown(_ text: String) {
@@ -691,9 +701,9 @@ public final class AITranslationCore: @unchecked Sendable {
         if changed { onFailureChanged?(value) }
     }
 
-    private func request(_ sentences: [String], context: [AIContextLine]) async throws -> [String] {
+    private func request(_ sentences: [String], context: [AIContextLine], game: String?) async throws -> [String] {
         try await Self.send(AIRequest.make(provider: provider, key: key, model: model, sentences: sentences, context: context,
-                                           game: game?(), server: server),
+                                           game: game, server: server),
                             provider: provider, count: sentences.count, session: session)
     }
 
