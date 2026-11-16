@@ -32,7 +32,10 @@ test("İngilizce oyun satırları alınır", () => {
 function fakeDB() {
   const sightings = new Map(); // anahtar -> kurulumlar
   const lines = new Map();
-  const db = { writes: 0, lines, quotas: new Map(), last: null, beforeQuotaRead: null, failNextBatch: false };
+  const db = {
+    writes: 0, lines, quotas: new Map(), last: null, beforeQuotaRead: null,
+    batchCalls: 0, failNextBatch: false, failBatchOnCall: null,
+  };
   const quotaKey = (install, day) => `${install}\u001f${day}`;
   const run = (sql, args) => {
     if (sql.startsWith("SELECT count FROM quota")) return { count: db.quotas.get(quotaKey(args[0], args[1])) ?? 0 };
@@ -91,8 +94,10 @@ function fakeDB() {
   });
   // D1'de toplu yazma tek işlemdir: bir deyim hata verirse hiçbiri yazılmaz.
   db.batch = async (stmts) => {
-    if (db.failNextBatch) {
+    db.batchCalls++;
+    if (db.failNextBatch || db.failBatchOnCall === db.batchCalls) {
       db.failNextBatch = false;
+      db.failBatchOnCall = null;
       throw new Error("injected batch failure");
     }
     return stmts.map((s) => run(s.sql, s.args));
@@ -170,6 +175,19 @@ test("ilk yazma toplu işlemi başarısızsa kota rezervasyonu geri alınır", a
 
   const reply = await postLines({ DB }, who, [{ text: "Get down!" }]);
   assert.equal(reply.status, 500);
+  assert.equal(DB.quotas.get(`${who}\u001f${day}`), 12);
+});
+
+test("satır yazma toplu işlemi başarısızsa da kota rezervasyonu geri alınır", async () => {
+  const DB = fakeDB();
+  const who = install(4);
+  const day = new Date().toISOString().slice(0, 10);
+  DB.quotas.set(`${who}\u001f${day}`, 12);
+  DB.failBatchOnCall = 2;
+
+  const reply = await postLines({ DB }, who, [{ text: "Get down!" }]);
+  assert.equal(reply.status, 500);
+  assert.equal(DB.batchCalls, 2);
   assert.equal(DB.quotas.get(`${who}\u001f${day}`), 12);
 });
 
