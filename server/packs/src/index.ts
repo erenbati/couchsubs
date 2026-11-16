@@ -111,7 +111,13 @@ async function download(request: Request, env: Env, id: string, rate: RateLimite
   };
   const sha = object.customMetadata?.sha256;
   if (sha) headers["x-pack-sha256"] = sha;
-  if (request.headers.get("if-none-match") === object.httpEtag) return new Response(null, { status: 304, headers });
+  // If-None-Match zayıf ETag, virgülle ayrılmış liste veya mevcut kaynak için * içerebilir.
+  const condition = request.headers.get("if-none-match");
+  const matches = condition?.split(",").some((value) => {
+    const tag = value.trim();
+    return tag === "*" || tag.replace(/^W\//, "") === object.httpEtag;
+  });
+  if (matches) return new Response(null, { status: 304, headers });
   return new Response(object.body, { status: 200, headers });
 }
 
