@@ -130,3 +130,15 @@ describe("RateLimiter", () => {
     expect(rate.take("ip", 0)).toBe(3600);
   });
 });
+
+it("rejects a pack index containing duplicate IDs instead of exposing ambiguous versions", async () => {
+  const first = index.packs[0];
+  const second = { ...first, title: "Wrong game", version: 4, sha256: "cd".repeat(32) };
+  const response = await handle(
+    get("/v1/packs"),
+    { PACKS: indexBucket(JSON.stringify({ packs: [first, second] })) },
+    new RateLimiter(),
+  );
+  expect(response.status).toBe(503);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+});
