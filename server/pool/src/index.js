@@ -157,8 +157,14 @@ export const UPSERT =
   "title_id=COALESCE(lines.title_id,excluded.title_id), game=COALESCE(lines.game,excluded.game)";
 
 async function exportLines(url, env) {
-  const min = Math.max(1, Number(url.searchParams.get("min") || 2));
-  const limit = Math.min(20000, Number(url.searchParams.get("limit") || 5000));
+  const min = Number(url.searchParams.get("min") || 2);
+  const requestedLimit = Number(url.searchParams.get("limit") || 5000);
+  // SQLite LIMIT -1 sınırsızdır; geçersiz sayılar sorgu kotasını ve yanıt boyutunu aşmamalı.
+  if (!Number.isSafeInteger(min) || min < 1 ||
+      !Number.isSafeInteger(requestedLimit) || requestedLimit < 1) {
+    return json({ error: "bad_request" }, 400);
+  }
+  const limit = Math.min(20000, requestedLimit);
   const all = url.searchParams.get("all") === "1";
   // Oyuna göre süzme yalnız geçişten sonra çalışır (title_id ve game sütunları); süzgeçsiz istek eskisi gibi.
   const title = titleId(url.searchParams.get("title"));

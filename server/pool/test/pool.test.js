@@ -229,3 +229,20 @@ test("kimliksiz oyun adı kurulum başına bir oy yazar", async () => {
   ]);
   assert.deepEqual(votes, [["gta 6", install(1)]]);
 });
+
+test("export rejects negative and non-integer pagination before issuing SQL", async () => {
+  const DB = fakeDB();
+  const env = { DB, ADMIN_TOKEN: "t" };
+  const get = (params) => worker.fetch(new Request(`https://pool.test/v1/export?${params}`, {
+    headers: { authorization: "Bearer t" },
+  }), env);
+  for (const params of ["limit=-1", "limit=1.5", "limit=bogus", "min=bogus", "min=-5"]) {
+    DB.last = null;
+    const response = await get(params);
+    assert.equal(response.status, 400, params);
+    assert.equal(DB.last, null, `${params} must not execute a query`);
+  }
+  const valid = await get("limit=100000&min=3");
+  assert.equal(valid.status, 200);
+  assert.deepEqual(DB.last.args, [3, 20000]);
+});
