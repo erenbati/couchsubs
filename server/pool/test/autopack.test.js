@@ -73,3 +73,36 @@ test("general pool scans past separated game rows before applying the row limit"
   assert.equal(translatedKeys.length, 200);
   assert.ok(translatedKeys.every((key) => key.startsWith("2")));
 });
+
+test("autopack waits rather than using a truncated or unsorted manual-key index", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const state = {
+    night: "2026-11-20",
+    queue: [{ titleId: GENERAL, game: null, lines: 350 }],
+    translated: 0, done: [],
+  };
+  const malformed = [
+    new Uint8Array(9).buffer,
+    BigUint64Array.from([2n, 1n]).buffer,
+  ];
+  for (const bytes of malformed) {
+    const stored = new Map([["auto/state.json", JSON.stringify(state)]]);
+    const writes = [];
+    const env = {
+      AI: {},
+      PACKS: {
+        get: async (name) => name === "auto/known-keys.bin"
+          ? { arrayBuffer: async () => bytes }
+          : stored.has(name) ? { text: async () => stored.get(name) } : null,
+        put: async (name, value) => { writes.push(name); stored.set(name, value); },
+      },
+      DB: {
+        prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) }),
+      },
+    };
+    const result = await runAutopack(env, now);
+    assert.equal(result.phase, "waiting");
+    assert.deepEqual(writes, []);
+    assert.deepEqual(JSON.parse(stored.get("auto/state.json")), state);
+  }
+});

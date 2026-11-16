@@ -177,7 +177,11 @@ async function loadKnown(env) {
   const object = await env.PACKS.get(KNOWN);
   if (!object) return null;
   const buffer = await object.arrayBuffer();
-  return new BigUint64Array(buffer, 0, Math.floor(buffer.byteLength / 8));
+  // Bozuk veya sıralanmamış indeksle binary search doğru çalışmaz; elle hazırlanan çevirileri koru.
+  if (buffer.byteLength % 8 !== 0) return null;
+  const known = new BigUint64Array(buffer);
+  for (let i = 1; i < known.length; i++) if (known[i] <= known[i - 1]) return null;
+  return known;
 }
 
 async function sha256Hex(data) {
