@@ -56,6 +56,7 @@ class XboxStreamSession(
     private val appContext = context.applicationContext
     private val home = XboxHome(auth)
     private val machine = XboxSessionMachine()
+    private val frameCounter = XboxFrameCounter()
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "CouchSubs Xbox").apply { isDaemon = true } }
     private val timers = Executors.newSingleThreadScheduledExecutor { Thread(it, "CouchSubs Xbox timers").apply { isDaemon = true } }
     private val stopped = AtomicBoolean(false)
@@ -70,8 +71,7 @@ class XboxStreamSession(
     @Volatile private var firstFrameAt = 0L
     private val channels = HashMap<String, DataChannel>()
 
-    @Volatile override var framesReceived = 0L
-        private set
+    override val framesReceived: Long get() = frameCounter.totalFrames
 
     override fun start() {
         if (!started.compareAndSet(false, true)) return
@@ -183,9 +183,9 @@ class XboxStreamSession(
     }
 
     private val sink = VideoSink { frame ->
-        framesReceived++
+        val sessionFrames = frameCounter.recordFrame()
         val now = SystemClock.elapsedRealtime()
-        if (framesReceived == 1L) {
+        if (sessionFrames == 1L) {
             firstFrameAt = now
             log("ilk kare ${frame.buffer.width}x${frame.buffer.height}")
             if (machine.streaming()) onState(SessionState.Streaming)
@@ -201,6 +201,7 @@ class XboxStreamSession(
     }
 
     private fun negotiate(id: String) {
+        frameCounter.beginSession()
         val done = CountDownLatch(1).also { ended = it }
         endReason = null
         val pcFactory = createFactory().also { factory = it }
@@ -274,7 +275,7 @@ class XboxStreamSession(
         val negotiatedAt = SystemClock.elapsedRealtime()
         while (!stopped.get()) {
             if (done.await(1, TimeUnit.SECONDS)) break
-            if (framesReceived == 0L && SystemClock.elapsedRealtime() - negotiatedAt > FIRST_FRAME_MS) {
+            if (frameCounter.framesInSession == 0L && SystemClock.elapsedRealtime() - negotiatedAt > FIRST_FRAME_MS) {
                 endReason = "Xbox'tan görüntü gelmedi"
                 throw XboxException(XboxError.CONSOLE_UNAVAILABLE, endReason!!)
             }

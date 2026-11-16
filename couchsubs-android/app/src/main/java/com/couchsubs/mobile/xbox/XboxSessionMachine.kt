@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.couchsubs.mobile.xbox
 
+import java.util.concurrent.atomic.AtomicLong
+
 /**
  * Ev yayını oturumunun durum makinesi (ağdan bağımsız; birim testli). Windows'taki XboxStreamSession.RunAsync ile aynı
  * kurallar: `/state` saniyede bir, en çok 90 kez sorulur; `ReadyToConnect` görülünce aktarım jetonu gönderilir,
@@ -109,5 +111,23 @@ class XboxSessionMachine(val maxPolls: Int = 90, val pollIntervalMs: Long = 1000
                 else -> XboxError.CONSOLE_UNAVAILABLE
             }
         }
+    }
+}
+
+/** Ömür boyu tanı sayacını korurken her yeni WebRTC bağlantısının ilk karesini ayrı tanır. */
+internal class XboxFrameCounter {
+    private val total = AtomicLong()
+    private val currentSession = AtomicLong()
+
+    val totalFrames: Long get() = total.get()
+    val framesInSession: Long get() = currentSession.get()
+
+    fun beginSession() {
+        currentSession.set(0)
+    }
+
+    fun recordFrame(): Long {
+        total.incrementAndGet()
+        return currentSession.incrementAndGet()
     }
 }
