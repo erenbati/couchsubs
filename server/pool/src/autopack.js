@@ -297,7 +297,16 @@ export async function runAutopack(env, now = new Date()) {
   if (!env.PACKS || !env.AI) return { phase: "disabled" };
   const night = now.toISOString().slice(0, 10);
   let state = await getJson(env, STATE);
-  if (state?.night !== night) {
+  // A parseable but incomplete R2 state must not stall every remaining run of this night.
+  // Replanning is safe: per-game translation caches are persisted separately.
+  const validJob = (job) => job && typeof job === "object" && !Array.isArray(job)
+    && ((typeof job.titleId === "string" && job.titleId.length > 0)
+      || (job.titleId == null && typeof job.gameKey === "string" && job.gameKey.length > 0));
+  const validState = state && Array.isArray(state.queue) && state.queue.every(validJob)
+    && Array.isArray(state.done) && Number.isSafeInteger(state.translated) && state.translated >= 0
+    && (state.namedGames == null || (Array.isArray(state.namedGames)
+      && state.namedGames.every((game) => typeof game === "string")));
+  if (state?.night !== night || !validState) {
     const { results } = await env.DB.prepare(
       "SELECT title_id, MAX(game) AS game, COUNT(*) AS lines FROM lines WHERE title_id IS NOT NULL AND installs>=? " +
       "GROUP BY title_id ORDER BY lines DESC LIMIT 50"

@@ -2,6 +2,38 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { GENERAL, parseReply, runAutopack } from "../src/autopack.js";
 
+test("malformed current-night state is rebuilt instead of stopping the scheduler", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  for (const invalid of [
+    { night: "2026-11-20", translated: 0, done: [] },
+    { night: "2026-11-20", queue: {}, translated: 0, done: [] },
+    { night: "2026-11-20", queue: [], translated: -1, done: [] },
+  ]) {
+    const stored = new Map([
+      ["auto/state.json", JSON.stringify(invalid)],
+      ["index.json", JSON.stringify({ packs: [] })],
+    ]);
+    const env = {
+      AI: {},
+      PACKS: {
+        get: async (name) => stored.has(name) ? { text: async () => stored.get(name) } : null,
+        put: async (name, value) => { stored.set(name, value); },
+      },
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            all: async () => ({ results: [] }),
+            first: async () => ({ lines: 0 }),
+          }),
+        }),
+      },
+    };
+    const result = await runAutopack(env, now);
+    assert.equal(result.phase, "plan");
+    assert.deepEqual(JSON.parse(stored.get("auto/state.json")).queue, []);
+  }
+});
+
 test("general pool scans past separated game rows before applying the row limit", async () => {
   const now = new Date("2026-11-20T04:00:00Z");
   const state = {
