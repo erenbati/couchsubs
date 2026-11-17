@@ -339,8 +339,9 @@ export async function runAutopack(env, now = new Date()) {
     titles.push(...named);
     const general = await env.DB.prepare("SELECT COUNT(*) AS lines FROM lines WHERE title_id IS NULL AND installs>=?")
       .bind(MIN_INSTALLS).first();
-    const namedLines = named.reduce((sum, g) => sum + g.lines, 0);
-    titles.push({ titleId: GENERAL, game: null, lines: Math.max(0, (general?.lines ?? 0) - namedLines) });
+    // Named jobs may fail to reach the cleaned MIN_LINES threshold. Keep a general job
+    // scheduled until they have actually published; only then can their rows be excluded.
+    titles.push({ titleId: GENERAL, game: null, lines: general?.lines ?? 0 });
     // Ham satır sayısı temizlikten önce: eşiğin altındaki oyun beklemeye kalır (paketi zaten varsa güncellenir).
     const queue = titles.filter((t) => t.lines >= MIN_LINES || packs.some((p) => p.id === jobPackId(t)));
     // Ortak paket, kendi paketi hazırlanan adların satırlarını almaz.
@@ -357,7 +358,12 @@ export async function runAutopack(env, now = new Date()) {
   const cache = await loadCache(env, job);
   if (!cache) return { phase: "waiting", reason: "auto/translation cache invalid" };
   cache.fail ??= {};
-  const separate = new Set(state.namedGames ?? []);
+  // Exclude named rows only when their individual pack was actually published or
+  // confirmed unchanged. An unbuilt named pack must fall back into the general pool.
+  const published = new Set(state.done
+    .filter((finished) => finished?.gameKey && (finished.built || finished.unchanged))
+    .flatMap((finished) => finished.games?.length ? finished.games : [finished.game]));
+  const separate = new Set((state.namedGames ?? []).filter((name) => published.has(name)));
   let rows;
   if (job.titleId === GENERAL) {
     if (separate.size) {

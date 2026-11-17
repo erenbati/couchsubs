@@ -41,7 +41,7 @@ test("general pool scans past separated game rows before applying the row limit"
     queue: [{ titleId: GENERAL, game: null, lines: 350 }],
     namedGames: ["GTA 6"],
     translated: 0,
-    done: [],
+    done: [{ titleId: null, gameKey: "gta 6", game: "GTA 6", games: ["GTA 6"], built: true }],
   };
   const stored = new Map([
     ["auto/state.json", JSON.stringify(state)],
@@ -251,4 +251,85 @@ test("autopack preserves published translations when their R2 cache is missing",
   assert.deepEqual(writes, [], "neither the existing pack nor its index may be overwritten");
   assert.deepEqual(JSON.parse(stored.get("index.json")), index);
   assert.deepEqual(JSON.parse(stored.get("auto/state.json")), state);
+});
+
+test("general fallback is scheduled while a voted game has not published its first pack", async () => {
+  const stored = new Map([["index.json", JSON.stringify({ packs: [] })]]);
+  const env = {
+    PACKS: {
+      get: async (path) => stored.has(path) ? { text: async () => stored.get(path) } : null,
+      put: async (path, value) => { stored.set(path, value); },
+    },
+    AI: {},
+    DB: {
+      prepare: (sql) => ({
+        bind: () => ({
+          all: async () => ({
+            results: sql.includes("FROM game_votes")
+              ? [{ game_key: "named game", installs: 2 }]
+              : sql.includes("GROUP BY game")
+                ? [{ game: "Named Game", lines: 350 }]
+                : [],
+          }),
+          first: async () => ({ lines: 350 }),
+        }),
+      }),
+    },
+  };
+  const plan = await runAutopack(env, new Date("2026-11-20T03:07:00Z"));
+  assert.equal(plan.phase, "plan");
+  const state = JSON.parse(stored.get("auto/state.json"));
+  assert.deepEqual(state.queue.map((job) => job.titleId ?? job.gameKey),
+    ["named game", GENERAL], "the general job must remain queued until named publication succeeds");
+});
+
+test("general fallback includes named-game subtitles if that game's pack did not publish", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const named = "Named Game";
+  const stored = new Map([
+    ["index.json", JSON.stringify({ packs: [] })],
+    ["auto/state.json", JSON.stringify({
+      night: "2026-11-20", queue: [{ titleId: GENERAL, game: null, lines: 350 }],
+      namedGames: [named],
+      done: [{ titleId: null, gameKey: "named game", game: named, games: [named], built: false, entries: 100 }],
+      translated: 0,
+    })],
+  ]);
+  const rows = [
+    { key: "1111111111111111", text: "We must leave the tower before dawn.", game: named },
+    { key: "2222222222222222", text: "We should finish the mission tonight.", game: null },
+  ];
+  let query;
+  const env = {
+    PACKS: {
+      get: async (name) => name === "auto/known-keys.bin"
+        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        : stored.has(name) ? { text: async () => stored.get(name) } : null,
+      put: async (name, value) => { stored.set(name, value); },
+    },
+    AI: {
+      run: async (_model, { messages }) => ({
+        response: JSON.stringify({
+          items: messages[1].content.split("\n").filter(Boolean)
+            .map((_, index) => ({ id: String(index), tr: "Bu ak?am g?revimizi bitirmeliyiz." })),
+        }),
+      }),
+    },
+    DB: {
+      prepare: (sql) => ({
+        bind: (...args) => ({
+          all: async () => {
+            query = { sql, args };
+            const excluded = sql.includes("json_each(?)") ? JSON.parse(args[1]) : [];
+            return { results: rows.filter((row) => !excluded.includes(row.game)) };
+          },
+        }),
+      }),
+    },
+  };
+  const result = await runAutopack(env, now);
+  assert.equal(result.phase, "translate");
+  assert.equal(result.translated, 2, "named lines should fall back when their own pack was not built");
+  const cache = JSON.parse(stored.get("auto/tr/GENEL.json"));
+  assert.deepEqual(Object.keys(cache.lines).sort(), rows.map((row) => row.key).sort());
 });
