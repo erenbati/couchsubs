@@ -43,8 +43,11 @@ class PsnLoadWatch(private val startedAtMs: Long) {
         /** Ekran açıldıktan sonra Sony'nin giriş formu bu sürede çıkmazsa hata ekranı. */
         const val LOAD_TIMEOUT_MS = 20_000L
 
-        /** Önceki oturumun çerezlerini silmek için en çok bu kadar beklenir; sonra sayfa yine açılır. */
-        const val COOKIE_WAIT_MS = 2_000L
+        /**
+         * Önceki oturumun çerezlerini silmek için en çok bu kadar beklenir; sonra sayfa yine açılır. Silme ekran açılınca
+         * başlar; soğuk WebView'de (uygulamanın ilk girişi) 2 sn yetmiyordu (GitHub #54).
+         */
+        const val COOKIE_WAIT_MS = 5_000L
 
         /** Sayfa yüklendikten sonra giriş formunun çizilip çizilmediğine bu aralıkla bakılır. */
         const val READY_POLL_MS = 1_000L

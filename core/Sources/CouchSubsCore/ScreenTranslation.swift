@@ -100,7 +100,9 @@ public enum ScreenTranslation {
             .sorted { $0.box!.top < $1.box!.top }
         var groups: [[TextLine]] = []
         for line in lines {
-            if let index = groups.lastIndex(where: { belongs(line.box!, below: $0.last!.box!) }) {
+            if let index = groups.lastIndex(where: { belongs(line.box!, below: $0.last!.box!) }),
+               !bridgesColumns(groups[index].last!.box!, line.box!, lines),
+               !bridgesColumns(line.box!, groups[index].last!.box!, lines) {
                 groups[index].append(line)
             } else {
                 groups.append([line])
@@ -110,6 +112,18 @@ public enum ScreenTranslation {
             let heights = group.map { $0.box!.bottom - $0.box!.top }.sorted()
             let box = group.dropFirst().reduce(group[0].box!) { $0.union($1.box!) }
             return Group(paragraphs: paragraphs(group), box: box, lineHeight: heights[heights.count / 2])
+        }
+    }
+
+    // Geniş başlık/alt satır iki bağımsız sütundan birine katılmasın. Filtrelenmiş OCR satırlarına bakılır.
+    private static func bridgesColumns(_ wide: TextBox, _ column: TextBox, _ lines: [TextLine]) -> Bool {
+        lines.contains { line in
+            let peer = line.box!
+            guard min(column.right, peer.right) <= max(column.left, peer.left) else { return false }
+            let rowOverlap = min(column.bottom, peer.bottom) - max(column.top, peer.top)
+            guard rowOverlap > 0, rowOverlap >= min(column.bottom - column.top, peer.bottom - peer.top) * 0.5 else { return false }
+            return (belongs(column, below: wide) && belongs(peer, below: wide))
+                || (belongs(wide, below: column) && belongs(wide, below: peer))
         }
     }
 

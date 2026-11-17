@@ -111,6 +111,9 @@ public static class ScreenTranslation
         foreach (var line in lines)
         {
             var index = groups.FindLastIndex(group => Belongs(line.Box!.Value, group[^1].Box!.Value));
+            // İki bağımsız sütuna değen geniş başlık/alt satır, sütunlardan birinin parçası değildir.
+            if (index >= 0 && (BridgesColumns(groups[index][^1].Box!.Value, line.Box!.Value, lines)
+                || BridgesColumns(line.Box!.Value, groups[index][^1].Box!.Value, lines))) index = -1;
             if (index >= 0) groups[index].Add(line);
             else groups.Add([line]);
         }
@@ -121,6 +124,18 @@ public static class ScreenTranslation
             return new Group(Paragraphs(group), box, heights[heights.Count / 2]);
         })];
     }
+
+    // Geniş kutu, yan yana duran iki ayrı satırı birbirine bağlamasın. Yalnız filtrelenmiş OCR satırları kullanılır.
+    private static bool BridgesColumns(TextBox wide, TextBox column, IReadOnlyList<TextLine> lines) =>
+        lines.Any(line =>
+        {
+            var peer = line.Box!.Value;
+            if (Math.Min(column.Right, peer.Right) > Math.Max(column.Left, peer.Left)) return false;
+            var rowOverlap = Math.Min(column.Bottom, peer.Bottom) - Math.Max(column.Top, peer.Top);
+            if (rowOverlap <= 0 || rowOverlap < Math.Min(column.Bottom - column.Top, peer.Bottom - peer.Top) * 0.5) return false;
+            return (Belongs(column, wide) && Belongs(peer, wide))
+                || (Belongs(wide, column) && Belongs(wide, peer));
+        });
 
     /// <summary>Alt satır üsttekinin hemen altında (arada satır yüksekliğinin %80'inden az), yatayda onunla üst üste ve yazı boyu benzer.</summary>
     private static bool Belongs(TextBox lower, TextBox upper)

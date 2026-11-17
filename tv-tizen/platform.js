@@ -46,6 +46,8 @@
     // Anynet+ (HDMI-CEC) ya da Otomatik Kaynak Değiştirme TV'yi kendiliğinden HDMI'ya geçirirse uygulama ipucu
     // gösterir (app.js). Menü adları Samsung'unkiler; başka TV'lerde gösterilmez.
     sourceSwitchTip: true,
+    // HDMI girişi açılamazsa app.js nedenini ve giriş seçimini gösterir.
+    noPictureHelp: true,
 
     init: function () {
       // Renk ve sayı tuşları istenmezse TV kendisi kullanır.

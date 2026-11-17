@@ -21,6 +21,8 @@
   #wrap {
     position: absolute; left: 0; right: 0; bottom: 7%;
     display: flex; justify-content: center; pointer-events: none;
+    /* Kap tüm sayfayı kaplasa da (örtme) kutu yazı kadar kalır; tam yüksekliğe uzayıp siyah sütun olmaz. */
+    align-items: flex-start;
   }
   #line {
     max-width: 84vw; padding: 0.25em 0.6em; border-radius: 0.3em;
@@ -68,6 +70,8 @@
   var timer = null;
   var hintTimer = null;
   var placement = 'cover';
+  // Son altyazının yerleşimi: 'fixed' (sabit yükseklik), 'cover', 'above' ya da 'below'.
+  var shownMode = 'fixed';
   var lastStyle = {};
   var TEXT_COLORS = { white: '#FFFFFF', yellow: '#FFE135' };
   var turkish = (navigator.language || 'tr').toLowerCase().indexOf('tr') === 0;
@@ -173,7 +177,11 @@
     if (size > 0) { baseSize = size; line.style.fontSize = pixels(size * textScale); }
     hintBox.style.fontSize = pixels(Math.max(20, Math.round((size > 0 ? size : 48) * 0.6)));
     var bottom = Number(fixed.bottom || style.bottomPercent);
-    if (bottom >= 0 && bottom <= 85) wrap.style.bottom = hintBox.style.bottom = bottom + '%';
+    if (bottom >= 0 && bottom <= 85) {
+      hintBox.style.bottom = bottom + '%';
+      // İngilizce satıra göre yerleşen altyazının kabı ayar gelince sabit yüksekliğe kaymasın.
+      if (shownMode === 'fixed') wrap.style.bottom = bottom + '%';
+    }
     var bg = fixed.bg !== null ? Number(fixed.bg) : style.background;
     if (typeof bg === 'number' && !isNaN(bg)) line.style.background = boxColor(bg);
     else if (pageColor) line.style.background = boxColor(60);
@@ -244,8 +252,16 @@
     textScale = wrapped.scale;
     line.textContent = wrapped.text;
     line.style.fontSize = pixels(baseSize * textScale);
-    var cover = box && placement === 'cover' && !fixed.bottom;
-    if (cover) {
+    // Çevirinin yeri TV ile aynı: İngilizce satırı örterek (cover), üstünde (above) ya da altında (below);
+    // ekranın kenarında yer yoksa öbür yana geçer. Satırın yeri bilinmiyorsa ya da ?bottom verildiyse sabit yükseklik.
+    var mode = box && !fixed.bottom ? placement : 'fixed';
+    if (mode === 'below' && box.bottom > 0.88) mode = 'above';
+    if (mode === 'above' && box.top < 0.12) mode = 'below';
+    if (mode !== 'cover' && mode !== 'above' && mode !== 'below') mode = 'fixed';
+    shownMode = mode;
+    wrap.style.left = '';
+    wrap.style.right = '';
+    if (mode === 'cover') {
       // Kutu sayfanın tamamına göre yerleşir: kap tüm sayfayı kaplar.
       wrap.style.top = '0';
       wrap.style.bottom = '0';
@@ -255,20 +271,37 @@
       line.style.top = ((box.top + box.bottom) / 2 * 100) + '%';
       // Bant: zemin sayfanın tüm genişliğini kaplar (eski sürümler alanı göndermez, yazı kadar kalır).
       line.style.minWidth = band ? '100vw' : ((box.right - box.left) * 100) + 'vw';
-      // %100 zemin tamamen opak; altındaki yazı hiç görünmesin.
-      var solid = (fixed.bg !== null ? Number(fixed.bg) : (lastStyle && lastStyle.background)) >= 100;
-      line.style.background = solid ? '#000' : 'rgba(0, 0, 0, 0.97)';
+      // Örtü de "Arka plan koyuluğu"na uyar (eskiden hep %97'ydi, kaydırıcı örtüde işe yaramıyordu); %100 tamamen
+      // opaktır. Koyuluğu göndermeyen eski sürümlerde örtü %97 kalır.
+      var bg = fixed.bg !== null ? Number(fixed.bg) : (lastStyle && lastStyle.background);
+      line.style.background = typeof bg === 'number' && !isNaN(bg) ? (bg >= 100 ? '#000' : boxColor(bg)) : 'rgba(0, 0, 0, 0.97)';
       if (pageColor) line.style.background = '#000';
+      line.className = 'on cover';
     } else {
-      wrap.style.top = '';
-      wrap.style.bottom = '';
       line.style.left = '';
       line.style.top = '';
       line.style.minWidth = '';
       line.style.maxWidth = '';
+      line.className = 'on';
       apply(lastStyle);
+      if (mode !== 'fixed') {
+        // Kap İngilizce satırın hemen üstüne ya da altına oturur, yatayda satırın ortasına hizalanır.
+        var gap = 1.2;
+        var center = (box.left + box.right) / 2;
+        var half = Math.max(0.3, Math.min(center, 1 - center));
+        wrap.style.left = (Math.max(0.02, center - half) * 100) + '%';
+        wrap.style.right = (Math.max(0.02, 1 - center - half) * 100) + '%';
+        if (mode === 'above') {
+          wrap.style.top = '';
+          wrap.style.bottom = ((1 - box.top) * 100 + gap) + '%';
+        } else {
+          wrap.style.bottom = '';
+          wrap.style.top = (box.bottom * 100 + gap) + '%';
+        }
+      } else {
+        wrap.style.top = '';
+      }
     }
-    line.className = cover ? 'on cover' : 'on';
     timer = setTimeout(hide, Math.max(1000, duration || 8000));
   }
 

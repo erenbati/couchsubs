@@ -7,6 +7,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -70,6 +71,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.Inet4Address
+import java.net.InetAddress
 
 private const val TAG = "CouchSubsTvInstall"
 
@@ -379,10 +381,36 @@ private suspend fun findSamsungTvs(phoneIp: String?): List<SamsungCandidate> = w
 /** Telefonun Wi-Fi'daki IPv4 adresi: TV'nin geliştirici modunda Host PC IP olarak yazılır. */
 internal fun phoneAddress(context: Context): String? = try {
     val connectivity = context.getSystemService(ConnectivityManager::class.java)
-    connectivity.getLinkProperties(connectivity.activeNetwork)?.linkAddresses
-        ?.map { it.address }?.firstOrNull { it is Inet4Address && !it.isLoopbackAddress }?.hostAddress
+    val networks = connectivity.allNetworks.map { network ->
+        val capabilities = connectivity.getNetworkCapabilities(network)
+        NetworkAddressCandidate(
+            isWifi = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true,
+            isEthernet = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true,
+            isVpn = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true,
+            addresses = connectivity.getLinkProperties(network)?.linkAddresses?.map { it.address }.orEmpty(),
+        )
+    }
+    phoneIpv4Address(networks)
 } catch (error: Exception) {
     null
+}
+
+internal data class NetworkAddressCandidate(
+    val isWifi: Boolean,
+    val isEthernet: Boolean,
+    val isVpn: Boolean,
+    val addresses: List<InetAddress>,
+)
+
+internal fun phoneIpv4Address(networks: Iterable<NetworkAddressCandidate>): String? {
+    fun addressFor(transport: (NetworkAddressCandidate) -> Boolean): String? = networks.asSequence()
+        .filter { transport(it) && !it.isVpn }
+        .flatMap { it.addresses.asSequence() }
+        .filterIsInstance<Inet4Address>()
+        .firstOrNull { !it.isLoopbackAddress }
+        ?.hostAddress
+
+    return addressFor { it.isWifi } ?: addressFor { it.isEthernet }
 }
 
 internal fun shareLog(context: Context, file: File) {

@@ -55,9 +55,9 @@ final class PhoneModel: ObservableObject {
             let translationChanged = settings.onlineTranslation != oldValue.onlineTranslation
                 || settings.onlineEngine != oldValue.onlineEngine || settings.geminiModel != oldValue.geminiModel
                 || settings.openAIModel != oldValue.openAIModel || settings.claudeModel != oldValue.claudeModel
-            if translationChanged {
-                Task { await refreshTranslatorStatus() }
-                if isRunning { makePipeline() }
+            if translationChanged { Task { await refreshTranslatorStatus() } }
+            if isRunning, translationChanged || settings.fastSubtitleDetection != oldValue.fastSubtitleDetection {
+                makePipeline()
             }
         }
     }
@@ -169,7 +169,7 @@ final class PhoneModel: ObservableObject {
     /// Oyun paketleri: uygulamayla gelenler ve sunucudan indirilen güncel sürümleri (ücretsiz, herkese).
     let packs: GamePackLibrary
     private let pool: LinePool
-    /// Oynanan oyun: PS5'in bildirdiği, paketten tanınan ya da kullanıcının seçtiği (havuza giden satırlar bu oyunla gider).
+    /// Oynanan oyun: PS5'in bildirdiği, kullanıcının seçtiği ya da paketten tanınan (havuza giden satırlar bu oyunla gider).
     let gameChoice: GameChoice
     /// Bağlıyken birkaç dakikada bir PS5'e çalışan oyunu sorar (havuza giden satırlar oyunla gider). Testlerde kapalı.
     private var gameProbe: Task<Void, Never>?
@@ -234,6 +234,8 @@ final class PhoneModel: ObservableObject {
             if game != nil { self?.onGameStarted() }
         }
         gameChoice.packTitles = { [weak self] in GameCatalog.packGames(self?.installedPacks ?? []) }
+        // Elle seçilen oyunda satırlar yalnız o oyunun paketinde aranır, paketi yoksa hiç aranmaz (#218).
+        gameChoice.packs = packs
         // Kullanıcı jetonu her yenilendiğinde Anahtar Zinciri'ne yazılır (Windows'taki DPAPI, Android'deki Keystore).
         tokenSink.handler = { [weak self, store] token in
             if let token { store.save(token.serialize(), for: XboxStoreKey.userToken) } else { store.remove(XboxStoreKey.userToken) }
@@ -418,7 +420,8 @@ final class PhoneModel: ObservableObject {
         let consoleName: String
         if let xbox {
             RemotePlayLog.write("Çeviri başladı; Xbox'a bağlanılıyor (Beta): \(xbox.name)")
-            session = XboxStreamSession(auth: xboxAuth, console: xbox, describe: XboxText.session)
+            session = XboxStreamSession(auth: xboxAuth, console: xbox, playAudio: settings.xboxAudioOnDevice,
+                                        describe: XboxText.session)
             consoleName = xbox.name.isEmpty ? "Xbox" : xbox.name
         } else if let console, let accountId {
             RemotePlayLog.write("Çeviri başladı; PS5'e bağlanılıyor: \(console.name) \(console.host)")
@@ -574,8 +577,10 @@ final class PhoneModel: ObservableObject {
         pipeline?.reset()
         // Eski hatta süren okuma beklenmez; yeni hat ilk karesini hemen alır.
         frameGate.reset()
+        let scheduler = ReadScheduler(maxReuse: settings.fastSubtitleDetection
+            ? ReadScheduler.fastMaxReuse : ReadScheduler.defaultMaxReuse)
         let pipeline = SubtitlePipeline(reader: VisionReader(language: settings.sourceLanguage), translator: makeTranslator(),
-                                        server: server, scheduler: ReadScheduler())
+                                        server: server, scheduler: scheduler)
         pipeline.showSpeakerNames = settings.showSpeakerNames
         pipeline.onPair = { [weak self, weak pipeline] source, translation in
             self?.lastSource = source
@@ -731,11 +736,12 @@ final class PhoneModel: ObservableObject {
         let online: TextTranslator & OnlineTranslating
         if let provider = engine.aiProvider {
             let model = provider.model(settings.model(for: provider)).id
-            // Oyun paketi eşleştiyse oyunun adı modele bağlam olarak gider; önbellek de oyuna göre ayrılır (Mac ile aynı).
-            let packs = self.packs
+            // Oynanan oyunun adı modele bağlam olarak gider; önbellek de oyuna göre ayrılır (Mac ile aynı). Ad kararlı
+            // oyundur (`GameSense.current`), son eşleşen paket değil: tek bir ortak satır adı başka oyuna geçirmez (#27).
+            let sense = gameChoice.sense
             online = AITranslator(provider: provider, key: key, model: model, fallback: local,
                                   cache: Self.translationCache(engine: provider.engineID(model: model), source: source, target: target),
-                                  game: { packs.scopeTitle })
+                                  game: { sense.current?.name })
         } else {
             online = DeepLTranslator(key: key, fallback: local,
                                      cache: Self.translationCache(engine: DeepLTranslator.engineID, source: source, target: target))
@@ -975,6 +981,10 @@ final class PhoneModel: ObservableObject {
             case .notFound(let host):
                 return String(format: String(localized: "PS5 not found at %@. Make sure it is on and on the same network. Reconnecting…"), host)
             case .network: return String(localized: "Can't reach the PS5. Reconnecting…")
+            // Eskiden "Yeniden bağlanılıyor…" ile anlamsız libchiaki metni (Unknown Session Request Error) vardı.
+            case .rejected(let code?):
+                return String(format: String(localized: "The PS5 rejected the connection (code %@). Another Remote Play app (PS Remote Play) may be open, or the PS5 may be in another session. Close PS Remote Play, restart the PS5, then try again."), String(format: "0x%08x", code))
+            case .rejected(nil): return String(localized: "The PS5 didn't start the session. Another Remote Play app (PS Remote Play) may be open, or the PS5 may be in another session. Close PS Remote Play, restart the PS5, then try again.")
             case .other(let detail) where isXbox: return detail
             case .other, .stopped: return String(localized: "Reconnecting…")
             }

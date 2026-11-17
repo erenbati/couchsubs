@@ -146,6 +146,10 @@ public enum DisconnectReason: Equatable, Sendable {
     case noPicture
     /// Kayıtlı adreste PS5 aramaya yanıt vermedi ve oturum da açılamadı (değer: adres).
     case notFound(String)
+    /// PS5 oturum isteğini (TCP 9295) kayıt dışı bir nedenle reddetti ya da yanıtı okunamadı; libchiaki bunu yalnız
+    /// "Unknown Session Request Error" diye verir (GitHub #33, #202). Değer: PS5'in "Reported Application Reason" kodu
+    /// (libchiaki'nin tanımadığı kodlar, ör. 0x80108bff; günlükte kod yoksa nil).
+    case rejected(UInt32?)
     case other(String)
 
     /// Oturum ağ hatasıyla düştüyse ve PS5 aramaya da yanıt vermediyse neden "bulunamadı"dır (eskiden yalnız
@@ -166,7 +170,7 @@ public enum DisconnectReason: Equatable, Sendable {
             let token = line[marker.upperBound...].drop { $0 == " " }.prefix { !$0.isWhitespace }.lowercased()
             let hex = token.hasPrefix("0x") ? String(token.dropFirst(2)) : token
             guard let code = UInt32(hex, radix: 16) else { return nil }
-            return registrationRejectedCodes.contains(code) ? .registrationInvalid : nil
+            return registrationRejectedCodes.contains(code) ? .registrationInvalid : .rejected(code)
         }
         // PS5'e bağlanılamadı ya da yanıt gelmedi: PS5 dinlenmeden yeni uyandıysa ilk denemelerde olağandır.
         return unreachableLines.contains(where: line.contains) ? .network : nil
@@ -180,10 +184,11 @@ public enum DisconnectReason: Equatable, Sendable {
         "Failed to receive session request response",
     ]
 
-    /// Oturum isteği bilinmeyen nedenle düştüyse günlükten anlaşılan neden kullanılır.
+    /// Oturum isteği bilinmeyen nedenle düştüyse günlükten anlaşılan neden kullanılır. Günlükte neden yoksa (PS5'in
+    /// yanıtı okunamadı) PS5 oturumu başlatmamıştır: anlamsız İngilizce metin yerine `.rejected(nil)`.
     init(quit: ChiakiQuitReason, sessionRequestHint hint: DisconnectReason?) {
-        if quit == CHIAKI_QUIT_REASON_SESSION_REQUEST_UNKNOWN, let hint {
-            self = hint
+        if quit == CHIAKI_QUIT_REASON_SESSION_REQUEST_UNKNOWN {
+            self = hint ?? .rejected(nil)
         } else {
             self.init(quit: quit)
         }

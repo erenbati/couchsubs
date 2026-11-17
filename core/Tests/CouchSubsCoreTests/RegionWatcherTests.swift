@@ -42,8 +42,12 @@ final class RegionWatcherTests: XCTestCase {
 
     private final class Server: RegionSending {
         var sent: [(id: String, text: String, box: TextBox?)] = []
+        var lineHeights: [Double?] = []
         var clears = 0
-        func sendRegion(id: String, text: String, box: TextBox?, lineHeight: Double?) { sent.append((id, text, box)) }
+        func sendRegion(id: String, text: String, box: TextBox?, lineHeight: Double?) {
+            sent.append((id, text, box))
+            lineHeights.append(lineHeight)
+        }
         func clearRegions() { clears += 1 }
     }
 
@@ -59,8 +63,8 @@ final class RegionWatcherTests: XCTestCase {
     }
 
     private let quest = ExtraArea(id: "q", name: "Quest", region: ExtraAreaPreset.quest.region)
-    private func line(_ text: String, top: Double = 0.2) -> TextLine {
-        TextLine(text, box: TextBox(left: 0.1, top: top, right: 0.9, bottom: top + 0.1))
+    private func line(_ text: String, top: Double = 0.2, height: Double = 0.1) -> TextLine {
+        TextLine(text, box: TextBox(left: 0.1, top: top, right: 0.9, bottom: top + height))
     }
 
     func testFailedReadRetriesOnAnUnchangedFrameThenStopsReading() async {
@@ -141,6 +145,24 @@ final class RegionWatcherTests: XCTestCase {
         XCTAssertEqual(reader.count, 1)
         XCTAssertEqual(translator.calls.count, 1)
         XCTAssertEqual(server.sent.count, 1)
+    }
+
+    func testSameTextAtNewGeometryUpdatesRegionWithoutRetranslating() async {
+        let reader = Reader(), translator = Translator(), server = Server()
+        let watcher = RegionWatcher(reader: reader, translator: translator, server: server)
+        reader.lines = [line("Find the blacksmith", top: 0.2, height: 0.1)]
+        await watcher.pass(frame(10), areas: [quest])
+        await watcher.pass(frame(10), areas: [quest])
+        let firstBox = server.sent[0].box!
+        let firstHeight = server.lineHeights[0]!
+
+        reader.lines = [line("Find the blacksmith", top: 0.45, height: 0.2)]
+        await watcher.pass(frame(60), areas: [quest])
+
+        XCTAssertEqual(server.sent.map(\.text), ["TR: Find the blacksmith", "TR: Find the blacksmith"])
+        XCTAssertNotEqual(server.sent[1].box?.top, firstBox.top)
+        XCTAssertNotEqual(server.lineHeights[1], firstHeight)
+        XCTAssertEqual(translator.calls, ["Find the blacksmith"])
     }
 
     func testFailedTranslationRetriesWithoutLosingPreviouslyShownText() async {

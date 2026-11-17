@@ -51,6 +51,39 @@ object XboxChannels {
         return buffer.array()
     }
 
+    /** Oynatıcı bir pakette en çok 29 kare onaylar (Input.ts `getMetadataQueue(30)` → `splice(0, 29)`). */
+    const val MAX_FRAME_ACKS = 29
+
+    /**
+     * `input` kanalının kare onayı paketi (Input/Packet.ts, rapor türü 1 = Metadata): tür (u16 LE), sıra no (u32 LE),
+     * zaman damgası (f64 LE, ms), kare sayısı (u8), her kare için yedi u32 LE: serverDataKey (karenin RTP zaman
+     * damgası), varış, gönderim, çözülme, gösterim, paket hazırlama ve gönderme anları (ms). Son ikisi oynatıcıda
+     * paketin yazıldığı an; burada [timestampMs].
+     */
+    fun frameAckPacket(sequence: Int, timestampMs: Double, frames: List<XboxFrameAck>): ByteArray {
+        require(frames.size in 1..MAX_FRAME_ACKS) { "kare sayısı: ${frames.size}" }
+        val buffer = ByteBuffer.allocate(14 + 1 + 28 * frames.size).order(ByteOrder.LITTLE_ENDIAN)
+        buffer.putShort(1.toShort())
+        buffer.putInt(sequence)
+        buffer.putDouble(timestampMs)
+        buffer.put(frames.size.toByte())
+        val now = timestampMs.toLong()
+        for (frame in frames) {
+            // JavaScript'teki setUint32 gibi: alt 32 bit yazılır.
+            buffer.putInt(frame.serverDataKey.toInt())
+            buffer.putInt(frame.arrivalMs.toInt())
+            buffer.putInt(frame.arrivalMs.toInt())
+            buffer.putInt(frame.decodedMs.toInt())
+            buffer.putInt(frame.decodedMs.toInt())
+            buffer.putInt(now.toInt())
+            buffer.putInt(now.toInt())
+        }
+        return buffer.array()
+    }
+
     /** Oynatıcının SDP düzeltmesi: stereo ses (`useinbandfec=1` ilk geçişte). */
     fun mungeOffer(sdp: String): String = sdp.replaceFirst("useinbandfec=1", "useinbandfec=1; stereo=1")
 }
+
+/** Çözülen bir görüntü karesinin onayı: [serverDataKey] karenin RTP zaman damgası, anlar oturum saatine göre ms. */
+data class XboxFrameAck(val serverDataKey: Long, val arrivalMs: Long, val decodedMs: Long)

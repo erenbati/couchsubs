@@ -132,11 +132,14 @@ async function handle(command, args = {}) {
     }
     case 'status': {
       const status = await api(sessionPath('/state'));
+      let connected;
       if (status?.state === 'ReadyToConnect') {
         const transfer = await msal.getMsalToken();
         await api(sessionPath('/connect'), 'POST', { userToken: transfer.data.lpt });
+        // The app logs that /connect succeeded; the transfer token itself is never returned.
+        connected = true;
       }
-      return { ...status, userToken: store.getUserToken().data };
+      return { ...status, connected, userToken: store.getUserToken().data };
     }
     case 'sdp':
       return exchange(sessionPath('/sdp'), {

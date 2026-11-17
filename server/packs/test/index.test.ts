@@ -130,3 +130,47 @@ describe("RateLimiter", () => {
     expect(rate.take("ip", 0)).toBe(3600);
   });
 });
+
+it("rejects a pack index containing duplicate IDs instead of exposing ambiguous versions", async () => {
+  const first = index.packs[0];
+  const second = { ...first, title: "Wrong game", version: 4, sha256: "cd".repeat(32) };
+  const response = await handle(
+    get("/v1/packs"),
+    { PACKS: indexBucket(JSON.stringify({ packs: [first, second] })) },
+    new RateLimiter(),
+  );
+  expect(response.status).toBe(503);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+});
+
+it.each([
+  ["weak ETag", 'W/"etag-1"'],
+  ["ETag list", '"old-copy", W/"etag-1"'],
+  ["wildcard", "*"],
+])("returns 304 for a matching If-None-Match %s", async (_kind, condition) => {
+  const response = await handle(
+    get("/v1/packs/gta-v", { "if-none-match": condition }),
+    env(),
+    new RateLimiter(),
+  );
+  expect(response.status).toBe(304);
+  expect(response.headers.get("etag")).toBe('"etag-1"');
+});
+
+it("still sends the pack when If-None-Match is unrelated", async () => {
+  const response = await handle(
+    get("/v1/packs/gta-v", { "if-none-match": '"old-copy", W/"other"' }),
+    env(),
+    new RateLimiter(),
+  );
+  expect(response.status).toBe(200);
+});
+
+it("returns 404 rather than crashing on invalid percent-encoded pack IDs", async () => {
+  const response = await handle(
+    get("/v1/packs/%E0%A4%A"),
+    env(),
+    new RateLimiter(),
+  );
+  expect(response.status).toBe(404);
+});

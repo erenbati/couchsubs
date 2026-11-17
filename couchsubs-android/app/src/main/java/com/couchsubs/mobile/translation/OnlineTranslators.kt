@@ -2,6 +2,7 @@
 package com.couchsubs.mobile.translation
 
 import com.couchsubs.mobile.core.SubtitleSegmenter
+import com.couchsubs.mobile.core.TextMatch
 import com.couchsubs.mobile.core.TextTranslator
 import org.json.JSONArray
 import org.json.JSONException
@@ -16,6 +17,15 @@ import java.util.Locale
 enum class OnlineKeyState { VALID, INVALID, QUOTA_EXCEEDED, MODEL_REJECTED, UNREACHABLE }
 
 class OnlineException(val state: OnlineKeyState) : IOException("online translation failed: $state")
+
+/**
+ * Hizmetin bildirdiği dakikalık istek sınırı aşımı (429; Windows: AiRateLimit). [retryAfterMs]: hizmetin önerdiği
+ * bekleme ("retryDelay"), [requestsPerMinute]: bildirdiği dakikalık istek sınırı ("quotaValue"); yoksa null.
+ */
+data class AiRateLimit(val retryAfterMs: Long? = null, val requestsPerMinute: Int? = null)
+
+/** Dakikalık sınır aşıldı: gün sınırından farklı olarak kısa sürer, kullanıcıya hata gösterilmez. */
+class AiRateLimitedException(val limit: AiRateLimit) : IOException("rate limited")
 
 /** Yapay zekâ hizmetleri (Windows: AiProvider, Mac: AIProvider). */
 enum class AiProvider(val id: String, val displayName: String) {
@@ -148,13 +158,22 @@ fun interface Http {
 /**
  * Cümle cümle çeviren çevrimiçi motorların ortak düzeni (Windows: DeepLTranslator ve AiTranslator): konuşmacı
  * etiketleri çevrilmez, önbellekteki cümleler yeniden gönderilmez, hata olursa o satır yerel motorla çevrilir ve bir
- * dakika hizmet denenmez.
+ * dakika hizmet denenmez. Dakikalık istek sınırında ([budget] bitti ya da hizmet 429 ile dakikalık sınırı bildirdi) hata
+ * gösterilmez: satır sessizce yerel motorla çevrilir, hizmet en çok 20 saniye dinlenir (Windows ve iPhone ile aynı).
  */
 abstract class SentenceTranslator<C>(
     private val local: TextTranslator?,
     protected val cache: TranslationCache = TranslationCache(),
     private val clock: () -> Long = System::currentTimeMillis,
+    private val budget: RequestBudget? = null,
 ) : TextTranslator {
+    companion object {
+        /** Hata sonrası bu süre hizmet denenmez. */
+        const val RETRY_AFTER_MS = 60_000L
+        /** Dakikalık sınır aşılınca en çok bu kadar beklenir (hizmet bekleme önermezse de bu kadar). */
+        const val RATE_LIMIT_PAUSE_MS = 20_000L
+    }
+
     private val names = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private var pausedUntil = 0L
 
@@ -185,7 +204,6 @@ abstract class SentenceTranslator<C>(
         val game = game()
         val context = context(text, game)
         cache.get(cacheKey(text, game))?.let { return it.also { remember(text, it, game) } }
-        if (clock() < pausedUntil) return fallback(text, game)
         val pieces = SubtitleSegmenter.split(text)
         for (name in pieces.mapNotNull(SubtitleSegmenter::labelName))
             name.split(' ').filter { it.length >= 2 }.forEach { names.add(it.lowercase(Locale.ROOT)) }
@@ -193,26 +211,71 @@ abstract class SentenceTranslator<C>(
         val translations = pieces.map { if (it.translate) cache.get(cacheKey(it.text, game)) else null }.toMutableList()
         val missing = pieces.indices.filter { pieces[it].translate && translations[it] == null }
         val sources = missing.map { SubtitleSegmenter.normalizeCase(pieces[it].text, known) }
+        // Hizmetin beklemesi yalnız eksik çeviriler içindir; önbellekteki parçalar yerel motor istemez.
+        if (sources.isNotEmpty() && clock() < pausedUntil) return fallback(text, game)
+        // Dakikalık hak bittiyse istek gönderilmez; satır sessizce yerel çeviriyle çevrilir (hata değildir).
+        if (sources.isNotEmpty() && budget?.take() == false) return fallback(text, game)
         val translated = try {
             if (sources.isEmpty()) emptyList() else request(sources, context, game).also { report(null) }
+        } catch (error: AiRateLimitedException) {
+            rateLimited(error.limit)
+            return fallback(text, game)
         } catch (error: IOException) {
             report((error as? OnlineException)?.state ?: OnlineKeyState.UNREACHABLE)
-            pausedUntil = clock() + 60_000
+            pausedUntil = clock() + RETRY_AFTER_MS
             return fallback(text, game)
         } catch (error: JSONException) {
             report(OnlineKeyState.UNREACHABLE)
-            pausedUntil = clock() + 60_000
+            pausedUntil = clock() + RETRY_AFTER_MS
             return fallback(text, game)
         }
+        var local = false
         for ((i, index) in missing.withIndex()) {
+            val piece = pieces[index].text
+            if (retriesEcho && isEcho(piece, translated[i])) {
+                val retried = retryEcho(piece)
+                if (retried != null && !isEcho(piece, retried)) {
+                    // Yerel çeviri bu motorun önbelleğine yazılmaz.
+                    translations[index] = retried
+                    local = true
+                    continue
+                }
+            }
             translations[index] = translated[i]
-            cache.store(cacheKey(pieces[index].text, game), translated[i])
+            cache.store(cacheKey(piece, game), translated[i])
         }
         val result = pieces.indices.joinToString("") { translations[it] ?: pieces[it].text }
-        cache.store(cacheKey(text, game), result)
+        if (!local) cache.store(cacheKey(text, game), result)
         remember(text, result, game)
         return result
     }
+
+    /**
+     * Çevirmeden geri verilen cümle yerel motorla yeniden denensin mi (yalnız yapay zekâ; Windows ve iPhone'da da
+     * yalnız AiTranslator/AITranslationCore yapar).
+     */
+    protected open val retriesEcho: Boolean get() = false
+
+    /**
+     * Model cümleyi çevirmeden geri verdi mi (hattın "zaten hedef dilde" eşiğiyle aynı). Küçük yerel modeller İngilizce
+     * cümleyi sık sık olduğu gibi döndürüyor ("You think I'm on the run?"); hat bunu Türkçe sanıp hiç göstermiyor,
+     * önbellek de öyle saklıyordu (#245).
+     */
+    private fun isEcho(source: String, translation: String) =
+        TextMatch.isSimilar(TextMatch.normalize(source), TextMatch.normalize(translation), 0.90)
+
+    /**
+     * Geri verilen cümle cihaz üstü çeviriyle bir kez daha denenir; o da aynı kalırsa (ad, konsolun Türkçe menüsü)
+     * çevrilecek bir şey yoktur ve modelin yanıtı önbelleğe yazılır. Yerel çeviri yoksa ya da hata verirse null.
+     */
+    private fun retryEcho(text: String): String? =
+        try {
+            local?.translate(text)
+        } catch (error: InterruptedException) {
+            throw error
+        } catch (error: Exception) {
+            null
+        }
 
     private fun fallback(text: String, game: String?): String =
         (local ?: throw IOException("no local translator")).translate(text).also { remember(text, it, game) }
@@ -220,13 +283,28 @@ abstract class SentenceTranslator<C>(
     /** Toplu çeviride ("ekranı çevir") hizmet şu an dinleniyor mu (son hatadan sonra bir dakika denenmez). */
     protected fun paused(): Boolean = clock() < pausedUntil
 
+    /** Toplu çevirinin tek isteği kullanıcının tuşa basmasıyla gider: hak bitmiş olsa da gönderilir, ama sayılır. */
+    protected fun countRequest() {
+        budget?.take()
+    }
+
     /** Toplu çeviri hizmetten döndü: hata durumu temizlenir. */
     protected fun succeeded() = report(null)
 
-    /** Toplu çeviri hata verdi: hata bildirilir ve bir dakika hizmet denenmez. */
+    /** Toplu çeviri hata verdi: hata bildirilir ve bir dakika hizmet denenmez (dakikalık sınırda uyarısız, kısa). */
     protected fun failed(error: Exception) {
+        if (error is AiRateLimitedException) return rateLimited(error.limit)
         report((error as? OnlineException)?.state ?: OnlineKeyState.UNREACHABLE)
-        pausedUntil = clock() + 60_000
+        pausedUntil = clock() + RETRY_AFTER_MS
+    }
+
+    /**
+     * Dakikalık sınır: hizmetin önerdiği kadar (en az 1, en çok 20 saniye) beklenir, ana ekranda uyarı çıkmaz; hizmet
+     * daha düşük sınır bildirdiyse ona inilir.
+     */
+    private fun rateLimited(limit: AiRateLimit) {
+        limit.requestsPerMinute?.let { budget?.lower(it) }
+        pausedUntil = clock() + (limit.retryAfterMs ?: RATE_LIMIT_PAUSE_MS).coerceIn(1_000L, RATE_LIMIT_PAUSE_MS)
     }
 
     /** Hizmet yanıt vermeyen parçalar yerel motorla çevrilir; yerel motor yoksa hata yukarı çıkar. */
@@ -425,6 +503,7 @@ object AiRequest {
         // Düşünen modeller yanıtın başına <think>…</think> koyar; yalnız sonrası alınır.
         val thought = trimmed.lastIndexOf("</think>")
         if (thought >= 0) trimmed = trimmed.substring(thought + "</think>".length).trim()
+        trimmed = stripControlTokens(trimmed)
         if (trimmed.startsWith("```")) trimmed = trimmed.split('\n').drop(1).filter { !it.startsWith("```") }.joinToString("\n").trim()
         val start = trimmed.indexOf('[')
         val end = trimmed.lastIndexOf(']')
@@ -433,7 +512,7 @@ object AiRequest {
         val quoted = start >= 0 && trimmed.substring(start + 1).trimStart().let { it.startsWith('"') || it.startsWith(']') }
         if (quoted && end > start) {
             try {
-                val array = JSONArray(trimmed.substring(start, end + 1))
+                val array = JSONArray(withoutTrailingComma(trimmed.substring(start, end + 1)))
                 if ((0 until array.length()).all { array.opt(it) is String }) {
                     if (array.length() != count) throw OnlineException(OnlineKeyState.UNREACHABLE)
                     return (0 until array.length()).map { array.getString(it).trim() }
@@ -446,6 +525,18 @@ object AiRequest {
         if (count != 1) throw OnlineException(OnlineKeyState.UNREACHABLE)
         return listOf(trimmed.trim('"', '“', '”'))
     }
+
+    private val controlTokens = Regex("""</?s>|<\|[A-Za-z0-9_]{1,32}\|>|</?(?:start|end)_of_turn>|</?(?:eos|bos|pad)>""")
+    private val trailingComma = Regex(""",\s*]$""")
+
+    /**
+     * Yerel modellerin metne sızan bitiş/rol işaretleri (`</s>`, `<|im_end|>`, `<|eot_id|>`, `<end_of_turn>` …) ekranda
+     * görünmesin; yalnız bu kalıplar silinir, altyazıdaki başka yazılara dokunulmaz.
+     */
+    fun stripControlTokens(text: String): String = controlTokens.replace(text, "").trim()
+
+    /** `["Bir.", "İki.",]` gibi sondaki fazla virgül JSON'u bozmasın. */
+    fun withoutTrailingComma(text: String): String = trailingComma.replace(text, "]")
 
     /**
      * Tırnaksız dizi: bazı modeller JSON istense de `[Hareket etmemiz lazım.]` ya da `[Satır bir., Satır iki.]` döndürür.
@@ -486,6 +577,43 @@ object AiRequest {
         return parts
     }
 
+    /**
+     * 429 yalnız dakikalık sınırdan geldiyse onun ayrıntısı; gün sınırı, bakiye ya da tanınmayan 429 için null (bunlar
+     * QUOTA_EXCEEDED olarak kullanıcıya gösterilir). Gemini'nin hata gövdesinde error.details[] içinde
+     * google.rpc.QuotaFailure (violations[].quotaId, ör. "GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
+     * quotaValue "15") ve google.rpc.RetryInfo (retryDelay "37s") bulunur (Windows ve iPhone ile aynı).
+     */
+    fun rateLimit(status: Int, body: String): AiRateLimit? {
+        if (status != 429) return null
+        val details = try {
+            JSONObject(body).optJSONObject("error")?.optJSONArray("details")
+        } catch (error: JSONException) {
+            null
+        } ?: return null
+        val items = (0 until details.length()).mapNotNull { details.optJSONObject(it) }
+        val violations = items.flatMap { item ->
+            item.optJSONArray("violations")?.let { array -> (0 until array.length()).mapNotNull { array.optJSONObject(it) } }
+                ?: emptyList()
+        }
+        val ids = violations.mapNotNull { it.opt("quotaId") as? String }
+        // Günlük sınır doldu: dakikalık beklemeyle geçmez, kullanıcı bilmeli.
+        if (ids.any { "PerDay" in it } || ids.none { "PerMinute" in it }) return null
+        val retry = items.firstNotNullOfOrNull { it.opt("retryDelay") as? String }
+            ?.trimEnd('s')?.toDoubleOrNull()?.let { (it * 1000).toLong() }
+        // İstek sınırı (token sınırı değil).
+        val requests = violations.firstOrNull { (it.opt("quotaId") as? String)?.contains("Requests") == true }
+        val perMinute = when (val value = requests?.opt("quotaValue")) {
+            is String -> value.toIntOrNull()
+            is Number -> value.toInt()
+            else -> null
+        }?.takeIf { it > 0 }
+        return AiRateLimit(retry, perMinute)
+    }
+
+    /** Başarısız yanıtın hatası: dakikalık sınırsa [AiRateLimitedException], değilse [OnlineException]. */
+    fun error(status: Int, body: String): IOException =
+        rateLimit(status, body)?.let(::AiRateLimitedException) ?: OnlineException(failure(status, body))
+
     fun failure(status: Int, body: String): OnlineKeyState {
         val message = body.lowercase(Locale.ROOT)
         return when {
@@ -508,7 +636,11 @@ class AiTranslator(
     private val http: Http = Http.Default,
     cache: TranslationCache = TranslationCache(),
     private val playedGame: (() -> String?)? = null,
-) : SentenceTranslator<List<AiRequest.ContextLine>>(fallback, cache) {
+    clock: () -> Long = System::currentTimeMillis,
+    // Dakikalık istek hakkı; null ise modelin uygulama genelindeki ortak hakkı (Google sınırı proje ve model başına
+    // sayar; çeviri hattı yeniden kurulsa da hak sıfırlanmaz). Modelin sınırı yoksa hak da yoktur.
+    budget: RequestBudget? = null,
+) : SentenceTranslator<List<AiRequest.ContextLine>>(fallback, cache, clock, budget ?: RequestBudget.shared(provider, model)) {
     companion object {
         /** Kalıcı önbellek dosyasındaki motor adı (iPhone ile aynı: "gemini:<model>"). */
         fun engineId(provider: AiProvider, model: AiModel) = "${provider.id}:${model.id}"
@@ -520,6 +652,8 @@ class AiTranslator(
     }
 
     override val translatesTogether: Boolean get() = true
+
+    override val retriesEcho: Boolean get() = true
 
     /**
      * "Ekranı çevir": birbirinden bağımsız parçalar (menü satırı, görev yazısı...) tek istekte, aynı sırada çevrilir
@@ -535,10 +669,11 @@ class AiTranslator(
             if (stopped) break
             if (Thread.currentThread().isInterrupted) throw InterruptedException()
             val sentences = chunk.map { texts[it] }
+            countRequest()
             try {
                 val request = AiRequest.build(provider, key, model, sentences, emptyList(), AiRequest.SCREEN_OUTPUT_TOKENS, game)
                 val (status, body) = http.send("POST", request.url, request.headers, request.body, SCREEN_TIMEOUT_MS)
-                if (status !in 200..299) throw OnlineException(AiRequest.failure(status, body))
+                if (status !in 200..299) throw AiRequest.error(status, body)
                 val translated = AiRequest.translations(AiRequest.text(provider, body), sentences.size)
                 succeeded()
                 for ((index, translation) in chunk.zip(translated)) {
@@ -590,7 +725,7 @@ class AiTranslator(
     override fun request(sentences: List<String>, context: List<AiRequest.ContextLine>, game: String?): List<String> {
         val request = AiRequest.build(provider, key, model, sentences, context, game = game)
         val (status, body) = http.send("POST", request.url, request.headers, request.body, 5000)
-        if (status !in 200..299) throw OnlineException(AiRequest.failure(status, body))
+        if (status !in 200..299) throw AiRequest.error(status, body)
         return AiRequest.translations(AiRequest.text(provider, body), sentences.size)
     }
 }

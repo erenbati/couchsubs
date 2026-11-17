@@ -76,12 +76,26 @@ struct XboxLoginScreen: View {
             if model.xboxSignedIn && code == nil {
                 MobilePill(text: String(localized: "Signed in"), kind: .ok, dot: true)
             }
+            if code == nil && !working {
+                Text("Tap the button to get a code. The Microsoft sign-in page doesn't open inside the app: you enter the code at microsoft.com/link in your browser.")
+                    .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+            }
             if let code {
                 Tile {
-                    Text("Enter this code on the Microsoft page:").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                    Text(verbatim: code.userCode).font(Mobile.TypeScale.display).foregroundStyle(Mobile.Palette.accent)
-                        .textSelection(.enabled)
-                    Text(verbatim: code.verificationURI).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                    Text("Your code (tap to copy):").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                    Button { copy(code) } label: {
+                        Text(verbatim: code.userCode).font(Mobile.TypeScale.display).foregroundStyle(Mobile.Palette.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(Text("Copy the code"))
+                    Button { open(code) } label: {
+                        Text(verbatim: code.verificationURI.replacingOccurrences(of: "https://", with: ""))
+                            .font(Mobile.TypeScale.headline).foregroundStyle(Mobile.Palette.accent).underline()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(Text("Open the Microsoft page"))
+                    Text("1. The code is copied and microsoft.com/link is open in your browser. If it didn't open, tap the link above.\n2. Paste the code, sign in with the Microsoft account you use on your Xbox and allow access.\n3. Come back to CouchSubs; sign-in finishes on its own.")
+                        .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
                     if copied { Text("Code copied").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.success) }
                 }
                 if working {
@@ -103,9 +117,13 @@ struct XboxLoginScreen: View {
         .onDisappear { task?.cancel() }
     }
 
-    private func open(_ code: XboxDeviceCode) {
+    private func copy(_ code: XboxDeviceCode) {
         UIPasteboard.general.string = code.userCode
         copied = true
+    }
+
+    private func open(_ code: XboxDeviceCode) {
+        copy(code)
         if let url = URL(string: code.verificationURI) { UIApplication.shared.open(url) }
     }
 

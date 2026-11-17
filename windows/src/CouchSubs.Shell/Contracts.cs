@@ -175,7 +175,13 @@ public static class TranslationEngines
 /// oyun bu bilgisayardaki PS Remote Play'de ya da chiaki-ng'de oynanır, CouchSubs yalnız o pencereyi okur; PS5'e ikinci
 /// oturum açılmadığı için ikinci hesap gerekmez (Mac'teki FrameSource ile aynı). Eski ayar dosyaları PS5 ile açılır.
 /// </summary>
-public enum FrameSource { Ps5, RemotePlayWindow }
+public enum FrameSource { Ps5, RemotePlayWindow, CaptureWindow }
+
+/// <summary>
+/// Kullanıcının açıkça seçtiği OBS projektörü veya oyun penceresi. PID/handle saklanmaz (yeniden açılışta değişir);
+/// hem süreç adı hem pencere başlığı eşleşmelidir. Pencere bulunmazsa başka kaynağa geçilmez.
+/// </summary>
+public sealed record WindowCaptureTarget(string ProcessName, string Title);
 
 /// <summary>Pencereden okunurken hangi Remote Play uygulaması: hangisi açıksa, yalnız Sony'ninki ya da yalnız chiaki-ng.</summary>
 public enum RemotePlayApp { Automatic, Sony, Chiaki }
@@ -221,6 +227,10 @@ public sealed record UserSettings
     public string TargetLanguage { get; init; } = "tr";
     /// <summary>Eski ayar dosyalarında bulunmaz; varsayılan CPU'dur. GPU yalnız NVIDIA CUDA içindir.</summary>
     public TranslationDevice TranslationDevice { get; init; } = TranslationDevice.Cpu;
+    /// <summary>Windows CTranslate2 CPU iç işlemlerinin iş parçacığı sayısı; eski ayarlarda 2.</summary>
+    public int CpuTranslationThreads { get; init; } = CpuThreadOptions.Default;
+    /// <summary>Değişmeyen altyazı bölgesinde tam OCR okumasını en fazla iki kare yeniden kullan.</summary>
+    public bool FastSubtitleDetection { get; init; }
     public DubbingSettings Dubbing { get; init; } = new();
     /// <summary>
     /// Açıksa çeviri <see cref="OnlineEngine"/> ile yapılır (anahtarı kayıtlıysa); kapalıysa ya da hizmete ulaşılamazsa
@@ -257,8 +267,17 @@ public sealed record UserSettings
     public AppAppearance Appearance { get; init; } = AppAppearance.Dark;
     /// <summary>Görüntü PS5 bağlantısından mı, bu bilgisayardaki Remote Play penceresinden mi okunur.</summary>
     public FrameSource FrameSource { get; init; } = FrameSource.Ps5;
+    /// <summary>Xbox karelerini #244 öncesindeki 200 ms aralıkla al; varsayılan 66 ms.</summary>
+    public bool XboxLegacyFrameRate { get; init; }
+    /// <summary>OBS veya başka bir açık pencere seçildiyse yalnız bu pencere yakalanır (varsayılan null).</summary>
+    public WindowCaptureTarget? CaptureWindow { get; init; }
     /// <summary>Pencereden okunurken hangi Remote Play uygulaması (bkz. <see cref="Shell.RemotePlayApp"/>).</summary>
     public RemotePlayApp RemotePlayApp { get; init; } = RemotePlayApp.Automatic;
+    /// <summary>
+    /// Kullanıcının değiştirdiği kısayollar (yalnız varsayılandan farklı olanlar; bkz. <see cref="HotkeyTable.Assign"/>).
+    /// Eski ayar dosyalarında yoktur; o zaman bütün kısayollar varsayılandır.
+    /// </summary>
+    public IReadOnlyList<HotkeyChoice> Hotkeys { get; init; } = [];
 
     /// <summary>Ayarlarda seçili motor: çevrimiçi çeviri kapalıysa ücretsiz olan.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
@@ -364,7 +383,12 @@ public interface ISettingsStore
 /// <summary>Çeviri sürerken bilgisayarın boşta uykuya geçmesini engeller.</summary>
 public interface ISleepGuard
 {
-    void Begin();
+    /// <param name="keepDisplayOn">
+    /// Ekran da kapanmasın: görüntü bu bilgisayardaki bir pencereden okunuyor ya da altyazı bu ekranda gösteriliyor.
+    /// Ekran kapanınca pencere yakalama kare vermez; kullanıcı TV'de oynadığı için bilgisayar ekranı birkaç dakikada
+    /// (Windows ve macOS'ta prizdeyken çoğu zaman 10 dakika) kapanır ve altyazı kesilirdi. Çeviri sürerken yeniden çağrılabilir.
+    /// </param>
+    void Begin(bool keepDisplayOn);
     void End();
 }
 
@@ -389,7 +413,7 @@ public interface IXboxService
     Task<XboxLoginChallenge> BeginLoginAsync();
     Task<string> CompleteLoginAsync();
     Task<IReadOnlyList<XboxConsole>> DiscoverAsync(string token);
-    IStreamSession MakeStream(XboxConsole console, string token);
+    IStreamSession MakeStream(XboxConsole console, string token, bool legacyFrameRate);
 }
 
 /// <summary>Cihaz üstü çeviri modeli: kurulu mu, indir, çevirmen oluştur.</summary>
@@ -405,6 +429,7 @@ public interface ITranslationModel
 
     /// <summary>Yeni çevirmen oluşturulurken kullanılacak aygıt.</summary>
     void SelectDevice(TranslationDevice device) { }
+    void SelectCpuThreads(int threads) { }
 
     /// <summary>Model kurulu ama çeviri motoru bu bilgisayarda açılamadı (ör. CTranslate2 çalışma zamanı eksik).</summary>
     bool EngineFailed => false;
@@ -427,6 +452,10 @@ public interface IAppServices
     IStreamSession MakeStream(RegisteredConsole console, byte[] accountId, string? loginPasscode);
     /// <summary>Görüntüyü bu bilgisayardaki Remote Play penceresinden (PS Remote Play ya da chiaki-ng) alan kaynak.</summary>
     IStreamSession MakeWindowStream(RemotePlayApp app) => throw new NotSupportedException();
+    /// <summary>Açıkça seçilen pencereyi okumak için aynı Windows Graphics Capture hattını kullanır.</summary>
+    IStreamSession MakeCaptureWindowStream(WindowCaptureTarget target) => throw new NotSupportedException();
+    /// <summary>Kullanıcının seçebileceği görünür pencereler. PSN veya ekran paylaşım izni gerekmez.</summary>
+    IReadOnlyList<WindowCaptureTarget> CaptureWindows() => [];
     /// <summary>Seçilen Remote Play uygulaması (PS Remote Play ya da chiaki-ng) bu bilgisayarda kurulu mu.</summary>
     bool RemotePlayInstalled(RemotePlayApp app) => true;
     /// <param name="appConnected">TV uygulaması bilgisayara bağlı mı (Samsung'da bağlıyken TV'ye dokunulmaz).</param>
@@ -463,12 +492,15 @@ public interface IAppServices
     /// <summary>DeepL çevirmeni; <paramref name="fallback"/> DeepL'e ulaşılamayan satırları çevirir. Bu derlemede yoksa null.</summary>
     ITextTranslator? MakeOnlineTranslator(string key, ITextTranslator? fallback) => null;
     Task<OnlineKeyCheck> CheckOnlineKeyAsync(string key) => Task.FromResult(new OnlineKeyCheck(OnlineKeyState.Unreachable));
-    /// <summary>Yapay zekâ çevirmeni; <paramref name="fallback"/> hizmete ulaşılamayan satırları çevirir. Bu derlemede yoksa null.</summary>
-    ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback) => null;
+    /// <summary>
+    /// Yapay zekâ çevirmeni; <paramref name="fallback"/> hizmete ulaşılamayan satırları çevirir, <paramref name="game"/>
+    /// oynanan oyunun adını verir (istem ve önbellek anahtarı; bilinmiyorsa null). Bu derlemede yoksa null.
+    /// </summary>
+    ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback, Func<string?>? game) => null;
     /// <summary>Yapay zekâ anahtarını örnek bir satırı çevirerek dener.</summary>
     Task<AiTestResult> TestAiKeyAsync(AiProvider provider, string key, string model) => Task.FromResult(new AiTestResult(OnlineKeyState.Unreachable));
     /// <summary>Yerel model (Ollama, LM Studio) çevirmeni; anahtar boş olabilir. Bu derlemede yoksa null.</summary>
-    ITextTranslator? MakeLocalAiTranslator(LocalAiServer server, string key, ITextTranslator? fallback) => null;
+    ITextTranslator? MakeLocalAiTranslator(LocalAiServer server, string key, ITextTranslator? fallback, Func<string?>? game) => null;
     /// <summary>Yerel model sunucusunu örnek bir satırı çevirerek dener ("Bağlantıyı dene").</summary>
     Task<AiTestResult> TestLocalAiAsync(LocalAiServer server, string key) => Task.FromResult(new AiTestResult(OnlineKeyState.Unreachable));
     /// <summary>Türkçe dublaj modeli; bu derlemede yoksa null.</summary>

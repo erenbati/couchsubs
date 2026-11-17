@@ -2,6 +2,7 @@
 package com.couchsubs.mobile.core
 
 import com.couchsubs.mobile.remoteplay.DisconnectKind
+import com.couchsubs.mobile.remoteplay.SessionState
 import com.couchsubs.mobile.service.LiveStatus
 import com.couchsubs.mobile.settings.AppSettings
 import com.couchsubs.mobile.translation.GameEnglish
@@ -62,6 +63,14 @@ class ParityTest {
         for (text in listOf("Gtt solkolfege.", "- CESAREiVJütt'h!", "Wrrk thng.")) assertTrue(text, OcrNoise.looksGarbled(text))
         for (text in listOf("Hold the gate.", "The FBI and the NPC agents.", "Hmm, I don't know about that, boy.", "Go to college."))
             assertFalse(text, OcrNoise.looksGarbled(text))
+    }
+
+    @Test
+    fun finalMisreadPronounKeepsQuestionAndExclamationMarks() {
+        assertEquals("Who am I?", OcrNoise.clean("Who am l?"))
+        assertEquals("Where are you, I?", OcrNoise.clean("Where are you, |?"))
+        assertEquals("I don't know, I!", OcrNoise.clean("I don't know, l!"))
+        assertEquals("Leave it.", OcrNoise.clean("Leave it. l."))
     }
 
     @Test
@@ -185,17 +194,19 @@ class ParityTest {
     @Test
     fun sessionRequestLogLinesAreClassified() {
         assertEquals(DisconnectKind.REGISTRATION_INVALID,
-            DisconnectKind.sessionRequestHint("Reported Application Reason: 0x80108b09 (Regist failed, probably invalid PIN)"))
-        assertEquals(DisconnectKind.REGISTRATION_INVALID, DisconnectKind.sessionRequestHint("Reported Application Reason: 0x80108B02 (Invalid PSN ID)"))
-        assertNull(DisconnectKind.sessionRequestHint("Reported Application Reason: 0x80108b33 (unknown)"))
+            DisconnectKind.sessionRequestHint("Reported Application Reason: 0x80108b09 (Regist failed, probably invalid PIN)")?.kind)
+        assertEquals(DisconnectKind.REGISTRATION_INVALID, DisconnectKind.sessionRequestHint("Reported Application Reason: 0x80108B02 (Invalid PSN ID)")?.kind)
+        // PS5 kayıt dışı bir kodla reddetti: kod ayrıntıda (GitHub #33, #202).
+        assertEquals(SessionState.Disconnected(DisconnectKind.REJECTED, "0x80108bff"),
+            DisconnectKind.sessionRequestHint("Reported Application Reason: 0x80108bff (unknown)"))
         assertNull(DisconnectKind.sessionRequestHint("Reported Application Reason: garbage"))
-        assertEquals(DisconnectKind.NETWORK, DisconnectKind.sessionRequestHint("Session request connect failed eventually."))
-        assertEquals(DisconnectKind.NETWORK, DisconnectKind.sessionRequestHint("Failed to receive session request response"))
-        assertEquals(DisconnectKind.NETWORK, DisconnectKind.sessionRequestHint("Failed to send session request"))
+        assertEquals(DisconnectKind.NETWORK, DisconnectKind.sessionRequestHint("Session request connect failed eventually.")?.kind)
+        assertEquals(DisconnectKind.NETWORK, DisconnectKind.sessionRequestHint("Failed to receive session request response")?.kind)
+        assertEquals(DisconnectKind.NETWORK, DisconnectKind.sessionRequestHint("Failed to send session request")?.kind)
         assertNull(DisconnectKind.sessionRequestHint("Session request successful"))
         assertNull(DisconnectKind.sessionRequestHint("Failed to parse session request response"))
         assertEquals(DisconnectKind.REGISTRATION_INVALID, DisconnectKind.sessionRequestHint(listOf("Failed to send session request",
-            "Reported Application Reason: 0x80108b09 (Regist failed)")))
+            "Reported Application Reason: 0x80108b09 (Regist failed)"))?.kind)
     }
 
     @Test
@@ -204,6 +215,9 @@ class ParityTest {
         assertEquals(55, AppSettings.scaledFontSize(46, 120))
         assertEquals(74, AppSettings.scaledFontSize(46, 160))
         assertEquals(37, AppSettings.scaledFontSize(46, 80))
+        // #218: TV'de en küçük boy masaüstüne yakın (Mac 20, Windows 16); daha azı alt sınıra çekilir.
+        assertEquals(18, AppSettings.scaledFontSize(46, 40))
+        assertEquals(18, AppSettings.scaledFontSize(46, 10))
     }
 
     @Test

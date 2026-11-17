@@ -19,6 +19,65 @@ class GameSenseTest {
         assertEquals("", GameName.key(""))
     }
 
+    /** Yapay zekâya giden ad kararlı oyundur: tek bir yabancı satır değiştirmez, 20 satırın 5'i değiştirir (#27). */
+    @Test
+    fun oneStrayLineDoesNotChangeTheGame() {
+        val sense = GameSense()
+        repeat(5) { sense.noteLine("gta-v", "Grand Theft Auto V") }
+        assertEquals("Grand Theft Auto V", sense.current?.name)
+        assertFalse(sense.noteLine("rdr-2", "Red Dead Redemption 2"))
+        assertEquals("Grand Theft Auto V", sense.current?.name)
+        repeat(3) { assertFalse(sense.noteLine("rdr-2", "Red Dead Redemption 2")) }
+        assertEquals("Grand Theft Auto V", sense.current?.name)
+        assertTrue(sense.noteLine("rdr-2", "Red Dead Redemption 2"))
+        assertEquals("Red Dead Redemption 2", sense.current?.name)
+    }
+
+    /** Paketle tanınmayan oyunda ad gitmez; kullanıcı seçtiyse onun seçtiği, PS5 bildirdiyse PS5'in bildirdiği gider. */
+    @Test
+    fun withoutAStableGameTheChosenNameOrNothingIsSent() {
+        val sense = GameSense()
+        repeat(4) { sense.noteLine("rdr-2", "Red Dead Redemption 2") }
+        assertNull(sense.current)
+        sense.choose("Grand Theft Auto V")
+        assertEquals("Grand Theft Auto V", sense.current?.name)
+        sense.setConsole(RunningGame(null, "Mafia: The Old Country"))
+        assertEquals("Mafia: The Old Country", sense.current?.name)
+    }
+
+    /**
+     * Elle seçilen oyun paket çoğunluğunun önüne geçer, PS5'in bildirdiğinin önüne geçmez; paket araması yalnız elle seçim
+     * geçerliyken o oyunla sınırlanır (#218).
+     */
+    @Test
+    fun chosenGameBeatsThePackButNotTheConsole() {
+        val sense = GameSense()
+        sense.choose("Marvel's Wolverine")
+        repeat(5) { sense.noteLine("rdr-2", "Red Dead Redemption 2") }
+        assertEquals("Marvel's Wolverine", sense.current?.name)
+        assertEquals(GameSense.Source.USER, sense.source)
+        assertEquals("Marvel's Wolverine", sense.packLimit)
+        sense.setConsole(RunningGame(null, "Mafia: The Old Country"))
+        assertEquals("Mafia: The Old Country", sense.current?.name)
+        assertEquals(GameSense.Source.CONSOLE, sense.source)
+        assertNull(sense.packLimit)
+        // PS5 başka oyun bildirdiyse elle seçim eskidi: PS5 bildirmeyi bırakınca eski seçim geri gelmez (paketten tanınan gelir), arama sınırlanmaz.
+        sense.setConsole(null)
+        assertEquals("Red Dead Redemption 2", sense.current?.name)
+        assertNull(sense.packLimit)
+    }
+
+    /** PS5 elle seçilen oyunu bildirirse (adı aynı) seçim kalır. */
+    @Test
+    fun sameGameFromTheConsoleKeepsTheChoice() {
+        val sense = GameSense()
+        sense.choose("GTA 5")
+        sense.setConsole(RunningGame(null, "Grand Theft Auto V"))
+        sense.setConsole(null)
+        assertEquals("GTA 5", sense.current?.name)
+        assertEquals("GTA 5", sense.packLimit)
+    }
+
     @Test
     fun fiveOfTwentyLinesFromOnePackRecogniseTheGame() {
         val sense = GameSense()

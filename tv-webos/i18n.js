@@ -29,12 +29,21 @@
       keys: 'Tamam: bu panel · ◀▶: HDMI girişi (panel açıkken) · 1–4: HDMI girişi · 0: konsolu otomatik bul · ▲▼: altyazıyı yukarı/aşağı taşı · Kırmızı: test altyazısı · Mavi: demo · Yeşil: bu panel',
       localTest: 'Test: bu yazı oyunun üstünde görünüyor mu?',
       positionPreview: 'Altyazı burada görünecek',
+      waitingAddress: 'Bu TV\'nin adresi: %1',
+      waitingSearching: 'Ağda CouchSubs aranıyor…',
       demoButton: 'Demoyu izle',
       demoBadge: 'DEMO',
       demoHint: 'Örnek: oyunun İngilizce altyazısı Türkçe olarak burada görünür. Çıkmak için Geri.',
       sourceSwitchTitle: 'TV kendiliğinden HDMI\'ya geçti.',
       sourceSwitchHint: 'Ayarlar › Tüm Ayarlar › Bağlantı › Harici Cihaz Yöneticisi\'nde Anynet+ (HDMI-CEC) ve Otomatik Kaynak Değiştirme\'yi kapatın.',
-      sourceSwitchClose: 'Kapatmak için Tamam ya da Geri.'
+      sourceSwitchClose: 'Kapatmak için Tamam ya da Geri.',
+      noPictureTitle: 'TV\'nin HDMI görüntüsü alınamadı',
+      noPicture: 'HDMI %1 girişinden görüntü gelmiyor.',
+      noPictureError: 'HDMI %1 girişi bu uygulamada açılamadı.',
+      noPictureChoose: 'PS5 başka girişe bağlıysa aşağıdan seçin (◀▶ ve Tamam, ya da 1–4 sayı tuşları).',
+      noPictureStillBlack: 'Doğru girişte de siyah mı? PS5\'te HDR açıksa kapatın (Ayarlar › Ekran ve Video › Video Çıkışı › HDR: Kapalı): Uzaktan Oynatma açıkken HDR görüntü kararabiliyor. Olmazsa bu TV HDMI görüntüsünü uygulamalara vermiyor ya da HDCP engelliyordur: PS5\'te Ayarlar › Sistem › HDMI › HDCP\'yi Etkinleştir\'i kapatmayı deneyin. Olmazsa CouchSubs\'tan çıkın, TV\'yi kumandadan PS5\'in HDMI girişine alın ve altyazıyı telefon ya da bilgisayar ekranından izleyin.',
+      noPictureExit: 'Çık, TV girişine dön',
+      noPictureClose: 'Kapat'
     },
     en: {
       waiting: 'Open CouchSubs on your phone (or computer) and start translating.',
@@ -60,12 +69,21 @@
       keys: 'OK: this panel · ◀▶: HDMI input (panel open) · 1–4: HDMI input · 0: find console automatically · ▲▼: move subtitles up/down · Red: test subtitle · Blue: demo · Green: this panel',
       localTest: 'Test: is this text shown on top of the game?',
       positionPreview: 'Subtitles will appear here',
+      waitingAddress: 'This TV\'s address: %1',
+      waitingSearching: 'Looking for CouchSubs on the network…',
       demoButton: 'Watch the demo',
       demoBadge: 'DEMO',
       demoHint: 'Example: the game\'s English subtitles appear here in Turkish. Press Back to exit.',
       sourceSwitchTitle: 'The TV switched to HDMI by itself.',
       sourceSwitchHint: 'Turn off Anynet+ (HDMI-CEC) and Auto Source Switching in Settings › All Settings › Connection › External Device Manager.',
-      sourceSwitchClose: 'Press OK or Back to close.'
+      sourceSwitchClose: 'Press OK or Back to close.',
+      noPictureTitle: 'No HDMI picture from the TV',
+      noPicture: 'No picture from HDMI %1.',
+      noPictureError: 'HDMI %1 could not be opened in this app.',
+      noPictureChoose: 'If the PS5 is on another input, choose it below (◀▶ and OK, or number keys 1–4).',
+      noPictureStillBlack: 'Still black on the right input? If HDR is on, turn it off on the PS5 (Settings › Screen and Video › Video Output › HDR: Off): with Remote Play active an HDR picture can turn dark. Otherwise this TV may not hand its HDMI picture to apps, or HDCP blocks it: try turning off Settings › System › HDMI › Enable HDCP on the PS5. Otherwise exit CouchSubs, switch the TV to the PS5\'s HDMI input with the remote and read the subtitles on your phone or computer.',
+      noPictureExit: 'Exit to the TV input',
+      noPictureClose: 'Close'
     }
   };
 

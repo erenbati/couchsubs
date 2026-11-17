@@ -18,10 +18,13 @@ public enum OcrNoise {
         for (index, token) in tokens.enumerated() {
             let (lead, core, trail) = split(token)
             // Tek başına "l" ya da "|" çoğu zaman yanlış okunmuş "I"dır ("l don't know", "|'ll go"); ardından küçük
-            // harfle süren sözcük gelmiyorsa altyazı kutusunun kenarıdır ("| Get in the car."), atılır.
+            // harfle başlayan sözcük yoksa ve token ?/! ile bitmiyorsa altyazı kutusunun kenarı olabilir.
             if let pronoun = misreadI(core) {
                 let next = index + 1 < tokens.count ? tokens[index + 1].first(where: \.isLetter) : nil
-                if pronoun != "I" || next?.isLowercase == true { kept.append(lead + pronoun + trail) }
+                let endsQuestionOrExclamation = trail.contains(where: { "?!".contains($0) })
+                if pronoun != "I" || next?.isLowercase == true || endsQuestionOrExclamation {
+                    kept.append(lead + pronoun + trail)
+                }
                 continue
             }
             // Yalnız "?!", ".", "," gibi işaretlerden oluşan parça: satır başında ya da cümle bittikten sonra yazı

@@ -56,6 +56,65 @@ class ScreenTranslationTest {
         assertEquals(2, groups.size)
     }
 
+    @Test fun fullWidthHeadingDoesNotAbsorbOneOfTwoColumns() {
+        for (reversed in listOf(false, true)) {
+            val lines = listOf(line("Available missions", 0.05, 0.10, 0.95),
+                line("Find the blacksmith in", 0.05, 0.14, 0.43), line("Bring the medicine to", 0.57, 0.14, 0.95),
+                line("the village square.", 0.05, 0.18, 0.40), line("the northern camp.", 0.57, 0.18, 0.92))
+            val groups = ScreenTranslation.groups(Reading(if (reversed) lines.reversed() else lines))
+            assertEquals(3, groups.size)
+            assertTrue(groups.any { it.paragraphs == listOf("Available missions") && kotlin.math.abs(it.box.bottom - 0.13) < 1e-6 })
+            assertTrue(groups.any { it.paragraphs == listOf("Find the blacksmith in the village square.") && it.box.right < 0.5 })
+            assertTrue(groups.any { it.paragraphs == listOf("Bring the medicine to the northern camp.") && it.box.left > 0.5 })
+        }
+    }
+
+    @Test fun fullWidthFooterDoesNotJoinEitherColumn() {
+        for (reversed in listOf(false, true)) {
+            val lines = listOf(line("Find the blacksmith in", 0.05, 0.14, 0.43), line("Bring the medicine to", 0.57, 0.14, 0.95),
+                line("the village square.", 0.05, 0.18, 0.40), line("the northern camp.", 0.57, 0.18, 0.92),
+                line("Choose a destination", 0.05, 0.22, 0.95))
+            val groups = ScreenTranslation.groups(Reading(if (reversed) lines.reversed() else lines))
+            assertEquals(3, groups.size)
+            assertTrue(groups.any { it.paragraphs == listOf("Choose a destination") && kotlin.math.abs(it.box.top - 0.22) < 1e-6 })
+            assertTrue(groups.any { it.paragraphs == listOf("Find the blacksmith in the village square.") })
+            assertTrue(groups.any { it.paragraphs == listOf("Bring the medicine to the northern camp.") })
+        }
+    }
+
+    @Test fun wrappedParagraphKeepsNarrowOrIndentedContinuation() {
+        for ((left, right) in listOf(0.05 to 0.4, 0.30 to 0.70, 0.60 to 0.95)) {
+            val groups = ScreenTranslation.groups(Reading(listOf(line("Find the blacksmith in", 0.05, 0.10, 0.95),
+                line("the village square.", left, 0.14, right))))
+            assertEquals(listOf(listOf("Find the blacksmith in the village square.")), groups.map { it.paragraphs })
+        }
+    }
+
+    @Test fun nearbyUnrelatedColumnDoesNotDetachTheLocalHeading() {
+        val groups = ScreenTranslation.groups(Reading(listOf(line("Current objective", 0.05, 0.10, 0.43),
+            line("Find the blacksmith in", 0.05, 0.14, 0.43), line("Bring the medicine to", 0.57, 0.14, 0.95),
+            line("the village square.", 0.05, 0.18, 0.40), line("the northern camp.", 0.57, 0.18, 0.92))))
+        assertEquals(2, groups.size)
+        assertTrue(groups.any { it.paragraphs == listOf("Current objective", "Find the blacksmith in the village square.") })
+    }
+
+    @Test fun filteredControllerPromptDoesNotCreateAColumnBoundary() {
+        val groups = ScreenTranslation.groups(Reading(listOf(line("Find the blacksmith in", 0.05, 0.10, 0.95),
+            line("the village square.", 0.05, 0.14, 0.43), line("R2 Swing", 0.57, 0.14, 0.95))))
+        assertEquals(listOf(listOf("Find the blacksmith in the village square.")), groups.map { it.paragraphs })
+    }
+
+    @Test fun separatingTheHeadingKeepsTranslationInputsAndText() {
+        val requested = mutableListOf<String>()
+        val items = ScreenTranslation.translateGroups(Reading(listOf(line("Available missions", 0.05, 0.10, 0.95),
+            line("Find the blacksmith in", 0.05, 0.14, 0.43), line("Bring the medicine to", 0.57, 0.14, 0.95),
+            line("the village square.", 0.05, 0.18, 0.40), line("the northern camp.", 0.57, 0.18, 0.92))),
+            { requested.add(it); "Türkçe sonuç ${requested.size}" })
+        assertEquals(listOf("Available missions", "Find the blacksmith in the village square.", "Bring the medicine to the northern camp."), items.map { it.source })
+        assertEquals(items.map { it.source }, requested)
+        assertEquals(listOf("Türkçe sonuç 1", "Türkçe sonuç 2", "Türkçe sonuç 3"), items.map { it.translation })
+    }
+
     @Test
     fun numbersAndPromptsAreNotTranslated() {
         val groups = ScreenTranslation.groups(Reading(listOf(

@@ -193,6 +193,7 @@ public static class AiRequest
         // Düşünen yerel modeller (ör. Qwen3, DeepSeek-R1) yanıtın başına <think>…</think> koyar; yalnız sonrası alınır.
         var thought = trimmed.LastIndexOf("</think>", StringComparison.Ordinal);
         if (thought >= 0) trimmed = trimmed[(thought + "</think>".Length)..].Trim();
+        trimmed = StripControlTokens(trimmed);
         // ```json … ``` çitini at.
         if (trimmed.StartsWith("```", StringComparison.Ordinal))
             trimmed = string.Join("\n", trimmed.Split('\n').Skip(1).Where(l => !l.StartsWith("```", StringComparison.Ordinal))).Trim();
@@ -201,7 +202,7 @@ public static class AiRequest
         {
             try
             {
-                if (JsonNode.Parse(trimmed[start..(end + 1)]) is JsonArray array && array.All(n => n?.GetValueKind() == JsonValueKind.String))
+                if (JsonNode.Parse(WithoutTrailingComma(trimmed[start..(end + 1)])) is JsonArray array && array.All(n => n?.GetValueKind() == JsonValueKind.String))
                 {
                     if (array.Count != count) throw new AiException(OnlineKeyState.Unreachable);
                     return [.. array.Select(n => n!.GetValue<string>().Trim())];
@@ -213,6 +214,18 @@ public static class AiRequest
         if (count != 1) throw new AiException(OnlineKeyState.Unreachable);
         return [trimmed.Trim('"', '“', '”')];
     }
+
+    /// <summary>
+    /// Yerel modellerin metne sızan bitiş/rol işaretleri (<c>&lt;/s&gt;</c>, <c>&lt;|im_end|&gt;</c>, <c>&lt;|eot_id|&gt;</c>,
+    /// <c>&lt;end_of_turn&gt;</c> …) ekranda görünmesin; yalnız bu kalıplar silinir, altyazıdaki başka yazılara dokunulmaz.
+    /// </summary>
+    internal static string StripControlTokens(string text) =>
+        System.Text.RegularExpressions.Regex.Replace(text,
+            @"</?s>|<\|[A-Za-z0-9_]{1,32}\|>|</?(?:start|end)_of_turn>|</?(?:eos|bos|pad)>", "").Trim();
+
+    /// <summary><c>["Bir.", "İki.",]</c> gibi sondaki fazla virgül JSON'u bozmasın.</summary>
+    internal static string WithoutTrailingComma(string text) =>
+        System.Text.RegularExpressions.Regex.Replace(text, @",\s*\]$", "]");
 
     /// <summary>
     /// Tırnaksız dizi: bazı yerel modeller JSON istense de <c>[Hareket etmemiz lazım.]</c> ya da
@@ -447,7 +460,6 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
         // Bağlam, bu satırdan önce gösterilenlerdir; satırın kendisi bağlama girmez.
         var context = ContextBeforeShowing(text, game);
         if (_cache.TryGet(CacheKey(text, game), out var cached)) return Remember(cached, text, game);
-        if (DateTimeOffset.UtcNow < _pausedUntil) return Remember(await FallbackAsync(text, cancellationToken).ConfigureAwait(false), text, game);
 
         var pieces = SubtitleSegmenter.Split(text);
         foreach (var name in pieces.Select(SubtitleSegmenter.LabelName).OfType<string>())
@@ -458,6 +470,9 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
         var translations = pieces.Select(p => p.Translate && _cache.TryGet(CacheKey(p.Text, game), out var known) ? known : null).ToList();
         var missing = Enumerable.Range(0, pieces.Count).Where(i => pieces[i].Translate && translations[i] is null).ToList();
         var sources = missing.Select(i => SubtitleSegmenter.NormalizeCase(pieces[i].Text, names)).ToList();
+        // Hizmetin beklemesi yalnız eksik çeviriler içindir; önbellekteki parçalar yerel motor istemez.
+        if (sources.Count > 0 && DateTimeOffset.UtcNow < _pausedUntil)
+            return Remember(await FallbackAsync(text, cancellationToken).ConfigureAwait(false), text, game);
         // Dakikalık hak bittiyse istek gönderilmez; satır sessizce yerel çeviriyle çevrilir (hata değildir).
         LastLineWasRateLimited = sources.Count > 0 && _budget is { } budget && !budget.TryTake();
         if (LastLineWasRateLimited) return Remember(await FallbackAsync(text, cancellationToken).ConfigureAwait(false), text, game);
@@ -466,7 +481,7 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
         try
         {
             translated = sources.Count == 0 ? [] : await RequestAsync(sources, context, game, cancellationToken).ConfigureAwait(false);
-            Report(null);
+            if (sources.Count > 0) Report(null);
         }
         catch (AiRateLimitedException limited) when (!cancellationToken.IsCancellationRequested)
         {
@@ -485,10 +500,20 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
             _pausedUntil = DateTimeOffset.UtcNow + RetryAfter;
             return Remember(await FallbackAsync(text, cancellationToken).ConfigureAwait(false), text, game);
         }
+        var local = false;
         for (var i = 0; i < missing.Count; i++)
         {
+            var piece = pieces[missing[i]].Text;
+            if (IsEcho(piece, translated[i]) && await RetryEchoAsync(piece, cancellationToken).ConfigureAwait(false) is { } retried
+                && !IsEcho(piece, retried))
+            {
+                // Yerel çeviri bu motorun önbelleğine yazılmaz.
+                translations[missing[i]] = retried;
+                local = true;
+                continue;
+            }
             translations[missing[i]] = translated[i];
-            _cache.Store(CacheKey(pieces[missing[i]].Text, game), translated[i]);
+            _cache.Store(CacheKey(piece, game), translated[i]);
         }
 
         var builder = new StringBuilder();
@@ -496,8 +521,27 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
         if (_speech.Count >= 512) _speech.Clear();
         _speech[CacheKey(text, game)] = SpeechScript.Lines(pieces, translations);
         var result = builder.ToString();
-        _cache.Store(CacheKey(text, game), result);
+        if (!local) _cache.Store(CacheKey(text, game), result);
         return Remember(result, text, game);
+    }
+
+    /// <summary>
+    /// Model cümleyi çevirmeden geri verdi mi (hattın "zaten hedef dilde" eşiğiyle aynı). Küçük yerel modeller İngilizce
+    /// cümleyi sık sık olduğu gibi döndürüyor ("You think I'm on the run?"); hat bunu Türkçe sanıp hiç göstermiyor,
+    /// önbellek de öyle saklıyordu (#245).
+    /// </summary>
+    internal static bool IsEcho(string source, string translation) =>
+        TextMatch.IsSimilar(TextMatch.Normalize(source), TextMatch.Normalize(translation), 0.90);
+
+    /// <summary>
+    /// Geri verilen cümle cihaz üstü çeviriyle bir kez daha denenir; o da aynı kalırsa (ad, konsolun Türkçe menüsü)
+    /// çevrilecek bir şey yoktur ve modelin yanıtı önbelleğe yazılır. Yerel çeviri yoksa ya da hata verirse null.
+    /// </summary>
+    private async Task<string?> RetryEchoAsync(string text, CancellationToken cancellationToken)
+    {
+        if (_fallback is null) return null;
+        try { return await _fallback.TranslateAsync(text, cancellationToken).ConfigureAwait(false); }
+        catch (Exception error) when (error is not OperationCanceledException) { return null; }
     }
 
     public bool TranslatesTogether => true;

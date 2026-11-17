@@ -97,14 +97,16 @@ public static class PackLookup
     }
 
     /// <summary>
-    /// Altyazı olmayan köşe yazısı satırı: "•" içerir ya da en çok dört sözcük, noktalama yok ve her sözcük büyük harfle
-    /// başlar ("San Andreas", "Mirror Park", "LOSNN"). Yalnız başka satırlar pakette bulunduysa atlanır.
+    /// Altyazı olmayan köşe yazısı satırı: en çok dört sözcük; "•" içerir ("First Person • zoom") ya da noktalama yok ve
+    /// her sözcük büyük harfle başlar ("San Andreas", "Mirror Park", "LOSNN"). Yalnız başka satırlar pakette bulunduysa
+    /// atlanır. Uzun satırdaki "•" OCR lekesidir ("…with a colieague• Not that…"): o satır altyazıdır; atlanınca iki
+    /// satırlık altyazının yalnız ikinci satırının Türkçesi ("Seninle.") gösteriliyordu (#245).
     /// </summary>
     internal static bool IsOverlay(string line)
     {
-        if (line.Contains('•')) return true;
         var words = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         if (words.Length == 0 || words.Length > 4) return false;
+        if (line.Contains('•')) return true;
         return words.All(word =>
         {
             var runes = word.EnumerateRunes().ToList();

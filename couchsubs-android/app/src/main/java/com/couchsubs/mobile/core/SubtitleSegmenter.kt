@@ -245,13 +245,15 @@ object PackLookup {
     }
 
     /**
-     * Altyazı olmayan köşe yazısı satırı: "•" içerir ya da en çok dört sözcük, noktalama yok ve her sözcük büyük harfle
-     * başlar ("San Andreas", "Mirror Park", "LOSNN"). Yalnız başka satırlar pakette bulunduysa atlanır.
+     * Altyazı olmayan köşe yazısı satırı: en çok dört sözcük; "•" içerir ("First Person • zoom") ya da noktalama yok ve
+     * her sözcük büyük harfle başlar ("San Andreas", "Mirror Park", "LOSNN"). Yalnız başka satırlar pakette bulunduysa
+     * atlanır. Uzun satırdaki "•" OCR lekesidir ("…with a colieague• Not that…"): o satır altyazıdır; atlanınca iki
+     * satırlık altyazının yalnız ikinci satırının Türkçesi ("Seninle.") gösteriliyordu (#245).
      */
     fun isOverlay(line: String): Boolean {
-        if (line.contains('•')) return true
         val words = PackFuzzy.words(line)
         if (words.isEmpty() || words.size > 4) return false
+        if (line.contains('•')) return true
         return words.all { word -> Character.isUpperCase(word[0]) && word.all { PackFuzzy.isLetter(it) || PackFuzzy.isDigit(it) } }
     }
 

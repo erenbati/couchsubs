@@ -67,6 +67,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 class TranslationService : Service() {
     companion object {
         private const val TAG = "CouchSubsService"
+        /** Değişmeyen bölgenin son okuması kaç kare yeniden kullanılır (Mac/iPhone/Windows ReadScheduler ile aynı). */
+        private const val DEFAULT_MAX_REUSE = 20
+        private const val FAST_MAX_REUSE = 2
         private const val CHANNEL = "translation"
         private const val NOTIFICATION_ID = 1
         private const val ACTION_STOP = "com.couchsubs.mobile.STOP"
@@ -126,6 +129,7 @@ class TranslationService : Service() {
     private var lastSignature = 0L
     private var lastReading = com.couchsubs.mobile.core.Reading.Empty
     private var lastOcrMs: Int? = null
+    private var reusedReads = 0
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     /** Altyazı bölgesi ve ek alanlar (Ayarlar › Altyazı alanı); çeviri sürerken değişirse hemen yenisi okunur. */
@@ -294,6 +298,8 @@ class TranslationService : Service() {
         }
         reader = SubtitleReader()
         pipeline =SubtitlePipeline(translator, subtitleServer).apply {
+            // Yarım ya da bozuk okuma hemen çevrilmez; aynı satırın en iyi okuması çevrilir (Windows ve iPhone ile aynı).
+            holdReadings = true
             packLookup = { text -> if (packTitles != null && settings.packsEnabled) PackLookup.match(library, text) else null }
             showSpeakerNames = { settings.showSpeakerNames }
             onPackMissed = { text -> linePool.offer(text) }
@@ -356,10 +362,12 @@ class TranslationService : Service() {
             }
             LiveState.update { it.copy(phase = describe(state)) }
         }
-        // Oynanan oyun (PS5'in bildirdiği, paketten tanınan ya da kullanıcının seçtiği; bkz. PlayedGame): havuza giden
+        // Oynanan oyun (PS5'in bildirdiği, kullanıcının seçtiği ya da paketten tanınan; bkz. PlayedGame): havuza giden
         // satırlar bu oyunla gider. Klipte oyun aranmaz, sorulmaz.
         if (replacement == null) {
             PlayedGame.packTitles = { packTitles?.filterKeys { it != GameSense.GENERAL_PACK }?.values?.toList() ?: emptyList() }
+            // Elle seçilen oyunda satırlar yalnız o oyunun paketinde aranır, paketi yoksa hiç aranmaz (#218).
+            PlayedGame.packs = library
             PlayedGame.onChange = { game ->
                 linePool.setGame(game)
                 // Yeni oyun: o oyunun (havuzdan otomatik) paketi sunucuda yeni çıkmış olabilir; inerse bu oturumun
@@ -385,9 +393,14 @@ class TranslationService : Service() {
                     Log.w(TAG, "running game", error)
                 }
             }, GAME_PROBE_MS / 4, GAME_PROBE_MS, TimeUnit.MILLISECONDS)
+        } else {
+            // Klipte oyun seçimi geçmez: önceki oturumun seçimi paket aramasını sınırlamasın.
+            PlayedGame.packs = null
+            library.limitToGame(null)
         }
         val source = replacement?.create(this, onFrame, onState)
-            ?: xboxConsole?.let { XboxStreamSession(this, Services.xboxAuth, it, onFrame, onState, ::describeXbox) }
+            ?: xboxConsole?.let { XboxStreamSession(this, Services.xboxAuth, it, onFrame, onState, ::describeXbox,
+                playAudio = settings.xboxAudioOnDevice) }
             ?: StreamSession(console!!, accountId!!, onFrame, onState, onConsoleMoved = { moved -> settings.console = moved },
                 loginPasscode = settings.loginPasscode)
         synchronized(lifecycle) {
@@ -497,9 +510,11 @@ class TranslationService : Service() {
     private fun read(pixels: RegionPixels, area: CropRegion, capturedAt: Long) {
         try {
             // Bölge değişmediyse (aynı altyazı duruyor) yeniden okunmaz; son okuma hattı yine besler (kararlılık ve
-            // silme saate bağlıdır, Windows'taki ReadScheduler gibi).
+            // silme saate bağlıdır, Windows'taki ReadScheduler gibi). Aynı okuma en çok 20 kare (hızlı okumada 2) kullanılır.
             val current = pipeline ?: return
-            val reused = pixels.signature == lastSignature
+            val maxReuse = if (settings.fastSubtitleDetection) FAST_MAX_REUSE else DEFAULT_MAX_REUSE
+            val reused = pixels.signature == lastSignature && reusedReads < maxReuse
+            reusedReads = if (reused) reusedReads + 1 else 0
             val started = com.couchsubs.mobile.core.monotonicClock()
             val result = if (reused) lastReading else reader?.read(pixels) ?: return
             val ocrMs = if (reused) lastOcrMs else (com.couchsubs.mobile.core.monotonicClock() - started).toInt()
@@ -532,7 +547,8 @@ class TranslationService : Service() {
                 val models = aiModels()[provider.id].orEmpty()
                 val model = models.firstOrNull { it.id == settings.aiModel } ?: models.firstOrNull() ?: return null
                 AiTranslator(provider, key, model, free, cache = cache(AiTranslator.engineId(provider, model)),
-                    playedGame = { packs?.scopeTitle })
+                    // Kararlı oyun (GameSense.current), son eşleşen paket değil: tek satır adı başka oyuna geçirmez (#27).
+                    playedGame = { PlayedGame.sense.current?.name })
             }
         }
     }
@@ -568,6 +584,8 @@ class TranslationService : Service() {
             DisconnectKind.NOT_FOUND -> state.detail?.let { getString(R.string.phase_not_found_host, it) } ?: getString(R.string.phase_not_found)
             DisconnectKind.NETWORK -> getString(R.string.phase_network)
             DisconnectKind.REGISTRATION_INVALID -> getString(R.string.phase_registration_invalid)
+            // Eskiden "Bağlantı koptu, yeniden bağlanılıyor…" görünüyordu, neden anlaşılmıyordu (GitHub #33, #202).
+            DisconnectKind.REJECTED -> state.detail?.let { getString(R.string.phase_rejected_code, it) } ?: getString(R.string.phase_rejected)
             DisconnectKind.NO_PICTURE -> getString(R.string.phase_no_picture)
             DisconnectKind.CONSOLE_ASLEEP -> getString(R.string.phase_asleep)
             DisconnectKind.LOGIN_PASSCODE -> getString(R.string.phase_passcode)

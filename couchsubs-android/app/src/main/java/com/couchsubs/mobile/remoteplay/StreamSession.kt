@@ -25,6 +25,12 @@ enum class DisconnectKind {
      * (iki çözücü türüyle de). Sonsuz "Bağlantı koptu, yeniden bağlanılıyor" döngüsü yerine durulur.
      */
     NO_PICTURE,
+    /**
+     * PS5 oturum isteğini kayıt dışı bir nedenle reddetti ya da yanıtı okunamadı; libchiaki bunu yalnız "Unknown Session
+     * Request Error" diye verir (GitHub #33, #202). Ayrıntı: PS5'in "Reported Application Reason" kodu (ör. 0x80108bff;
+     * günlükte kod yoksa null).
+     */
+    REJECTED,
     OTHER;
 
     companion object {
@@ -36,24 +42,30 @@ enum class DisconnectKind {
             "Failed to receive session request response",
         )
 
+        /** libchiaki'nin CHIAKI_QUIT_REASON_SESSION_REQUEST_UNKNOWN metni. */
+        const val UNKNOWN_SESSION_REQUEST = "Unknown Session Request Error"
+
         /**
          * libchiaki oturum isteği (TCP 9295) düşünce yalnız "Unknown Session Request Error" der; asıl neden günlük
          * satırındadır. Satırdan anlaşılan neden; anlaşılmıyorsa null (Mac/iPhone: DisconnectReason.sessionRequestHint).
+         * PS5 kayıt dışı bir kodla reddettiyse [REJECTED], ayrıntıda kod.
          */
-        fun sessionRequestHint(line: String): DisconnectKind? {
+        fun sessionRequestHint(line: String): SessionState.Disconnected? {
             val marker = "Reported Application Reason:"
             val at = line.indexOf(marker)
             if (at >= 0) {
                 val token = line.substring(at + marker.length).trimStart(' ').takeWhile { !it.isWhitespace() }.lowercase()
                 val code = token.removePrefix("0x").toLongOrNull(16) ?: return null
-                return if (code in REGISTRATION_REJECTED_CODES) REGISTRATION_INVALID else null
+                return if (code in REGISTRATION_REJECTED_CODES) SessionState.Disconnected(REGISTRATION_INVALID)
+                    else SessionState.Disconnected(REJECTED, "0x%08x".format(code))
             }
             // PS5'e bağlanılamadı ya da yanıt gelmedi: PS5 dinlenmeden yeni uyandıysa ilk denemelerde olağandır.
-            return if (unreachableLines.any { line.contains(it) }) NETWORK else null
+            return if (unreachableLines.any { line.contains(it) }) SessionState.Disconnected(NETWORK) else null
         }
 
         /** Günlük satırlarından anlaşılan son neden (sonraki satır öncekinden daha yenidir). */
-        fun sessionRequestHint(lines: List<String>): DisconnectKind? = lines.mapNotNull(::sessionRequestHint).lastOrNull()
+        fun sessionRequestHint(lines: List<String>): SessionState.Disconnected? =
+            lines.mapNotNull(::sessionRequestHint).lastOrNull()
     }
 }
 
@@ -404,10 +416,16 @@ class StreamSession(
                 queue.execute {
                     if (nativeGeneration != eventGeneration || native == 0L) return@execute
                     // "Unknown Session Request Error": asıl neden libchiaki'nin hata satırlarındadır (iPhone ve Mac ile aynı).
-                    val kind = if (general == DisconnectKind.OTHER && text?.contains("Session Request", ignoreCase = true) == true)
-                        DisconnectKind.sessionRequestHint(NativeBridge.sessionErrors(native)?.split('\n').orEmpty()) ?: general
-                        else general
-                    Log.i(TAG, "Oturum kapandı: $kind $text")
+                    // Satırlarda neden yoksa PS5 oturumu başlatmamıştır: anlamsız İngilizce metin yerine REJECTED.
+                    val hint = if (general == DisconnectKind.OTHER && text?.contains("Session Request", ignoreCase = true) == true)
+                        DisconnectKind.sessionRequestHint(NativeBridge.sessionErrors(native)?.split('\n').orEmpty())
+                        else null
+                    val state = hint
+                        ?: if (general == DisconnectKind.OTHER && text == DisconnectKind.UNKNOWN_SESSION_REQUEST)
+                            SessionState.Disconnected(DisconnectKind.REJECTED)
+                        else SessionState.Disconnected(general, text)
+                    val kind = state.kind
+                    Log.i(TAG, "Oturum kapandı: $kind ${state.detail.orEmpty()} $text")
                     closeNative()
                     if (kind == DisconnectKind.REGISTRATION_INVALID) {
                         // Kayıt geçersiz: yeniden denemek aynı yere çıkar (eskiden sonsuza kadar "Yeniden bağlanılıyor…").
@@ -415,7 +433,7 @@ class StreamSession(
                         emit(SessionState.Disconnected(kind, text))
                         return@execute
                     }
-                    scheduleReconnect(eventGeneration, SessionState.Disconnected(kind, text))
+                    scheduleReconnect(eventGeneration, state)
                 }
             }
         }

@@ -32,9 +32,13 @@ test("İngilizce oyun satırları alınır", () => {
 function fakeDB() {
   const sightings = new Map(); // anahtar -> kurulumlar
   const lines = new Map();
-  const db = { writes: 0, lines, quota: 0, last: null };
+  const db = {
+    writes: 0, lines, quotas: new Map(), last: null, beforeQuotaRead: null,
+    batchCalls: 0, failNextBatch: false, failBatchOnCall: null,
+  };
+  const quotaKey = (install, day) => `${install}\u001f${day}`;
   const run = (sql, args) => {
-    if (sql.startsWith("SELECT count FROM quota")) return { count: db.quota };
+    if (sql.startsWith("SELECT count FROM quota")) return { count: db.quotas.get(quotaKey(args[0], args[1])) ?? 0 };
     if (sql.startsWith("SELECT")) {
       db.last = { sql, args };
       return { results: [] };
@@ -49,29 +53,54 @@ function fakeDB() {
       return { meta: { changes } };
     }
     if (sql.startsWith("INSERT INTO lines")) {
-      // Havuza yalnız en az iki kurulumun gördüğü satır girer (UPSERT'teki n>=2).
+      // Havuza yalnız iki kurulumdan sonra girer; sayı güncel distinct sightings'dir.
       const [k, text, , , title = null, game = null] = args;
       const n = sightings.get(k)?.size ?? 0;
       if (n < 2) return { meta: { changes: 0 } };
       const row = lines.get(k);
+      if (row && row.installs >= n) return { meta: { changes: 0 } };
       lines.set(k, row
-        ? { ...row, installs: row.installs + 1, title: row.title ?? title, game: row.game ?? game }
+        ? { ...row, installs: n, title: row.title ?? title, game: row.game ?? game }
         : { text, installs: n, title, game });
       return { meta: { changes: 1 } };
     }
     if (sql.startsWith("INSERT INTO quota")) {
-      db.quota += args[2];
+      const key = quotaKey(args[0], args[1]);
+      const delta = args[2];
+      const expected = args[3];
+      const used = db.quotas.get(key) ?? 0;
+      if (args.length === 4 && used !== expected) return { meta: { changes: 0 } };
+      db.quotas.set(key, used + delta);
+      return { meta: { changes: 1 } };
+    }
+    if (sql.startsWith("UPDATE quota")) {
+      const key = quotaKey(args[1], args[2]);
+      db.quotas.set(key, (db.quotas.get(key) ?? 0) - args[0]);
       return { meta: { changes: 1 } };
     }
     throw new Error(sql);
   };
   db.prepare = (sql) => ({
     bind: (...args) => ({
-      first: async () => run(sql, args), run: async () => run(sql, args), all: async () => run(sql, args), sql, args,
+      first: async () => {
+        if (sql.startsWith("SELECT count FROM quota")) {
+          const result = run(sql, args);
+          await db.beforeQuotaRead?.();
+          return result;
+        }
+        return run(sql, args);
+      },
+      run: async () => run(sql, args), all: async () => run(sql, args), sql, args,
     }),
   });
   // D1'de toplu yazma tek işlemdir: bir deyim hata verirse hiçbiri yazılmaz.
   db.batch = async (stmts) => {
+    db.batchCalls++;
+    if (db.failNextBatch || db.failBatchOnCall === db.batchCalls) {
+      db.failNextBatch = false;
+      db.failBatchOnCall = null;
+      throw new Error("injected batch failure");
+    }
     return stmts.map((s) => run(s.sql, s.args));
   };
   return db;
@@ -88,13 +117,13 @@ test("gönderim süzer; tek kurulumun satırı havuza yazılmaz, ikinci kurulumd
   const env = { DB };
   const reply = await post(env, install(1), ["Oturum Açtı", "Get down!", "Get down!", "Who is that over there?"]);
   assert.deepEqual(await reply.json(), { accepted: 2, recorded: 2 });
-  // Yalnız 2 görülme + 1 kota; havuza hiçbir şey yazılmaz (lines'a deneme yoktur, yazılan satır 0).
+  // İki görülme + iki koşullu UPSERT + bir kota rezervasyonu; ilk kurulumda lines'a kayıt girmez.
   assert.equal(DB.lines.size, 0);
 
   // Aynı kurulum aynı satırları yeniden gönderirse yalnız görülme denemesi ve kota yazılır.
   DB.writes = 0;
   await post(env, install(1), ["Get down!", "Who is that over there?"]);
-  assert.equal(DB.writes, 3);
+  assert.equal(DB.writes, 5); // 2 idempotent sightings + 2 idempotent conditional UPSERT + 1 quota
   assert.equal(DB.lines.size, 0);
 
   // İkinci kurulum: satır havuza installs=2 ile girer; yalnız onun okuduğu satır.
@@ -110,6 +139,59 @@ const postLines = (env, who, lines) => worker.fetch(new Request("https://pool.te
   method: "POST",
   body: JSON.stringify({ install: who, lines }),
 }), env);
+
+test("eşzamanlı gönderimler günlük kota sınırını aşamaz", async () => {
+  const DB = fakeDB();
+  const who = install(7);
+  const day = new Date().toISOString().slice(0, 10);
+  DB.quotas.set(`${who}\u001f${day}`, 4990);
+  let readers = 0;
+  let releaseReads;
+  const bothRead = new Promise((resolve) => { releaseReads = resolve; });
+  DB.beforeQuotaRead = async () => {
+    readers++;
+    if (readers === 2) releaseReads();
+    await bothRead;
+  };
+
+  const lines = Array.from({ length: 20 }, (_, i) => ({ text: `Keep moving ${i} now.` }));
+  const replies = await Promise.all([
+    postLines({ DB }, who, lines),
+    postLines({ DB }, who, lines),
+  ]);
+
+  assert.deepEqual(replies.map((reply) => reply.status).sort(), [200, 429]);
+  const accepted = replies.find((reply) => reply.status === 200);
+  assert.deepEqual(await accepted.json(), { accepted: 10, recorded: 10 });
+  assert.equal(DB.quotas.get(`${who}\u001f${day}`), 5000);
+  assert.equal(DB.lines.size, 0); // tek kurulumun gördüğü satırlar havuza girmez
+});
+
+test("ilk yazma toplu işlemi başarısızsa kota rezervasyonu geri alınır", async () => {
+  const DB = fakeDB();
+  const who = install(9);
+  const day = new Date().toISOString().slice(0, 10);
+  DB.quotas.set(`${who}\u001f${day}`, 12);
+  DB.failNextBatch = true;
+
+  const reply = await postLines({ DB }, who, [{ text: "Get down!" }]);
+  assert.equal(reply.status, 500);
+  assert.equal(DB.quotas.get(`${who}\u001f${day}`), 12);
+});
+
+test("atomik görülme ve satır batch'i başarısızsa kota rezervasyonu geri alınır", async () => {
+  const DB = fakeDB();
+  const who = install(4);
+  const day = new Date().toISOString().slice(0, 10);
+  DB.quotas.set(`${who}\u001f${day}`, 12);
+  // İki aşama yerine görülme ve satır yazımı tek D1 batch transaction'ıdır.
+  DB.failBatchOnCall = 1;
+
+  const reply = await postLines({ DB }, who, [{ text: "Get down!" }]);
+  assert.equal(reply.status, 500);
+  assert.equal(DB.batchCalls, 1);
+  assert.equal(DB.quotas.get(`${who}\u001f${day}`), 12);
+});
 
 test("oyun kimliği ve adı doğrulanır", () => {
   assert.equal(titleId("PPSA01234"), "PPSA01234");
@@ -170,7 +252,7 @@ test("dışa aktarma oyuna göre süzülür (yalnız yönetici)", async () => {
 });
 
 test("oyunu bilinmeyen satırlar ortak pakete sıralanır (oyunu bilinenlerden sonra)", async () => {
-  const stored = new Map();
+  const stored = new Map([["index.json", JSON.stringify({ packs: [] })]]);
   const env = {
     AI: {},
     PACKS: {
@@ -211,6 +293,19 @@ test("kimliksiz oyun adları anahtara göre birleşir; tek kurulumun adı ayrı 
   assert.equal(jobPackId(jobs[0]), "pool-gta-6");
 });
 
+test("uzun oyun adları sunucunun kabul ettiği paket kimliği sınırında kalır", () => {
+  const id = jobPackId({ titleId: null, gameKey: "x".repeat(80) });
+  assert.match(id, /^[a-z0-9][a-z0-9-]{0,63}$/);
+});
+
+test("uzun oyun adlarının paket kimlikleri son karakterde ayrışır", () => {
+  const first = jobPackId({ titleId: null, gameKey: "x".repeat(79) + "a" });
+  const second = jobPackId({ titleId: null, gameKey: "x".repeat(79) + "b" });
+  assert.notEqual(first, second);
+  assert.match(first, /^[a-z0-9][a-z0-9-]{0,63}$/);
+  assert.match(second, /^[a-z0-9][a-z0-9-]{0,63}$/);
+});
+
 test("kimliksiz oyun adı kurulum başına bir oy yazar", async () => {
   const DB = fakeDB();
   const votes = [];
@@ -228,4 +323,47 @@ test("kimliksiz oyun adı kurulum başına bir oy yazar", async () => {
     { text: "Who is that over there?", titleId: "PPSA12345", game: "Other" },
   ]);
   assert.deepEqual(votes, [["gta 6", install(1)]]);
+});
+
+test("export rejects negative and non-integer pagination before issuing SQL", async () => {
+  const DB = fakeDB();
+  const env = { DB, ADMIN_TOKEN: "t" };
+  const get = (params) => worker.fetch(new Request(`https://pool.test/v1/export?${params}`, {
+    headers: { authorization: "Bearer t" },
+  }), env);
+  for (const params of ["limit=-1", "limit=1.5", "limit=bogus", "min=bogus", "min=-5"]) {
+    DB.last = null;
+    const response = await get(params);
+    assert.equal(response.status, 400, params);
+    assert.equal(DB.last, null, `${params} must not execute a query`);
+  }
+  const valid = await get("limit=100000&min=3");
+  assert.equal(valid.status, 200);
+  assert.deepEqual(DB.last.args, [3, 20000]);
+});
+
+test("a failed line write does not silently lose its sighting on retry", async () => {
+  const DB = fakeDB();
+  const text = "Don't leave the engine running.";
+  const first = await postLines({ DB }, install(1), [{ text }]);
+  assert.equal(first.status, 200);
+  assert.equal(DB.lines.size, 0);
+
+  const original = DB.batch;
+  let failWhenWritingLine = true;
+  DB.batch = async (statements) => {
+    if (failWhenWritingLine && statements.some((s) => s.sql.startsWith("INSERT INTO lines"))) {
+      failWhenWritingLine = false;
+      // D1.batch rejects the entire transaction if a statement fails.
+      throw new Error("injected failure after sightings would otherwise commit");
+    }
+    return original(statements);
+  };
+  const failed = await postLines({ DB }, install(2), [{ text }]);
+  assert.equal(failed.status, 500);
+  assert.equal(DB.lines.size, 0);
+  const retry = await postLines({ DB }, install(2), [{ text }]);
+  assert.equal(retry.status, 200);
+  assert.equal(DB.lines.size, 1, "retry must still publish a line seen by two distinct installs");
+  assert.equal([...DB.lines.values()][0].installs, 2);
 });

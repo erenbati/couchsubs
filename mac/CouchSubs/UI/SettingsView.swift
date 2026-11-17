@@ -870,6 +870,10 @@ struct TranslationCard: View {
                 HintText(text: FreeGemini.limit)
             }
         }
+        Card(title: "Advanced") {
+            SwitchRow(title: "Check unchanged subtitle areas more often", isOn: $model.settings.fastSubtitleDetection)
+            HintText(text: "When the subtitle area looks unchanged, read it again after 2 frames instead of 20. Uses more CPU.")
+        }
     }
 
     private static func explanation(_ engine: TranslationEngine) -> LocalizedStringKey {

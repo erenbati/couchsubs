@@ -14,7 +14,7 @@ using Microsoft.Web.WebView2.Wpf;
 namespace CouchSubs.App.Services;
 
 /// <summary>Receives Xbox WebRTC video in an off-screen WebView2 and passes decoded frames to the normal OCR pipeline.</summary>
-internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, string token, Action<string> tokenUpdated) : IStreamSession
+internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, string token, Action<string> tokenUpdated, bool legacyFrameRate) : IStreamSession
 {
     // Oynatıcı sayfası yalnız WebRTC el sıkışma komutlarını çağırabilir; giriş ve token dönen komutlar ona kapalı.
     private static readonly HashSet<string> PlayerCommands = ["sdp", "chatSdp", "ice", "keepalive"];
@@ -37,26 +37,66 @@ internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, 
         _ = RunAsync();
     }
 
+    /// <summary>
+    /// Ardışık yeniden denemelerin bekleme süreleri. Konsol "oyun başka yerde açıldı" deyip yayını keserse eskiden her
+    /// 5 sn'de bir yeniden açılıyor, konsol uyarıyı yeniden veriyor ve oyun düşüyordu; üç denemeden sonra durulur.
+    /// </summary>
+    private static readonly int[] RetryDelaysMs = [5000, 15000, 45000];
+    /// <summary>Yayın bu kadar ayakta kaldıysa sonraki kopma yeni bir dizi deneme başlatır.</summary>
+    private const long HealthyStreamMs = 60_000;
+    private long streamingSince;
+    private string? endReason;
+
+    private static void Log(string line) => SubtitleLog.Write("[Xbox] " + line);
+
+    /// <summary>Oturum kimliğinin yalnız başı günlüğe yazılır.</summary>
+    private static string Mask(string? value) => string.IsNullOrEmpty(value) ? "?" : value.Length <= 8 ? value : value[..8] + "…";
+
+    /// <summary>Konsolun bildirdiği hata ayrıntısı; alan yoksa ya da tüm değerleri boşsa null.</summary>
+    private static string? ErrorDetails(JsonElement status)
+    {
+        if (!status.TryGetProperty("errorDetails", out var details)) return null;
+        return details.ValueKind switch
+        {
+            JsonValueKind.String => string.IsNullOrWhiteSpace(details.GetString()) ? null : details.GetString(),
+            JsonValueKind.Object when details.EnumerateObject().Any(p => p.Value.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined)
+                && !(p.Value.ValueKind == JsonValueKind.String && string.IsNullOrWhiteSpace(p.Value.GetString()))) => details.GetRawText(),
+            _ => null,
+        };
+    }
+
     private async Task RunAsync()
     {
+        Log($"konsol: id {console.Id}, ad {console.Name}, model {console.Model}");
+        var failures = 0;
         while (!cancel.IsCancellationRequested)
         {
+            string? reason = null;
+            var permanent = false;
             try
             {
                 StateChanged?.Invoke(SessionState.Connecting);
                 await bridge.RestoreAsync(currentToken);
                 var startedSession = await bridge.CallAsync("start", new { consoleId = console.Id });
                 RememberToken(startedSession);
+                Log($"play yanıtı: oturum {Mask(startedSession.TryGetProperty("sessionId", out var sid) ? sid.GetString() : null)}");
+                string? lastState = null;
                 for (var attempt = 0; attempt < 90 && !cancel.IsCancellationRequested; attempt++)
                 {
                     var status = await bridge.CallAsync("status");
                     RememberToken(status);
                     var state = status.TryGetProperty("state", out var value) ? value.GetString() : null;
+                    if (state != lastState) Log($"state: {lastState ?? "-"} → {state ?? "?"}");
+                    lastState = state;
+                    if (status.TryGetProperty("connected", out _)) Log("connect: başarılı");
+                    var details = ErrorDetails(status);
+                    if (details is not null) Log($"errorDetails: {details}");
                     if (state == "Provisioned") break;
-                    if (state == "Failed")
+                    if (state == "Failed" || details is not null)
                     {
-                        var reason = status.TryGetProperty("errorDetails", out var details) ? details.ToString() : Localizer.Current["Couldn't start the Xbox stream"];
-                        throw new InvalidOperationException(reason);
+                        // Konsol yayını kendisi reddetti: yeniden denemek konsolu yeniden tetikler.
+                        permanent = true;
+                        throw new InvalidOperationException(details ?? Localizer.Current["Couldn't start the Xbox stream"]);
                     }
                     if (attempt == 89) throw new TimeoutException(Localizer.Current["Timed out waiting for the Xbox stream to be ready."]);
                     await Task.Delay(1000, cancel.Token);
@@ -64,23 +104,37 @@ internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, 
                 if (cancel.IsCancellationRequested) break;
                 await OpenPlayerAsync();
                 if (browserEnded is not null) await browserEnded.Task.WaitAsync(cancel.Token);
-                if (!cancel.IsCancellationRequested) throw new IOException(Localizer.Current["The Xbox picture connection closed."]);
+                if (!cancel.IsCancellationRequested) throw new IOException(endReason ?? Localizer.Current["The Xbox picture connection closed."]);
             }
             catch (OperationCanceledException) when (cancel.IsCancellationRequested) { break; }
             catch (Exception error)
             {
-                StateChanged?.Invoke(SessionState.Disconnected(DisconnectKind.Other, error.Message));
+                reason = error.Message;
+                Log($"kopma: {reason}");
             }
             finally
             {
                 ClosePlayer();
                 try { await bridge.CallAsync("stop"); } catch { /* A lost connection has no session to stop. */ }
             }
-            if (!cancel.IsCancellationRequested)
+            if (cancel.IsCancellationRequested) break;
+            // Yayın en az bir dakika sürdüyse bu kopma yeni bir dizinin ilkidir.
+            var since = Interlocked.Exchange(ref streamingSince, 0);
+            if (since != 0 && Environment.TickCount64 - since >= HealthyStreamMs) failures = 0;
+            endReason = null;
+            failures++;
+            if (permanent || failures > RetryDelaysMs.Length)
             {
-                try { await Task.Delay(5000, cancel.Token); }
-                catch (OperationCanceledException) { break; }
+                Log(permanent ? "kalıcı hata: yeniden denenmiyor, yayın durdu" : $"{RetryDelaysMs.Length} deneme bitti: yeniden denenmiyor, yayın durdu");
+                StateChanged?.Invoke(SessionState.Disconnected(DisconnectKind.Refused,
+                    Localizer.Current.Format("The Xbox connection was lost: %@. Restart the Xbox to reconnect.", reason ?? "?")));
+                break;
             }
+            var delay = RetryDelaysMs[failures - 1];
+            Log($"yeniden deneme {failures}/{RetryDelaysMs.Length}: {delay / 1000} sn sonra");
+            StateChanged?.Invoke(SessionState.Disconnected(DisconnectKind.Other, reason));
+            try { await Task.Delay(delay, cancel.Token); }
+            catch (OperationCanceledException) { break; }
         }
     }
 
@@ -111,7 +165,7 @@ internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, 
         {
             try
             {
-                if (result.IsSuccess) browser?.CoreWebView2?.PostWebMessageAsJson("{\"kind\":\"start\"}");
+                if (result.IsSuccess) browser?.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new { kind = "start", legacyFrameRate }));
                 else browserEnded?.TrySetResult(true);
             }
             catch { browserEnded?.TrySetResult(true); }
@@ -129,21 +183,21 @@ internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, 
             {
                 case "frame":
                     if (Interlocked.Exchange(ref frameBusy, 1) != 0) return;
-                    try
-                    {
-                        var data = message.GetProperty("image").GetString()!;
-                        var comma = data.IndexOf(',');
-                        if (comma >= 0) FrameReceived?.Invoke(DecodeJpeg(Convert.FromBase64String(data[(comma + 1)..])));
-                    }
-                    finally { Volatile.Write(ref frameBusy, 0); }
+                    OfferFrame(message.GetProperty("image").GetString()!);
                     break;
                 case "state":
                     var state = message.GetProperty("state").GetString();
-                    if (state == "connected") StateChanged?.Invoke(SessionState.Streaming);
+                    if (state == "connected")
+                    {
+                        Log("WebRTC bağlandı");
+                        Interlocked.CompareExchange(ref streamingSince, Environment.TickCount64, 0);
+                        StateChanged?.Invoke(SessionState.Streaming);
+                    }
                     else if (state is "closed" or "failed" or "error")
                     {
                         var detail = message.TryGetProperty("detail", out var value) ? value.GetString() : Localizer.Current["The Xbox WebRTC connection was lost"];
-                        StateChanged?.Invoke(SessionState.Disconnected(DisconnectKind.Other, detail));
+                        Log($"WebRTC {state}: {detail}");
+                        endReason ??= detail;
                         browserEnded?.TrySetResult(true);
                     }
                     break;
@@ -173,6 +227,38 @@ internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, 
             StateChanged?.Invoke(SessionState.Disconnected(DisconnectKind.Other, error.Message));
             browserEnded?.TrySetResult(true);
         }
+    }
+
+    /// <summary>
+    /// Kare arayüz iş parçacığında değil, PS5'teki gibi kare iş parçacığında çözülür ve okuma hattına verilir. Önceden
+    /// çözme ve okuma hattına giriş arayüz iş parçacığındaydı: <c>frameBusy</c> hiç dolu görünmüyordu, arayüz
+    /// yavaşlayınca kareler WebView2 ileti kuyruğunda birikiyor, saniyeler önceki kare okunuyordu. Bitince oynatıcıya
+    /// haber verilir; oynatıcı ancak o zaman yeni kare gönderir.
+    /// </summary>
+    private void OfferFrame(string data)
+    {
+        var view = browser;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var comma = data.IndexOf(',');
+                if (comma >= 0) FrameReceived?.Invoke(DecodeJpeg(Convert.FromBase64String(data[(comma + 1)..])));
+            }
+            catch
+            {
+                // Tek bir karenin çözülememesi akışı durdurmaz; sonraki kare okunur.
+            }
+            finally
+            {
+                Volatile.Write(ref frameBusy, 0);
+                view?.Dispatcher.InvokeAsync(() =>
+                {
+                    try { if (browser == view) view.CoreWebView2?.PostWebMessageAsJson("{\"kind\":\"frameDone\"}"); }
+                    catch { /* Oynatıcı bu arada kapandı. */ }
+                });
+            }
+        });
     }
 
     private static Frame DecodeJpeg(byte[] bytes)

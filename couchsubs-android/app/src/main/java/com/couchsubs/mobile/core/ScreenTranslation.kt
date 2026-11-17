@@ -97,7 +97,9 @@ object ScreenTranslation {
             .sortedBy { it.box!!.top }
         val groups = mutableListOf<MutableList<TextLine>>()
         for (line in lines) {
-            val index = groups.indexOfLast { belongs(line.box!!, it.last().box!!) }
+            var index = groups.indexOfLast { belongs(line.box!!, it.last().box!!) }
+            if (index >= 0 && (bridgesColumns(groups[index].last().box!!, line.box!!, lines)
+                || bridgesColumns(line.box!!, groups[index].last().box!!, lines))) index = -1
             if (index >= 0) groups[index].add(line) else groups.add(mutableListOf(line))
         }
         return groups.take(MAX_GROUPS).map { group ->
@@ -105,6 +107,15 @@ object ScreenTranslation {
             val box = group.drop(1).fold(group[0].box!!) { total, line -> total.union(line.box!!) }
             Group(ScreenText.paragraphs(group), box, heights[heights.size / 2])
         }
+    }
+
+    // Geniş başlık/alt satır iki bağımsız sütundan birine katılmasın. Filtrelenmiş OCR satırlarına bakılır.
+    private fun bridgesColumns(wide: TextBox, column: TextBox, lines: List<TextLine>): Boolean = lines.any { line ->
+        val peer = line.box!!
+        if (minOf(column.right, peer.right) > maxOf(column.left, peer.left)) return@any false
+        val rowOverlap = minOf(column.bottom, peer.bottom) - maxOf(column.top, peer.top)
+        if (rowOverlap <= 0 || rowOverlap < minOf(column.bottom - column.top, peer.bottom - peer.top) * 0.5) return@any false
+        (belongs(column, wide) && belongs(peer, wide)) || (belongs(wide, column) && belongs(wide, peer))
     }
 
     /** Alt satır üsttekinin hemen altında (arada satır yüksekliğinin %80'inden az), yatayda onunla üst üste ve yazı boyu benzer. */

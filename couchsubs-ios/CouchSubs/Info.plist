@@ -51,7 +51,7 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>CouchSubs connects to your PS5 and TV on the home network to read and send translated subtitles, and installs and updates its TV app on your TV.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>CouchSubs does not use the microphone. The video library used for Xbox streaming includes microphone support, which stays off.</string>
+	<string>CouchSubs never records or sends your voice. To play the Xbox game sound on this iPhone, the streaming library opens the audio system, which may ask for microphone access; you can decline and the sound still plays.</string>
 	<key>SKAdNetworkItems</key>
 	<array>
 		<dict>

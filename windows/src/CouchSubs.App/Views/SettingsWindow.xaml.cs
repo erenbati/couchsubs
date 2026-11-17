@@ -4,7 +4,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Navigation;
+using CouchSubs.App.Services;
 using CouchSubs.Core;
 using CouchSubs.Core.LgTv;
 using CouchSubs.Shell;
@@ -26,6 +29,10 @@ public partial class SettingsWindow : Window
     private int area;
     /// <summary>Önizlemenin oyun görüntüsüyle son yenilendiği an (ms).</summary>
     private long lastPreview;
+    /// <summary>Kısayollar'da yeni tuşu bekleyen yuva; null ise beklenmiyor.</summary>
+    private (HotkeyAction Action, int Slot, Button Button)? recording;
+    /// <summary>Kısayollar'daki düğmeler: iş ve yuvaya göre.</summary>
+    private readonly Dictionary<(HotkeyAction, int), Button> shortcutButtons = [];
 
     internal SettingsWindow(AppController controller)
     {
@@ -72,6 +79,12 @@ public partial class SettingsWindow : Window
         Engine.SelectedItem = Engine.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == settings.Engine.ToString());
         TranslationDeviceChoice.SelectedItem = TranslationDeviceChoice.Items.Cast<ComboBoxItem>()
             .First(item => (string)item.Tag == settings.TranslationDevice.ToString());
+        foreach (var count in CpuThreadOptions.Available(Environment.ProcessorCount))
+            CpuThreadChoice.Items.Add(new ComboBoxItem { Content = count.ToString(), Tag = count });
+        CpuThreadChoice.SelectedItem = CpuThreadChoice.Items.Cast<ComboBoxItem>()
+            .First(item => (int)item.Tag == CpuThreadOptions.Normalize(settings.CpuTranslationThreads, Environment.ProcessorCount));
+        FastSubtitleDetection.IsChecked = settings.FastSubtitleDetection;
+        ShowCpuThreads();
         ShowEngine();
         GamePacks.IsChecked = settings.GamePacks;
         SharePool.IsChecked = settings.SharePool;
@@ -81,9 +94,16 @@ public partial class SettingsWindow : Window
         AppearanceChoice.SelectedItem = AppearanceChoice.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == settings.Appearance.ToString());
         FrameSourceChoice.SelectedItem = FrameSourceChoice.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == settings.FrameSource.ToString());
         RemotePlayAppChoice.SelectedItem = RemotePlayAppChoice.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == settings.RemotePlayApp.ToString());
+        XboxLegacyFrameRate.IsChecked = settings.XboxLegacyFrameRate;
+        PlayStationPictureSourceCard.Visibility = controller.IsXbox ? Visibility.Collapsed : Visibility.Visible;
+        XboxPictureSourceCard.Visibility = controller.IsXbox ? Visibility.Visible : Visibility.Collapsed;
         ShowFrameSource();
         PasscodeTab.Visibility = controller.IsXbox ? Visibility.Collapsed : Visibility.Visible;
         ShowPasscode();
+        BuildShortcuts();
+        ShowShortcutTexts();
+        PreviewKeyDown += OnShortcutKey;
+        Closed += (_, _) => StopRecording();
         loading = false;
     }
 
@@ -112,10 +132,14 @@ public partial class SettingsWindow : Window
     /// <summary>Remote Play uygulaması seçimi ve ipuçları yalnız seçili görüntü kaynağına göre görünür.</summary>
     private void ShowFrameSource()
     {
+        if (controller.IsXbox) return;
         var window = controller.Settings.FrameSource == FrameSource.RemotePlayWindow;
+        var capture = controller.Settings.FrameSource == FrameSource.CaptureWindow;
         RemotePlayAppPanel.Visibility = window ? Visibility.Visible : Visibility.Collapsed;
         WindowSourceHint.Visibility = window ? Visibility.Visible : Visibility.Collapsed;
-        Ps5SourceHint.Visibility = window ? Visibility.Collapsed : Visibility.Visible;
+        CaptureWindowPanel.Visibility = capture ? Visibility.Visible : Visibility.Collapsed;
+        if (capture) RefreshCaptureWindows();
+        Ps5SourceHint.Visibility = window || capture ? Visibility.Collapsed : Visibility.Visible;
         SonyInstallRow.Visibility = ChiakiInstallRow.Visibility = window ? Visibility.Visible : Visibility.Collapsed;
         var sony = controller.RemotePlayInstalled(RemotePlayApp.Sony);
         var chiaki = controller.RemotePlayInstalled(RemotePlayApp.Chiaki);
@@ -144,10 +168,51 @@ public partial class SettingsWindow : Window
         ShowFrameSource();
     }
 
+    private void OnXboxLegacyFrameRate(object sender, RoutedEventArgs e) =>
+        Update(s => s with { XboxLegacyFrameRate = XboxLegacyFrameRate.IsChecked == true });
+
     private void OnRemotePlayApp(object sender, SelectionChangedEventArgs e)
     {
         if (RemotePlayAppChoice.SelectedItem is ComboBoxItem { Tag: string tag })
             Update(s => s with { RemotePlayApp = Enum.Parse<RemotePlayApp>(tag) });
+    }
+
+    private bool refreshingCaptureWindows;
+
+    private void RefreshCaptureWindows()
+    {
+        if (refreshingCaptureWindows) return;
+        refreshingCaptureWindows = true;
+        try
+        {
+            var saved = controller.Settings.CaptureWindow;
+            var windows = controller.AvailableCaptureWindows();
+            CaptureWindowChoice.Items.Clear();
+            ComboBoxItem? selected = null;
+            foreach (var target in windows)
+            {
+                var option = new ComboBoxItem { Content = $"{target.Title} ({target.ProcessName})", Tag = target };
+                CaptureWindowChoice.Items.Add(option);
+                if (target == saved) selected = option;
+            }
+            if (saved is not null && selected is null)
+            {
+                selected = new ComboBoxItem { Content = $"{saved.Title} ({saved.ProcessName}) — {Localizer.Current["Not currently open"]}", Tag = saved };
+                CaptureWindowChoice.Items.Insert(0, selected);
+            }
+            CaptureWindowChoice.SelectedItem = selected;
+            CaptureWindowEmpty.Visibility = windows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        finally { refreshingCaptureWindows = false; }
+    }
+
+    private void OnRefreshCaptureWindows(object sender, RoutedEventArgs e) => RefreshCaptureWindows();
+
+    private void OnCaptureWindowChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (loading || refreshingCaptureWindows) return;
+        if (CaptureWindowChoice.SelectedItem is ComboBoxItem { Tag: WindowCaptureTarget target })
+            Update(s => s with { CaptureWindow = target });
     }
 
     private void OnAppearance(object sender, SelectionChangedEventArgs e)
@@ -162,6 +227,7 @@ public partial class SettingsWindow : Window
             ShowStyleTitle();
         if (e.PropertyName == nameof(AppController.LastFrame)) ShowLiveFrame();
         if (e.PropertyName == nameof(AppController.InstalledPacks)) ShowPacks();
+        if (e.PropertyName == nameof(AppController.Settings)) ShowShortcutTexts();
     }
 
     /// <summary>Alan sekmesi açıkken önizleme oyunun görüntüsüyle saniyede bir yenilenir (çerçeve sürüklenirken beklenir).</summary>
@@ -428,9 +494,30 @@ public partial class SettingsWindow : Window
 
     private void OnTranslationDevice(object sender, SelectionChangedEventArgs e)
     {
+        ShowCpuThreads();
         if (TranslationDeviceChoice.SelectedItem is ComboBoxItem { Tag: string tag })
             Update(s => s with { TranslationDevice = Enum.Parse<TranslationDevice>(tag) });
     }
+
+    private void OnCpuThreads(object sender, SelectionChangedEventArgs e)
+    {
+        ShowCpuThreads();
+        if (CpuThreadChoice.SelectedItem is ComboBoxItem { Tag: int count })
+            Update(s => s with { CpuTranslationThreads = count });
+    }
+
+    private void ShowCpuThreads()
+    {
+        if (CpuThreadPanel is null || CpuThreadWarning is null) return;
+        CpuThreadPanel.Visibility = TranslationDeviceChoice.SelectedItem is ComboBoxItem { Tag: "Cpu" }
+            ? Visibility.Visible : Visibility.Collapsed;
+        CpuThreadWarning.Visibility = CpuThreadChoice?.SelectedItem is ComboBoxItem { Tag: int count }
+                                      && CpuThreadOptions.NearCapacity(count, Environment.ProcessorCount)
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void OnFastSubtitleDetection(object sender, RoutedEventArgs e) =>
+        Update(s => s with { FastSubtitleDetection = FastSubtitleDetection.IsChecked == true });
 
     private async void OnKeySave(object sender, RoutedEventArgs e)
     {
@@ -530,7 +617,7 @@ public partial class SettingsWindow : Window
         Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
 
     public static void Open(Window? owner, AppController controller) =>
-        new SettingsWindow(controller) { Owner = owner }.ShowDialog();
+        OwnedWindow.Show(owner, () => new SettingsWindow(controller));
 
     private void Update(Func<UserSettings, UserSettings> change)
     {
@@ -734,7 +821,7 @@ public partial class SettingsWindow : Window
             Region.IsEnabled = extra is not null;
             Region.DefaultRegion = ExtraDefaults[slot - 1];
             Region.ShowRegion(extra ?? ExtraDefaults[slot - 1]);
-            AreaHint.Text = text["Draw the area to translate, for example a quest panel. While you play, press its key (Num 1, 2 or 3, or Ctrl+Shift+1, 2 or 3) to read and translate it once. Choose where the result shows. It works even when CouchSubs is in the background."];
+            ShowAreaHint();
         }
         loading = wasLoading;
     }
@@ -823,4 +910,160 @@ public partial class SettingsWindow : Window
     }
 
     private void OnOpenStreamWindow(object sender, RoutedEventArgs e) => StreamWindow.Open(controller);
+
+    /// <summary>Ek bölgenin ipucu, o bölgenin kısayoluyla.</summary>
+    private void ShowAreaHint()
+    {
+        if (area == 0) return;
+        var action = area switch { 1 => HotkeyAction.ExtraRegion1, 2 => HotkeyAction.ExtraRegion2, _ => HotkeyAction.ExtraRegion3 };
+        AreaHint.Text = HotkeyText.Sentence(controller.Settings, action,
+            "Draw the area to translate, for example a quest panel. While you play, press its shortcut (%@) to read and translate it once. Choose where the result shows. It works even when CouchSubs is in the background.");
+    }
+
+    /// <summary>Kısayolların geçtiği bütün metinler ve Kısayollar'daki düğmeler kullanıcının seçtiği tuşları gösterir.</summary>
+    private void ShowShortcutTexts()
+    {
+        var settings = controller.Settings;
+        RefreshButton.Content = HotkeyText.Title(settings, HotkeyAction.Snapshot, "Refresh picture (%@)");
+        ScreenCard.Title = HotkeyText.Title(settings, HotkeyAction.Screen, "Translate the screen (%@)");
+        ScreenHint.Text = HotkeyText.Sentence(settings, HotkeyAction.Screen,
+            "Press %@ while playing: every text on the screen is translated once and shown on the TV in its own place. Press again to remove the translations.");
+        FreeAreaCard.Title = HotkeyText.Title(settings, HotkeyAction.FreeArea, "Free area (%@)");
+        FreeAreaHint.Text = HotkeyText.Sentence(settings, HotkeyAction.FreeArea,
+            "Press %@ while playing: the picture freezes on the PC, drag over any part of it to translate that part once. Esc closes.");
+        PauseHint.Text = HotkeyText.Sentence(settings, HotkeyAction.PauseSubtitles,
+            "%@ pauses or resumes the live subtitle translation, which helps when you translate areas.");
+        ShowAreaHint();
+        foreach (var ((action, slot), button) in shortcutButtons)
+            if (recording?.Button != button) button.Content = ShortcutLabel(HotkeyTable.KeyFor(settings.Hotkeys, action, slot));
+    }
+
+    private static string ShortcutLabel(HotkeyKey? key) => key?.Label ?? Localizer.Current["Not set"];
+
+    /// <summary>Kısayollar: her iş bir satır, iki düğme (iki tuş).</summary>
+    private void BuildShortcuts()
+    {
+        foreach (var action in HotkeyText.Order)
+        {
+            var row = ShortcutGrid.RowDefinitions.Count;
+            ShortcutGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var name = new TextBlock
+            {
+                Text = HotkeyText.Name(action),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 16, 8),
+            };
+            Grid.SetRow(name, row);
+            ShortcutGrid.Children.Add(name);
+            for (var slot = 0; slot < HotkeyTable.SlotCount; slot++)
+            {
+                var button = new Button { MinWidth = 160, Margin = new Thickness(slot == 0 ? 0 : 8, 0, 0, 8), Tag = (action, slot) };
+                button.Click += OnShortcutClick;
+                button.LostKeyboardFocus += (_, _) => { if (recording?.Button == button) StopRecording(); };
+                Grid.SetRow(button, row);
+                Grid.SetColumn(button, 1 + slot);
+                ShortcutGrid.Children.Add(button);
+                shortcutButtons[(action, slot)] = button;
+            }
+        }
+    }
+
+    private void OnShortcutClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: ValueTuple<HotkeyAction, int> tag } button) return;
+        if (recording?.Button == button)
+        {
+            StopRecording();
+            return;
+        }
+        StopRecording();
+        ShowShortcutMessage(null, null);
+        recording = (tag.Item1, tag.Item2, button);
+        button.Content = Localizer.Current["Press the keys…"];
+        // Çeviri sürerken basılan tuş kısayol olarak çalışmasın, buraya gelsin.
+        controller.HotkeysPaused = true;
+        button.Focus();
+    }
+
+    /// <summary>Yeni tuşu beklemeyi bırakır; düğme kayıtlı tuşu gösterir, kısayollar yeniden tutulur.</summary>
+    private void StopRecording()
+    {
+        if (recording is not { } current) return;
+        recording = null;
+        current.Button.Content = ShortcutLabel(HotkeyTable.KeyFor(controller.Settings.Hotkeys, current.Action, current.Slot));
+        controller.HotkeysPaused = false;
+    }
+
+    private void OnShortcutKey(object sender, KeyEventArgs e)
+    {
+        if (recording is not { } current) return;
+        e.Handled = true;
+        var key = e.Key switch { Key.System => e.SystemKey, Key.ImeProcessed => e.ImeProcessedKey, _ => e.Key };
+        // Değiştirici tek başına basıldı: asıl tuş bekleniyor.
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin)
+            return;
+        var held = Keyboard.Modifiers;
+        if (held == ModifierKeys.None && key == Key.Escape)
+        {
+            StopRecording();
+            return;
+        }
+        if (held == ModifierKeys.None && key is Key.Back or Key.Delete)
+        {
+            AssignShortcut(current, null);
+            return;
+        }
+        var modifiers = HotkeyModifiers.None;
+        if (held.HasFlag(ModifierKeys.Control)) modifiers |= HotkeyModifiers.Control;
+        if (held.HasFlag(ModifierKeys.Alt)) modifiers |= HotkeyModifiers.Alt;
+        if (held.HasFlag(ModifierKeys.Shift)) modifiers |= HotkeyModifiers.Shift;
+        var chosen = new HotkeyKey(modifiers, (uint)KeyInterop.VirtualKeyFromKey(key));
+        // Win tuşlu birleşimler Windows'a aittir.
+        var problem = held.HasFlag(ModifierKeys.Windows) ? HotkeyProblem.Reserved : HotkeyTable.Validate(chosen);
+        if (problem != HotkeyProblem.None)
+        {
+            ShowShortcutMessage(null, ProblemText(problem));
+            return;
+        }
+        AssignShortcut(current, chosen);
+    }
+
+    private void AssignShortcut((HotkeyAction Action, int Slot, Button Button) target, HotkeyKey? key)
+    {
+        var text = Localizer.Current;
+        // Kısayollar bırakılmışken denenir: alınamıyorsa tuşu başka bir uygulama tutuyordur.
+        var busy = key is not null && !GlobalHotkeys.IsAvailable(new WindowInteropHelper(this).Handle, key);
+        var choices = HotkeyTable.Assign(controller.Settings.Hotkeys, target.Action, target.Slot, key, out var displaced);
+        recording = null;
+        controller.Settings = controller.Settings with { Hotkeys = choices };
+        controller.HotkeysPaused = false;
+        ShowShortcutTexts();
+        var moved = displaced is { } from && key is not null ? text.Format("%@ moved here from “%@”.", key.Label, HotkeyText.Name(from)) : null;
+        var taken = busy && key is not null ? text.Format("Another app is using %@. It may not work while that app is open.", key.Label) : null;
+        ShowShortcutMessage(moved, taken);
+    }
+
+    private void OnShortcutDefaults(object sender, RoutedEventArgs e)
+    {
+        StopRecording();
+        ShowShortcutMessage(null, null);
+        controller.Settings = controller.Settings with { Hotkeys = [] };
+    }
+
+    private void ShowShortcutMessage(string? message, string? error)
+    {
+        ShortcutMessage.Text = message ?? "";
+        ShortcutMessage.Visibility = message is null ? Visibility.Collapsed : Visibility.Visible;
+        ShortcutError.Text = error ?? "";
+        ShortcutError.Visibility = error is null ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private static string ProblemText(HotkeyProblem problem) => Localizer.Current[problem switch
+    {
+        HotkeyProblem.NeedsModifier => "Use this key with Ctrl+Shift, Alt or Alt+Shift, so typing in other apps isn't affected.",
+        HotkeyProblem.AltGr => "Ctrl+Alt is AltGr on many keyboards and would block characters like # and {. Use Ctrl+Shift instead.",
+        HotkeyProblem.Reserved => "Windows already uses this shortcut.",
+        _ => "This key can't be a shortcut.",
+    }];
 }

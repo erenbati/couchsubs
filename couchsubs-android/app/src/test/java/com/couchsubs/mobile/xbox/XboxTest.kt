@@ -133,6 +133,32 @@ class XboxAuthTest {
         assertTrue(http.bodies[1]!!.contains("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code"))
     }
 
+    @Test fun deviceCodePollSurvivesNetworkDrops() {
+        // Kullanıcı tarayıcıdayken arka plandaki istek kesilir; giriş bitmemeli, onay gelince tamamlanmalı.
+        var polls = 0
+        val http = FakeHttp { _, _, _ ->
+            when (++polls) {
+                1 -> XboxHttpResponse(400, """{"error":"authorization_pending"}""")
+                2, 3 -> throw XboxException(XboxError.NETWORK, "Software caused connection abort")
+                else -> ok("""{"access_token":"A","refresh_token":"R","expires_in":3600}""")
+            }
+        }
+        val auth = XboxAuth(http, { clock }, { clock += it })
+        assertEquals("A", auth.pollDeviceCode(XboxDeviceCode("U", "D", "u", 900, 5)).accessToken)
+        assertEquals(4, polls)
+    }
+
+    @Test fun deviceCodePollGivesUpOnNetworkAfterExpiry() {
+        val http = FakeHttp { _, _, _ -> throw XboxException(XboxError.NETWORK, "offline") }
+        val auth = XboxAuth(http, { clock }, { clock += it })
+        try {
+            auth.pollDeviceCode(XboxDeviceCode("U", "D", "u", 60, 5))
+            fail()
+        } catch (error: XboxException) {
+            assertEquals(XboxError.NETWORK, error.kind)
+        }
+    }
+
     @Test fun deviceCodeExpires() {
         val http = FakeHttp { _, _, _ -> XboxHttpResponse(400, """{"error":"expired_token"}""") }
         val auth = XboxAuth(http, { clock }, { clock += it })
@@ -326,6 +352,35 @@ class XboxChannelsTest {
         assertEquals(2, packet[14].toInt())
     }
 
+    @Test fun frameAckPacketMatchesPlayer() {
+        // Input/Packet.ts: 14 bayt başlık + 1 bayt sayı + kare başına 28 bayt; tür 1 = Metadata.
+        val frames = listOf(XboxFrameAck(0x1_0000_0005L, 100, 104), XboxFrameAck(3000, 116, 120))
+        val packet = XboxChannels.frameAckPacket(7, 130.0, frames)
+        assertEquals(14 + 1 + 28 * 2, packet.size)
+        val buffer = ByteBuffer.wrap(packet).order(ByteOrder.LITTLE_ENDIAN)
+        assertEquals(1, buffer.getShort(0).toInt())
+        assertEquals(7, buffer.getInt(2))
+        assertEquals(130.0, buffer.getDouble(6), 0.0)
+        assertEquals(2, packet[14].toInt())
+        // serverDataKey alt 32 bit; varış/gönderim, çözülme/gösterim, paket anı ikişer kez.
+        assertEquals(listOf(5, 100, 100, 104, 104, 130, 130), (0 until 7).map { buffer.getInt(15 + it * 4) })
+        assertEquals(3000, buffer.getInt(15 + 28))
+    }
+
+    @Test fun frameAckQueueDrainsInPlayerSizedBatches() {
+        val queue = XboxFrameAckQueue(capacity = 40)
+        repeat(45) { queue.offer(XboxFrameAck(it.toLong(), 0, 0)) }
+        val first = queue.drain()
+        assertEquals(XboxChannels.MAX_FRAME_ACKS, first.size)
+        // Sığa ulaşınca en eskiler düşer: 0-4 atıldı.
+        assertEquals(5L, first.first().serverDataKey)
+        assertEquals(11, queue.drain().size)
+        assertTrue(queue.drain().isEmpty())
+        // libwebrtc damgayı ms'ye yuvarlar (RtpTimestamp / 90); 90 kHz'e geri çevrilir.
+        assertEquals(90_000L, XboxFrameAckQueue.serverDataKey(1000))
+        assertEquals((47_721_858L * 90) and 0xFFFFFFFFL, XboxFrameAckQueue.serverDataKey(47_721_858))
+    }
+
     @Test fun configurationMessagesMatchPlayer() {
         val messages = XboxChannels.configurationMessages().map(::JSONObject)
         assertEquals(6, messages.size)
@@ -352,6 +407,21 @@ class XboxChannelsTest {
 }
 
 class XboxSessionMachineTest {
+    @Test fun staleFramesFromPreviousConnectionDoNotAffectReconnect() {
+        val frames = XboxFrameCounter()
+        val previous = frames.beginSession()
+        assertEquals(1L, frames.recordFrame(previous))
+        assertEquals(1L, frames.totalFrames)
+
+        val current = frames.beginSession()
+        assertEquals(0L, frames.framesInSession(current))
+        assertNull(frames.recordFrame(previous))
+        assertEquals(0L, frames.framesInSession(current))
+        assertEquals(1L, frames.recordFrame(current))
+        assertEquals(2L, frames.totalFrames)
+        assertEquals(1L, frames.framesInSession(current))
+    }
+
     @Test fun happyPath() {
         val m = XboxSessionMachine()
         assertEquals(XboxSessionMachine.Action.Play, m.start())
@@ -376,14 +446,44 @@ class XboxSessionMachineTest {
         assertEquals(XboxError.TIMEOUT, (m.phase as XboxSessionMachine.Phase.Failed).kind)
     }
 
-    @Test fun failedStateRetriesAndClassifies() {
+    @Test fun failedStateDoesNotRetryAndClassifies() {
         val m = XboxSessionMachine()
         m.start(); m.played()
-        assertEquals(XboxSessionMachine.Action.Retry(5000), m.status("Failed", """{"code":"ServerInUse"}"""))
+        // Konsol yayını reddetti: yeniden denemek konsolu yeniden tetikler.
+        assertEquals(XboxSessionMachine.Action.Retry(null), m.status("Failed", """{"code":"ServerInUse"}"""))
         assertEquals(XboxError.BUSY, (m.phase as XboxSessionMachine.Phase.Failed).kind)
-        // Yeniden başlar.
-        assertEquals(XboxSessionMachine.Action.Play, m.start())
+        assertFalse((m.phase as XboxSessionMachine.Phase.Failed).willRetry)
         assertEquals(XboxError.CONSOLE_UNAVAILABLE, XboxSessionMachine.classifyFailure("""{"code":"ConsoleOffline"}"""))
+    }
+
+    @Test fun errorDetailsStopsRetrying() {
+        val m = XboxSessionMachine()
+        m.start(); m.played()
+        // Boş ayrıntı hata sayılmaz.
+        assertEquals(XboxSessionMachine.Action.PollState(1000), m.status("Provisioning", """{"code":null,"message":null}"""))
+        assertEquals(XboxSessionMachine.Action.Retry(null), m.status("Provisioning", """{"code":"Conflict","message":"x"}"""))
+    }
+
+    @Test fun retriesBackOffThenStop() {
+        val m = XboxSessionMachine()
+        assertEquals(XboxSessionMachine.Action.Retry(5000), m.fail(XboxError.NETWORK, "kopma"))
+        assertEquals(XboxSessionMachine.Action.Retry(15000), m.fail(XboxError.NETWORK, "kopma"))
+        assertEquals(XboxSessionMachine.Action.Retry(45000), m.fail(XboxError.NETWORK, "kopma"))
+        assertEquals(3, (m.phase as XboxSessionMachine.Phase.Failed).attempt)
+        assertEquals(XboxSessionMachine.Action.Retry(null), m.fail(XboxError.NETWORK, "kopma"))
+    }
+
+    @Test fun healthyStreamResetsRetries() {
+        var now = 1_000L
+        val m = XboxSessionMachine(clock = { now })
+        m.fail(XboxError.NETWORK, "kopma"); m.fail(XboxError.NETWORK, "kopma")
+        m.start(); m.played(); m.status("Provisioned", null); m.streaming()
+        now += 60_000
+        assertEquals(XboxSessionMachine.Action.Retry(5000), m.fail(XboxError.NETWORK, "kopma"))
+        // Kısa süren yayın sayacı sıfırlamaz.
+        m.start(); m.played(); m.status("Provisioned", null); m.streaming()
+        now += 1_000
+        assertEquals(XboxSessionMachine.Action.Retry(15000), m.fail(XboxError.NETWORK, "kopma"))
     }
 
     @Test fun signInErrorsDoNotRetry() {

@@ -47,6 +47,10 @@ public class OcrNoiseTests
     [InlineData("l'm telling you, l saw him.", "I'm telling you, I saw him.")]
     [InlineData("|'ll be right back.", "I'll be right back.")]
     [InlineData("You and l've been here before.", "You and I've been here before.")]
+    [InlineData("Who am l?", "Who am I?")]
+    [InlineData("Where are you, |?", "Where are you, I?")]
+    [InlineData("I don't know, l!", "I don't know, I!")]
+    [InlineData("Leave it. l.", "Leave it.")]
     public void MisreadPronounBecomesI(string line, string expected) => Assert.Equal(expected, OcrNoise.Clean(line));
 
     [Theory]

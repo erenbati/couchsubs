@@ -167,7 +167,7 @@ public static class ScreenRenderer
 
     private sealed class DemoSleep : ISleepGuard
     {
-        public void Begin() { }
+        public void Begin(bool keepDisplayOn) { }
         public void End() { }
     }
 }

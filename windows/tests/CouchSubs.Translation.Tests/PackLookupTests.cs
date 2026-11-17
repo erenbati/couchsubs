@@ -62,6 +62,14 @@ public class PackLookupTests
         Assert.False(PackLookup.IsOverlay("Hey, Franklin!"));
     }
 
+    /// <summary>Uzun satırdaki "•" OCR lekesidir: satır köşe yazısı sayılıp atlanmaz, yalnız ikinci satırın Türkçesi gelmez (#245).</summary>
+    [Fact]
+    public void LongLineWithStrayBulletIsNotAnOverlay()
+    {
+        Assert.False(PackLookup.IsOverlay("I have a business meeting there with a colleague• Not that it's anything to do"));
+        Assert.Null(Match("I have a business meeting there with a colleague• Not that it's anything to do\nWho is that?"));
+    }
+
     [Fact]
     public void EachSentenceIsLookedUpWhenTheLineIsMissing()
     {

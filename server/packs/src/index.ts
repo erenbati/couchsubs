@@ -80,7 +80,10 @@ async function readIndex(env: Env): Promise<PackInfo[] | null> {
     const object = await env.PACKS.get("index.json");
     if (!object) return null;
     const parsed = JSON.parse(await object.text()) as { packs?: unknown };
-    return Array.isArray(parsed?.packs) && parsed.packs.every(validPack) ? parsed.packs : null;
+    if (!Array.isArray(parsed?.packs) || !parsed.packs.every(validPack)) return null;
+    // Aynı kimliğin birden çok sürümü, istemcinin hangi paketi indireceğini belirsizleştirir.
+    if (new Set(parsed.packs.map((pack: PackInfo) => pack.id)).size !== parsed.packs.length) return null;
+    return parsed.packs;
   } catch {
     return null;
   }
@@ -111,7 +114,13 @@ async function download(request: Request, env: Env, id: string, rate: RateLimite
   };
   const sha = object.customMetadata?.sha256;
   if (sha) headers["x-pack-sha256"] = sha;
-  if (request.headers.get("if-none-match") === object.httpEtag) return new Response(null, { status: 304, headers });
+  // If-None-Match zayıf ETag, virgülle ayrılmış liste veya mevcut kaynak için * içerebilir.
+  const condition = request.headers.get("if-none-match");
+  const matches = condition?.split(",").some((value) => {
+    const tag = value.trim();
+    return tag === "*" || tag.replace(/^W\//, "") === object.httpEtag;
+  });
+  if (matches) return new Response(null, { status: 304, headers });
   return new Response(object.body, { status: 200, headers });
 }
 
@@ -120,7 +129,12 @@ export async function handle(request: Request, env: Env, rate: RateLimiter = lim
   if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
   if (url.pathname === "/v1/packs") return list(env);
   const match = /^\/v1\/packs\/([^/]+)$/.exec(url.pathname);
-  if (match) return download(request, env, decodeURIComponent(match[1]), rate, now);
+  if (match) {
+    let id: string;
+    try { id = decodeURIComponent(match[1]); }
+    catch { return json({ error: "not_found" }, 404); }
+    return download(request, env, id, rate, now);
+  }
   return json({ error: "not_found" }, 404);
 }
 

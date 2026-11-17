@@ -26,8 +26,9 @@ internal sealed class MemorySettings : ISettingsStore
 internal sealed class FakeSleep : ISleepGuard
 {
     public bool Active { get; private set; }
-    public void Begin() => Active = true;
-    public void End() => Active = false;
+    public bool DisplayOn { get; private set; }
+    public void Begin(bool keepDisplayOn) => (Active, DisplayOn) = (true, keepDisplayOn);
+    public void End() => (Active, DisplayOn) = (false, false);
 }
 
 internal sealed class FakeStream : IStreamSession
@@ -102,6 +103,7 @@ internal sealed class FakeReader(Reading? lines = null) : ITextReader
 
 internal sealed class FakeServices : IAppServices
 {
+    public IXboxService? Xbox { get; set; }
     /// <summary>PS Remote Play / chiaki-ng bu bilgisayarda kurulu mu (Ayarlar'daki indirme satırları, ana ekran uyarısı).</summary>
     public bool RemotePlayIsInstalled { get; set; } = true;
     public bool RemotePlayInstalled(RemotePlayApp app) => RemotePlayIsInstalled;
@@ -147,7 +149,7 @@ internal sealed class FakeServices : IAppServices
         AiTests.Add((provider, key, model));
         return Task.FromResult(AiTest);
     }
-    public ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback)
+    public ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback, Func<string?>? game)
     {
         AiTranslators.Add((provider, key, model));
         return fallback ?? Translation.Create("en", "tr");
@@ -159,7 +161,7 @@ internal sealed class FakeServices : IAppServices
         LocalTests.Add((server, key));
         return Task.FromResult(AiTest);
     }
-    public ITextTranslator? MakeLocalAiTranslator(LocalAiServer server, string key, ITextTranslator? fallback)
+    public ITextTranslator? MakeLocalAiTranslator(LocalAiServer server, string key, ITextTranslator? fallback, Func<string?>? game)
     {
         LocalTranslators.Add((server, key));
         return fallback ?? Translation.Create("en", "tr");
@@ -212,6 +214,14 @@ internal sealed class FakeServices : IAppServices
     public IStreamSession MakeWindowStream(RemotePlayApp app)
     {
         WindowStreams.Add(app);
+        var stream = new FakeStream();
+        Streams.Add(stream);
+        return stream;
+    }
+    public List<WindowCaptureTarget> CaptureWindowStreams { get; } = [];
+    public IStreamSession MakeCaptureWindowStream(WindowCaptureTarget target)
+    {
+        CaptureWindowStreams.Add(target);
         var stream = new FakeStream();
         Streams.Add(stream);
         return stream;
@@ -464,6 +474,44 @@ public class AppControllerTests
         {
             RemotePlayLog.MessageLogged -= Collect;
         }
+    }
+
+    /// Eski sürüm Xbox adını bozuk kaydettiyse (#223) liste sorulunca kayıtlı ad düzelir; konsol yeniden seçilmez.
+    [Fact]
+    public async Task XboxDiscoveryRepairsSavedConsoleName()
+    {
+        var store = new MemoryStore();
+        store.Save(StoreKeys.XboxToken, "{}");
+        store.Save(StoreKeys.XboxConsole, new XboxConsole("F4", "Oturma OdasA+ Xbox", "XboxSeriesX", true));
+        var xbox = new FakeXbox([new XboxConsole("F4", "Oturma Odası Xbox", "XboxSeriesX", true)]);
+        var controller = new AppController(new FakeServices { Xbox = xbox }, store, new MemorySettings(), new FakeSleep(), Localizer.ForLanguage("tr"), action => action());
+        await controller.DiscoverXboxConsolesAsync();
+        Assert.Equal("Oturma Odası Xbox", controller.SelectedXboxConsole?.Name);
+        Assert.Equal("Oturma Odası Xbox", store.Load<XboxConsole>(StoreKeys.XboxConsole)?.Name);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task XboxFrameRateSettingIsPassedToStreamAndPersisted(bool legacyFrameRate)
+    {
+        var store = new MemoryStore();
+        store.Save(StoreKeys.ConsoleKind, GameConsoleKind.Xbox);
+        store.Save(StoreKeys.XboxToken, "{}");
+        store.Save(StoreKeys.XboxConsole, new XboxConsole("F4", "Xbox", "XboxSeriesX", true));
+        var savedSettings = new MemorySettings();
+        savedSettings.Save(new UserSettings { Output = SubtitleOutput.Computer });
+        var xbox = new FakeXbox([]);
+        var controller = Make(new FakeServices { Xbox = xbox }, store, savedSettings);
+        try
+        {
+            Assert.False(controller.Settings.XboxLegacyFrameRate);
+            controller.Settings = controller.Settings with { XboxLegacyFrameRate = legacyFrameRate };
+            await controller.StartAsync();
+            Assert.Equal([legacyFrameRate], xbox.LegacyFrameRateRequests);
+            Assert.Equal(legacyFrameRate, savedSettings.Load().XboxLegacyFrameRate);
+        }
+        finally { controller.Dispose(); }
     }
 
     [Fact]
@@ -881,6 +929,36 @@ public class AppControllerRunTests
         controller.Dispose();
     }
 
+    /// <summary>
+    /// X'te bildirildi: Remote Play penceresinden okurken altyazı ~10 dakikada bir kesiliyordu. Kullanıcı TV'de oynayıp
+    /// bilgisayara dokunmayınca ekran kendi ayarıyla kapanıyor, kapalı ekranda pencere yakalama kare vermiyordu. Pencereden
+    /// okunurken ya da altyazı bu ekrandayken ekran açık tutulur; PS5'ten okunup yalnız TV'ye gidiyorsa tutulmaz.
+    /// </summary>
+    [Fact]
+    public async Task DisplayStaysOnWhileReadingAWindowOrShowingOnComputer()
+    {
+        var (controller, _, sleep) = Ready();
+        Assert.Equal(FrameSource.Ps5, controller.Settings.FrameSource);
+        controller.Settings = controller.Settings with { Output = SubtitleOutput.Tv };
+        await controller.StartAsync();
+        Assert.True(sleep.Active);
+        Assert.False(sleep.DisplayOn);
+        // Çeviri sürerken altyazı bilgisayar ekranına da alınırsa ekran açık kalır, geri alınınca yine kapanabilir.
+        controller.Settings = controller.Settings with { Output = SubtitleOutput.Both };
+        Assert.True(sleep.DisplayOn);
+        controller.Settings = controller.Settings with { Output = SubtitleOutput.Tv };
+        Assert.False(sleep.DisplayOn);
+        controller.Stop();
+        Assert.False(sleep.Active);
+
+        controller.Settings = controller.Settings with { FrameSource = FrameSource.RemotePlayWindow };
+        await controller.StartAsync();
+        Assert.True(sleep.DisplayOn);
+        controller.Stop();
+        Assert.False(sleep.DisplayOn);
+        controller.Dispose();
+    }
+
     /// "İkinci hesap yok mu?": PSN girişi ve PS5 olmadan kurulum biter; görüntü Remote Play penceresinden, altyazı
     /// bilgisayar ekranında. Yeniden açılınca sihirbaz çıkmaz.
     [Fact]
@@ -929,6 +1007,58 @@ public class AppControllerRunTests
         services.RemotePlayIsInstalled = true;
         Assert.False(controller.RemotePlayMissing);
         Assert.Equal("Reads the Remote Play window on this PC when you start translating.", controller.Ps5StatusText);
+    }
+
+    [Fact]
+    public void SelectedWindowSetupSkipsPsnPairingButRequiresExplicitTarget()
+    {
+        var store = new MemoryStore();
+        var settings = new MemorySettings();
+        var controller = AppControllerTests.Make(store: store, settings: settings);
+        controller.Advance();
+        Assert.Equal(OnboardingStep.SecondAccount, controller.Step);
+
+        controller.UseCaptureWindow();
+        Assert.Equal(OnboardingStep.Done, controller.Step);
+        Assert.Equal(FrameSource.CaptureWindow, controller.Settings.FrameSource);
+        Assert.Equal(SubtitleOutput.Computer, controller.Settings.Output);
+        Assert.False(controller.HasAccount);
+        Assert.False(controller.CanStart); // Never fall back to scanning the entire desktop.
+
+        var target = new WindowCaptureTarget("obs64", "Fullscreen Projector (Scene)");
+        controller.Settings = controller.Settings with { CaptureWindow = target };
+        Assert.True(controller.CanStart);
+        Assert.Equal(OnboardingStep.Done, AppControllerTests.Make(store: store, settings: settings).Step);
+        controller.Dispose();
+    }
+
+    [Fact]
+    public async Task SelectedWindowStartsAndSwitchesTargetsWithoutOpeningPs5Session()
+    {
+        var first = new WindowCaptureTarget("obs64", "Fullscreen Projector (Scene)");
+        var second = new WindowCaptureTarget("game", "Gameplay");
+        var settings = new MemorySettings();
+        settings.Save(new UserSettings
+        {
+            FrameSource = FrameSource.CaptureWindow,
+            CaptureWindow = first,
+            Output = SubtitleOutput.Computer,
+        });
+        var services = new FakeServices { RemotePlayIsInstalled = false };
+        var controller = AppControllerTests.Make(services: services, settings: settings);
+
+        await controller.StartAsync();
+        Assert.Equal([first], services.CaptureWindowStreams);
+        Assert.Empty(services.StreamPasscodes);
+        Assert.Empty(services.WindowStreams);
+        Assert.True(controller.IsRunning);
+
+        controller.Settings = controller.Settings with { CaptureWindow = second };
+        for (var i = 0; i < 200 && services.CaptureWindowStreams.Count < 2; i++) await Task.Delay(10);
+        Assert.Equal([first, second], services.CaptureWindowStreams);
+        Assert.Equal(2, services.Streams.Count);
+        Assert.True(controller.IsRunning);
+        controller.Dispose();
     }
 
     /// Remote Play penceresinden okurken PS5 kaydı gerekmez: sihirbaz açılmaz, kurulum kaydı değişmez, çeviri pencere
@@ -1294,6 +1424,11 @@ public class AppControllerRunTests
             AppController.StatusText(SessionState.Disconnected(DisconnectKind.Other, "Session Request RP Version Mismatch"), true, text));
         Assert.Equal("Reconnecting…", AppController.StatusText(SessionState.Disconnected(DisconnectKind.Other), true, text));
         Assert.Equal("Not connected", AppController.StatusText(SessionState.Disconnected(DisconnectKind.Stopped), false, text));
+        // PS5 oturum isteğini reddetti: libchiaki'nin "Unknown Session Request Error"u yerine anlamlı metin ve kod.
+        Assert.Equal("PS5 bağlantıyı reddetti (kod 0x80108bff). Başka bir Uzaktan Oynatma (PS Remote Play) açık olabilir ya da PS5 başka bir oturumda olabilir. PS Remote Play'i kapatın, PS5'i yeniden başlatıp tekrar deneyin.",
+            AppController.StatusText(SessionState.Disconnected(DisconnectKind.Rejected, "0x80108bff"), true, Localizer.ForLanguage("tr")));
+        Assert.Equal("The PS5 didn't start the session. Another Remote Play app (PS Remote Play) may be open, or the PS5 may be in another session. Close PS Remote Play, restart the PS5, then try again.",
+            AppController.StatusText(SessionState.Disconnected(DisconnectKind.Rejected), true, text));
     }
 
     /// Eşleştirme başarılıyken çeviri başlamadan ana ekran "Bağlı değil" demez (kullanıcı PS5'i bağlanmamış sanıyordu).
@@ -1669,4 +1804,19 @@ internal sealed class FakeDubbingModel(bool installed) : IDubbingModel
     public Task DownloadAsync(IProgress<double> progress, CancellationToken cancellationToken) => Task.CompletedTask;
     public byte[] VoiceFile(DubbingVoice voice) => [];
     public ISpeechSynthesizer CreateSynthesizer() => throw new NotSupportedException();
+}
+
+internal sealed class FakeXbox(IReadOnlyList<XboxConsole> consoles) : IXboxService
+{
+    public List<bool> LegacyFrameRateRequests { get; } = [];
+    public event Action<string>? TokenUpdated { add { } remove { } }
+    public void Clear() { }
+    public Task<XboxLoginChallenge> BeginLoginAsync() => throw new NotSupportedException();
+    public Task<string> CompleteLoginAsync() => throw new NotSupportedException();
+    public Task<IReadOnlyList<XboxConsole>> DiscoverAsync(string token) => Task.FromResult(consoles);
+    public IStreamSession MakeStream(XboxConsole console, string token, bool legacyFrameRate)
+    {
+        LegacyFrameRateRequests.Add(legacyFrameRate);
+        return new FakeStream();
+    }
 }

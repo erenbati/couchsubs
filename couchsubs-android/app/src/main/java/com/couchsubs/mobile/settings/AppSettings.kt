@@ -136,6 +136,19 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean("showSpeakerNames", true)
         set(value) = prefs.edit().putBoolean("showSpeakerNames", value).apply()
 
+    /**
+     * Xbox ev yayınında oyunun sesi bu telefonda çalınır. Xbox uzaktan oynatma sürerken sesi istemciye verip TV'yi
+     * susturabilir; kapalıyken ses hiçbir yerden gelmeyebilir, bu yüzden varsayılan açık. PS5'i etkilemez.
+     */
+    var xboxAudioOnDevice: Boolean
+        get() = prefs.getBoolean("xboxAudioOnDevice", true)
+        set(value) = prefs.edit().putBoolean("xboxAudioOnDevice", value).apply()
+
+    /** Değişmeyen altyazı bölgesi 20 yerine en fazla 2 kare yeniden kullanılır (Mac/Windows ile aynı); varsayılan kapalı. */
+    var fastSubtitleDetection: Boolean
+        get() = prefs.getBoolean("fastSubtitleDetection", false)
+        set(value) = prefs.edit().putBoolean("fastSubtitleDetection", value).apply()
+
     /** Bu PS5'te son seçilen oyun ("Hangi oyunu oynuyorsunuz?" kartının ilk önerisi). */
     fun lastGame(console: String): String? = prefs.getString("lastGame.$console", null)
 
@@ -176,6 +189,19 @@ class AppSettings(context: Context) {
         get() = enumOr(prefs.getString("tvDisplayMode", null), com.couchsubs.mobile.core.TvDisplayMode.IN_APP)
         set(value) = prefs.edit().putString("tvDisplayMode", value.name).apply()
 
+    /**
+     * TV'de çevirinin yeri: İngilizce altyazının üstünü örtsün (varsayılan), üstünde, altında ya da sabit yükseklikte.
+     * Üstünde/altında seçilince oyundaki İngilizce altyazı da görünür (Mac ve Windows'taki Yeri seçimi, iPhone ile aynı).
+     */
+    var tvPlacement: SubtitlePlacement
+        get() = enumOr(prefs.getString("tvPlacement", null), SubtitlePlacement.COVER)
+        set(value) = prefs.edit().putString("tvPlacement", value.name).apply()
+
+    /** Sabit yerdeyken altyazının ekranın altından yüksekliği, yüzde (0-85; TV uygulamasıyla aynı sınır). */
+    var tvBottomPercent: Int
+        get() = prefs.getInt("tvBottomPercent", 7).coerceIn(0, 85)
+        set(value) = prefs.edit().putInt("tvBottomPercent", value.coerceIn(0, 85)).apply()
+
     /** TV'deki yazı boyu: 36, 46, 58, 72. */
     var tvFontSize: Int
         get() = prefs.getInt("tvFontSize", 46)
@@ -186,8 +212,8 @@ class AppSettings(context: Context) {
      * (iPhone ile aynı: %120 → 55); eskiden ölçek yalnız telefon ekranını değiştiriyor, TV hep 46 kalıyordu.
      */
     val style: SubtitleStyle
-        get() = SubtitleStyle(fontSize = scaledFontSize(tvFontSize, subtitleScale), placement = SubtitlePlacement.COVER,
-            background = tvBackground, backgroundShape = tvBackgroundShape, textColor = textColor, stackPrevious = stackPrevious,
+        get() = SubtitleStyle(fontSize = scaledFontSize(tvFontSize, subtitleScale), placement = tvPlacement,
+            bottomPercent = tvBottomPercent, background = tvBackground, backgroundShape = tvBackgroundShape, textColor = textColor, stackPrevious = stackPrevious,
             displayMode = tvDisplayMode)
 
     /** Altyazının arandığı bölge (Ayarlar › Altyazı alanı; iPhone ile aynı hazır seçimler ve Özel). */
@@ -243,7 +269,8 @@ class AppSettings(context: Context) {
     fun onStyleChanged(action: () -> Unit): SharedPreferences.OnSharedPreferenceChangeListener {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == "subtitleScale" || key == "textColor" || key == "tvFontSize" ||
-                key == "tvBackground" || key == "tvBackgroundShape" || key == "stackPrevious" || key == "tvDisplayMode") action()
+                key == "tvBackground" || key == "tvBackgroundShape" || key == "stackPrevious" || key == "tvDisplayMode" ||
+                key == "tvPlacement" || key == "tvBottomPercent") action()
         }
         prefs.registerOnSharedPreferenceChangeListener(listener)
         return listener
@@ -253,8 +280,16 @@ class AppSettings(context: Context) {
         prefs.unregisterOnSharedPreferenceChangeListener(listener)
 
     companion object {
+        /**
+         * Yazı ölçeğinin sınırları, yüzde (iPhone ile aynı). Alt sınır eskiden %80'di (TV'de 37 piksel); TV'de en küçüğü
+         * bile büyük kalıyordu (#218). %40, TV'de 18 piksel: Mac'teki (20) ve Windows'taki (16) en küçük boya denk.
+         */
+        const val MIN_SUBTITLE_SCALE = 40
+        const val MAX_SUBTITLE_SCALE = 160
+
         /** Yüzde ölçekle yazı boyu (yuvarlanır). */
-        fun scaledFontSize(base: Int, percent: Int): Int = Math.round(base * percent.coerceIn(80, 160) / 100.0).toInt()
+        fun scaledFontSize(base: Int, percent: Int): Int =
+            Math.round(base * percent.coerceIn(MIN_SUBTITLE_SCALE, MAX_SUBTITLE_SCALE) / 100.0).toInt()
     }
 
     /** PSN hesap kimliği (8 bayt, base64). */
@@ -323,10 +358,10 @@ class AppSettings(context: Context) {
         get() = prefs.getLong("lastExitReportAt", 0)
         set(value) = prefs.edit().putLong("lastExitReportAt", value).apply()
 
-    /** Altyazı yazı ölçeği, yüzde (80–160; tasarım: Ayarlar › Altyazı görünümü). */
+    /** Altyazı yazı ölçeği, yüzde (40–160; tasarım: Ayarlar › Altyazı görünümü). */
     var subtitleScale: Int
-        get() = prefs.getInt("subtitleScale", 100)
-        set(value) = prefs.edit().putInt("subtitleScale", value.coerceIn(80, 160)).apply()
+        get() = prefs.getInt("subtitleScale", 100).coerceIn(MIN_SUBTITLE_SCALE, MAX_SUBTITLE_SCALE)
+        set(value) = prefs.edit().putInt("subtitleScale", value.coerceIn(MIN_SUBTITLE_SCALE, MAX_SUBTITLE_SCALE)).apply()
 
     /** Profil › Kullanım verisi: hata ve kullanım istatistikleri (Firebase, Meta olay adları). Varsayılan açık. */
     var usageData: Boolean

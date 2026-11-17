@@ -22,6 +22,8 @@ public partial class SecondAccountStep : UserControl
     /// <summary>"İkinci hesap yok mu?": görüntü bu bilgisayardaki Remote Play penceresinden okunur, kurulum biter.</summary>
     private void OnUseRemotePlayWindow(object sender, RoutedEventArgs e) => Controller.UseRemotePlayWindow();
 
+    private void OnUseCaptureWindow(object sender, RoutedEventArgs e) => Controller.UseCaptureWindow();
+
     private void OnDownloadSony(object sender, RoutedEventArgs e) => Open(AppController.SonyRemotePlayDownload);
     private void OnDownloadChiaki(object sender, RoutedEventArgs e) => Open(AppController.ChiakiDownload);
 

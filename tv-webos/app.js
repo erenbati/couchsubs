@@ -6,7 +6,7 @@
   'use strict';
 
   // TV uygulamasının sürümü: appinfo.json, tv-tizen/config.xml ve tv-android/app/build.gradle ile aynı tutulur.
-  var APP_VERSION = '0.9.21';
+  var APP_VERSION = '0.9.22';
   var t = window.t;
   var config = window.COUCHSUBS_CONFIG || {};
   var platform = window.COUCHSUBS_PLATFORM;
@@ -128,9 +128,156 @@
       inputError: ['inputError', 'bad'],
       sourceError: ['sourceError', 'bad']
     };
+    watchPicture(port);
     platform.showHdmi(port, $('video-host'), function (kind) {
       setStatus('st-video', t(statuses[kind][0]), statuses[kind][1]);
+      notePicture(port, kind);
     });
+  }
+
+  // --- HDMI görüntüsü gelmiyor ---
+  // LG'de HDMI girişi <video> ile (ext://hdmi), Samsung'da TVWindow ile açılır. Giriş açılamazsa ya da 10 sn içinde
+  // görüntü gelmezse ekran sessizce siyah kalıyordu (LG QNED: "Çeviriyi başlat"a basınca TV kararıyor). Artık nedeni ve
+  // HDMI girişi düğmeleri gösterilir; doğru girişte de siyahsa TV'nin kendi girişine dönüp altyazıyı telefonda izlemek
+  // önerilir. Android TV'deki giriş seçiciyle (#155) aynı akış; Android bunu kendi ekranında yaptığından orada kapalıdır.
+
+  var NO_PICTURE_MS = 10000;
+  var pictureTimer = null;
+  var pictureOk = false;
+  var noPictureClosed = false;
+  var noPictureFocus = 0;
+  var noPictureActions = [];
+
+  function watchPicture(port) {
+    clearTimeout(pictureTimer);
+    pictureOk = false;
+    noPictureClosed = false;
+    hideNoPicture();
+    if (!platform.noPictureHelp) return;
+    pictureTimer = setTimeout(function () {
+      // Bazı TV'ler görüntüyü gösterip 'playing' olayını hiç göndermiyor; görüntü varsa kutu açılmaz.
+      if (pictureOk || (platform.hasPicture && platform.hasPicture())) return;
+      showNoPicture(port, false);
+    }, NO_PICTURE_MS);
+  }
+
+  function notePicture(port, kind) {
+    if (port !== hdmiPort) return;
+    if (kind === 'ready' || kind === 'playing') {
+      pictureOk = true;
+      clearTimeout(pictureTimer);
+      hideNoPicture();
+    } else if (kind === 'inputError' || kind === 'sourceError') {
+      clearTimeout(pictureTimer);
+      if (platform.noPictureHelp) showNoPicture(port, true);
+    }
+  }
+
+  function noPictureShown() { return $('no-picture').className !== 'hidden'; }
+
+  function showNoPicture(port, failed) {
+    if (noPictureClosed || pictureOk || demoRunning()) return;
+    // Neden ve ne yapılacağı düğmelerin üstünde; uzun "hâlâ siyah mı" açıklaması (index.html, #no-picture-help)
+    // düğmelerin altında, küçük ve ikincil renkte durur.
+    $('no-picture-text').textContent = t(failed ? 'noPictureError' : 'noPicture').replace('%1', port) + ' ' +
+      t('noPictureChoose');
+    var box = $('no-picture-choices');
+    box.innerHTML = '';
+    var actions = [];
+    for (var i = 1; i <= 4; i++) actions.push({ label: 'HDMI ' + i, port: i });
+    actions.push({ label: t('noPictureExit'), exit: true });
+    actions.push({ label: t('noPictureClose'), close: true });
+    for (var j = 0; j < actions.length; j++) {
+      var button = document.createElement('div');
+      button.className = 'button' + (actions[j].port === port ? ' current' : '');
+      button.textContent = actions[j].label;
+      button.addEventListener('click', choiceClick(actions[j], j));
+      // LG Magic Remote: işaretçinin üstünde durduğu düğme seçili olur; Tamam ve oklar oradan devam eder.
+      button.addEventListener('mouseover', choiceHover(j));
+      actions[j].el = button;
+      box.appendChild(button);
+    }
+    noPictureActions = actions;
+    $('panel').className = 'hidden';
+    $('waiting').className = 'hidden';
+    $('no-picture').className = '';
+    // Açık olandan sonraki giriş seçili gelir (HDMI 1 açıksa HDMI 2).
+    focusNoPicture(port % 4);
+  }
+
+  function choiceClick(action, index) {
+    return function (e) {
+      e.stopPropagation();
+      // Tamam tuşu işaretçi görünürken tıklama da gönderir; tuşla seçilen bir daha seçilmez.
+      if (Date.now() - lastOkKey < 400) return;
+      focusNoPicture(index);
+      runNoPicture(action);
+    };
+  }
+
+  function choiceHover(index) {
+    return function () {
+      if (index !== noPictureFocus) focusNoPicture(index);
+    };
+  }
+
+  function focusNoPicture(index) {
+    var count = noPictureActions.length;
+    noPictureFocus = (index + count) % count;
+    for (var i = 0; i < count; i++) {
+      var el = noPictureActions[i].el;
+      el.className = el.className.replace(' focused', '') + (i === noPictureFocus ? ' focused' : '');
+    }
+  }
+
+  // ▲▼: düğmeler iki satıra bölünürse (uzun dil, dar ekran) bir üst/alt satırda yatayda en yakın düğmeye geçer.
+  // Tek satırda yerinde kalır (◀▶ zaten sırayla gezer).
+  function focusNoPictureRow(step) {
+    var current = noPictureActions[noPictureFocus].el;
+    var top = current.offsetTop;
+    var center = current.offsetLeft + current.offsetWidth / 2;
+    var best = -1, bestRow = 0, bestSide = 0;
+    for (var i = 0; i < noPictureActions.length; i++) {
+      var el = noPictureActions[i].el;
+      var row = (el.offsetTop - top) * step;
+      // Aynı satırdakiler (birkaç piksel fark dahil) ve ters yöndekiler atlanır.
+      if (row <= 2) continue;
+      var side = Math.abs(el.offsetLeft + el.offsetWidth / 2 - center);
+      if (best < 0 || row < bestRow - 2 || (Math.abs(row - bestRow) <= 2 && side < bestSide)) {
+        best = i;
+        bestRow = row;
+        bestSide = side;
+      }
+    }
+    if (best >= 0) focusNoPicture(best);
+  }
+
+  function runNoPicture(action) {
+    if (action.exit) {
+      hideNoPicture();
+      leaving = true;
+      platform.exit();
+    } else if (action.close) {
+      closeNoPicture();
+    } else {
+      hdmiPort = action.port;
+      save('hdmi', hdmiPort);
+      showHdmi(hdmiPort);
+      showPanel(true);
+    }
+  }
+
+  // Kullanıcı kutuyu kapattı: başka giriş seçilene ya da uygulama yeniden başlatılana kadar yeniden açılmaz.
+  function closeNoPicture() {
+    noPictureClosed = true;
+    hideNoPicture();
+  }
+
+  function hideNoPicture() {
+    var el = $('no-picture');
+    if (!el || el.className === 'hidden') return;
+    el.className = 'hidden';
+    if (!server && !demoRunning()) $('waiting').className = '';
   }
 
   function autoSelectConsole(onNotFound) {
@@ -371,6 +518,22 @@
   var SCREEN_PAD = 0.004;
   var SCREEN_MIN_FONT = 14;
 
+  // Yalnız aşağıdaki bağımsız kutular büyümeyi sınırlar; kaynakta zaten üst üste olan
+  // kutuların yerini değiştirmeyiz. Aynı hesap bütün sonuçlar için yapılır, sıra önemli değildir.
+  function screenBottom(items, box, left, width, screenWidth, screenHeight) {
+    var bottom = screenHeight;
+    for (var j = 0; j < items.length; j++) {
+      var other = items[j];
+      var next = validBox(other && other.box);
+      if (!next || !other.text || next.top < box.bottom) continue;
+      var nextLeft = Math.max(0, next.left - SCREEN_PAD) * screenWidth;
+      var nextWidth = Math.max(80, (Math.min(1, next.right + SCREEN_PAD) * screenWidth - nextLeft));
+      if (left < nextLeft + nextWidth && left + width > nextLeft)
+        bottom = Math.min(bottom, Math.max(0, next.top - SCREEN_PAD) * screenHeight);
+    }
+    return bottom;
+  }
+
   function showScreen(items, duration) {
     var host = $('screen');
     // "Ekran çevriliyor…" yazısı sonuçların üstünde kalmasın.
@@ -391,18 +554,23 @@
       var boxHeight = (box.bottom - box.top + 2 * SCREEN_PAD) * height;
       el.style.left = (left * 100) + '%';
       el.style.top = (top * 100) + '%';
-      el.style.width = Math.max(80, (Math.min(1, box.right + SCREEN_PAD) - left) * width) + 'px';
-      el.style.minHeight = Math.round(boxHeight) + 'px';
+      var itemWidth = Math.max(80, (Math.min(1, box.right + SCREEN_PAD) - left) * width);
+      el.style.width = itemWidth + 'px';
+      // Bir piksel pay, tarayıcının kesirli koordinat/scrollHeight yuvarlamasını karşılar.
+      var available = Math.max(0, Math.floor(screenBottom(items, box, left * width, itemWidth, width, height) - top * height) - 1);
+      el.style.minHeight = Math.min(Math.round(boxHeight), available) + 'px';
       var line = typeof item.line === 'number' && item.line > 0 ? item.line * height : box.bottom * height - box.top * height;
       var size = Math.max(SCREEN_MIN_FONT, Math.min(96, Math.round(line * 0.95)));
       el.style.fontSize = size + 'px';
       host.appendChild(el);
       // Türkçe çoğu zaman İngilizceden uzundur: kutu biraz uzayabilir, daha fazlası için yazı küçülür.
-      var limit = Math.max(boxHeight * 1.5, line * 2.6);
+      var limit = Math.min(available, Math.max(boxHeight * 1.5, line * 2.6));
       while (el.scrollHeight > limit && size > SCREEN_MIN_FONT) {
-        size -= 2;
+        size = Math.max(SCREEN_MIN_FONT, size - 2);
         el.style.fontSize = size + 'px';
       }
+      // En küçük okunabilir boyutta da sığmayan metni kesmeyiz/gizlemeyiz.
+      // Bu uç durumda eski doğal büyüme davranışı korunur.
     }
     clearTimeout(screenTimer);
     screenTimer = setTimeout(hideScreen, duration || 20000);
@@ -476,10 +644,15 @@
 
   // Konum hem CouchSubs uygulamasından hem kumandanın oklarıyla ayarlanır. Kumandayla
   // seçilen konum, uygulamadaki ayar değişene kadar korunur (son değiştiren geçerlidir).
+  // Alttan en az %3: ekran kenarı taşan (overscan) TV'lerde altyazının alt satırı kesilmesin.
+  var BOTTOM_MIN_PERCENT = 3;
+
   function setBottom(percent) {
-    bottomPercent = Math.max(0, Math.min(85, percent));
+    bottomPercent = Math.max(BOTTOM_MIN_PERCENT, Math.min(85, percent));
     layout();
   }
+
+  var SIDE_MIN = 0.05;
 
   // Altyazıyı seçilen yerleşime göre konumlar. İngilizce altyazının yeri bilinmiyorsa sabit yükseklik kullanılır.
   function layout() {
@@ -502,11 +675,11 @@
     if (mode === 'below' && box.bottom > 0.88) mode = 'above';
     if (mode === 'above' && box.top < 0.12) mode = 'below';
 
-    // Yatayda İngilizce satırın ortasına hizalanır.
+    // Yatayda İngilizce satırın ortasına hizalanır; yanlarda güvenli alan (1920'de 96 piksel, %5) kadar boşluk kalır.
     var center = (box.left + box.right) / 2;
     var half = Math.max(0.3, Math.min(center, 1 - center));
-    el.style.left = (Math.max(0.02, center - half) * 100) + '%';
-    el.style.right = (Math.max(0.02, 1 - center - half) * 100) + '%';
+    el.style.left = (Math.max(SIDE_MIN, center - half) * 100) + '%';
+    el.style.right = (Math.max(SIDE_MIN, 1 - center - half) * 100) + '%';
 
     if (mode === 'cover') {
       // İngilizce yazı koyu bir zeminle örtülür, çeviri onun ortasına gelir.
@@ -550,8 +723,9 @@
     cover.style.bottom = Math.round(height - bottom) + 'px';
     cover.style.width = Math.round(right - left) + 'px';
     cover.style.height = Math.round(bottom - top) + 'px';
-    // %100 zemin tamamen opak: örtünün varsayılan %97'si altındaki yazıyı silik de olsa gösterirdi.
-    cover.style.background = solidBackground ? '#000' : '';
+    // Örtü telefondaki "Arka plan koyuluğu"na uyar: eskiden hep %97'ydi, kaydırıcı %0'da da kutu opak kalıyordu.
+    // %100 tamamen opaktır; koyuluğu göndermeyen eski sürümlerde style.css'teki %97 geçerlidir.
+    cover.style.background = coverBackground;
     cover.className = '';
   }
 
@@ -574,9 +748,19 @@
   // Çevirinin zemini (bilgisayardaki "Zemin koyuluğu"); boşsa style.css'teki varsayılan. Örtü varken saydam olur.
   var textBackground = '';
 
-  // Zemin %100 mü (tamamen opak) ve tam genişlik bant mı; eski bilgisayar uygulamaları alanı göndermez, yazı kadar kalır.
-  var solidBackground = false;
+  // Örtünün zemini (koyuluğa göre, %100'de tamamen opak; boşsa style.css'teki %97) ve tam genişlik bant mı; eski
+  // bilgisayar uygulamaları alanı göndermez, yazı kadar kalır.
+  var coverBackground = '';
   var bandShape = false;
+
+  // body'deki tek bir sınıfı açar ya da kapatır; diğerleri kalır. Eskiden className baştan yazılıyordu ve Android TV
+  // katmanının 'overlay' sınıfı ilk style olayında siliniyordu.
+  function setBodyClass(name, on) {
+    var body = document.body;
+    if (!body) return;
+    var rest = (' ' + body.className + ' ').replace(' ' + name + ' ', ' ');
+    body.className = (on ? rest + name : rest).replace(/^\s+|\s+$/g, '').replace(/\s+/g, ' ');
+  }
 
   // Bilgisayardaki "Yazı rengi" seçimi; bilinmeyen değer gelirse renk değişmez.
   var TEXT_COLORS = { white: '#FFFFFF', yellow: '#FFE135' };
@@ -592,11 +776,13 @@
     }
     if (PLACEMENTS[style.placement]) placement = style.placement;
     bandShape = style.backgroundShape === 'band';
-    document.body.className = bandShape ? 'band' : '';
+    setBodyClass('band', bandShape);
     if (typeof style.background === 'number') {
       var alpha = Math.max(0, Math.min(100, style.background)) / 100;
-      solidBackground = style.background >= 100;
+      // Zemin çok saydamsa yazıya sert kontur eklenir (style.css, body.thin-bg).
+      setBodyClass('thin-bg', alpha < 0.3);
       textBackground = 'rgba(0, 0, 0, ' + alpha + ')';
+      coverBackground = style.background >= 100 ? '#000' : textBackground;
       $('subtitle-text').style.background = textBackground;
       $('subtitle-prev-text').style.background = 'rgba(0, 0, 0, ' + (alpha * 0.83).toFixed(2) + ')';
       $('subtitle-prev2-text').style.background = 'rgba(0, 0, 0, ' + (alpha * 0.83).toFixed(2) + ')';
@@ -987,10 +1173,24 @@
     return match ? match[1] : null;
   }
 
+  // Bekleme ekranındaki durum satırı: TV'nin adresi (biliniyorsa; telefonda elle yazılabilir) ve aramanın sürdüğü.
+  // Adres ayrıca sorulmaz, taramanın zaten sorduğu adres kullanılır.
+  var tvAddress = null;
+
+  function renderWaitingStatus() {
+    var el = $('waiting-status');
+    if (!el) return;
+    el.textContent = (tvAddress ? t('waitingAddress').replace('%1', tvAddress) + ' · ' : '') + t('waitingSearching');
+  }
+
   // Taranacak ağlar: TV'nin kendi ağı, sonra kayıtlı adresin ağı (aynıysa bir kez).
   function scanSubnets(done) {
     var fromServer = subnetOf(server);
     function finish(ip) {
+      if (ip && ip !== tvAddress) {
+        tvAddress = ip;
+        renderWaitingStatus();
+      }
       var list = [];
       var own = subnetOf(ip);
       if (own) list.push(own);
@@ -1119,6 +1319,7 @@
   // Geri tuşu: önce ipucu, demo ya da panel kapanır; giriş ekranında TV'nin ana ekranına dönülür.
   function goBack() {
     if (sourceTipShown()) return hideSourceTip();
+    if (noPictureShown()) return closeNoPicture();
     if (demoRunning()) return stopDemo();
     if ($('panel').className !== 'hidden') return hidePanel();
     leaving = true;
@@ -1224,6 +1425,7 @@
   document.addEventListener('click', function () {
     if (Date.now() - lastOkKey < 400) return;
     if (sourceTipShown()) hideSourceTip();
+    else if (noPictureShown()) return;
     else if ($('waiting').className !== 'hidden') startDemo();
     else if (!demoRunning()) togglePanel();
   });
@@ -1233,6 +1435,14 @@
     if (code === KEY.OK) lastOkKey = Date.now();
     if (code === KEY.OK && sourceTipShown()) {
       hideSourceTip();
+    } else if (noPictureShown() && (code === KEY.LEFT || code === KEY.RIGHT)) {
+      focusNoPicture(noPictureFocus + (code === KEY.RIGHT ? 1 : -1));
+      e.preventDefault();
+    } else if (noPictureShown() && (code === KEY.UP || code === KEY.DOWN)) {
+      focusNoPictureRow(code === KEY.DOWN ? 1 : -1);
+      e.preventDefault();
+    } else if (noPictureShown() && code === KEY.OK) {
+      runNoPicture(noPictureActions[noPictureFocus]);
     } else if (code === 48) { // 0: elle seçimi unut, konsolu yeniden ara
       save('hdmi', '');
       autoSelectConsole(function () {
@@ -1278,6 +1488,7 @@
 
   $('app-version').textContent = APP_VERSION;
   renderDiag();
+  renderWaitingStatus();
   // Önceki açılışta TV kendiliğinden kaynağa geçtiyse ipucu şimdi gösterilir.
   maybeShowSourceTip();
   var initial = parseParams(platform.launchParams());

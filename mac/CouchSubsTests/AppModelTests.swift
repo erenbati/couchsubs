@@ -839,6 +839,11 @@ final class AppModelRunTests: XCTestCase {
         XCTAssertEqual(AppModel.statusText(.disconnected(.network), running: true), String(localized: "Can't reach the PS5. Reconnecting…"))
         XCTAssertEqual(AppModel.statusText(.disconnected(.registrationInvalid), running: true),
                        String(localized: "The PS5 didn't accept this pairing. Pair the PS5 again with the second account in Settings."))
+        // PS5 oturum isteğini reddetti: kod metinde, libchiaki'nin "Unknown Session Request Error"u değil (GitHub #33, #202).
+        let rejected = AppModel.statusText(.disconnected(.rejected(0x80108bff)), running: true)
+        XCTAssertTrue(rejected.contains("0x80108bff"))
+        XCTAssertFalse(rejected.contains("Unknown Session Request"))
+        XCTAssertFalse(AppModel.statusText(.disconnected(.rejected(nil)), running: true).contains("Unknown Session Request"))
         XCTAssertTrue(AppModel.statusText(.disconnected(.notFound("192.168.1.70")), running: true).contains("192.168.1.70"))
         XCTAssertTrue(AppModel.statusText(.disconnected(.other("Session Request RP Version Mismatch")), running: true)
             .contains("Session Request RP Version Mismatch"))

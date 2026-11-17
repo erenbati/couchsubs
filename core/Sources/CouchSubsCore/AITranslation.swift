@@ -373,13 +373,14 @@ public enum AIRequest {
         if let end = trimmed.range(of: "</think>", options: .backwards) {
             trimmed = String(trimmed[end.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        trimmed = stripControlTokens(trimmed)
         // ```json … ``` çitini at.
         if trimmed.hasPrefix("```") {
             trimmed = trimmed.split(separator: "\n", omittingEmptySubsequences: false).dropFirst()
                 .filter { !$0.hasPrefix("```") }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if let start = trimmed.firstIndex(of: "["), let end = trimmed.lastIndex(of: "]"), start < end,
-           let data = String(trimmed[start...end]).data(using: .utf8),
+           let data = withoutTrailingComma(String(trimmed[start...end])).data(using: .utf8),
            let list = try? JSONSerialization.jsonObject(with: data) as? [String] {
             guard list.count == count else { throw AIFailure.unreachable }
             return list.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -387,6 +388,19 @@ public enum AIRequest {
         if let list = unquotedList(trimmed, count: count) { return list }
         guard count == 1 else { throw AIFailure.unreachable }
         return [trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "\"“”"))]
+    }
+
+    /// Yerel modellerin metne sızan bitiş/rol işaretleri (`</s>`, `<|im_end|>`, `<|eot_id|>`, `<end_of_turn>` …)
+    /// ekranda görünmesin; yalnız bu kalıplar silinir, altyazıdaki başka `<…>` yazılara dokunulmaz.
+    static func stripControlTokens(_ text: String) -> String {
+        text.replacingOccurrences(of: #"</?s>|<\|[A-Za-z0-9_]{1,32}\|>|</?(?:start|end)_of_turn>|</?(?:eos|bos|pad)>"#,
+                                  with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// `["Bir.", "İki.",]` gibi sondaki fazla virgül JSON'u bozmasın.
+    static func withoutTrailingComma(_ text: String) -> String {
+        text.replacingOccurrences(of: #",\s*\]$"#, with: "]", options: .regularExpression)
     }
 
     /// Tırnaksız dizi: bazı yerel modeller JSON istense de `[Hareket etmemiz lazım.]` ya da `[Satır bir., Satır iki.]`
@@ -567,13 +581,16 @@ public final class AITranslationCore: @unchecked Sendable {
         // Bağlam, bu satırdan önce gösterilenlerdir; satırın kendisi bağlama girmez.
         let context = contextBeforeShowing(text, game: game)
         if let cached = cache.value(for: Self.cacheKey(text, game: game)) { return remember(cached, for: text, game: game) }
-        guard Date() >= lock.withLock({ pausedUntil }) else { return remember(try await fallback(text), for: text, game: game) }
         let pieces = SubtitleSegmenter.split(text)
         names.learn(from: pieces)
         // Önbellekte duran cümleler yeniden gönderilmez.
         var translations: [String?] = pieces.map { $0.translate ? cache.value(for: Self.cacheKey($0.text, game: game)) : nil }
         let missing = pieces.indices.filter { pieces[$0].translate && translations[$0] == nil }
         let sources = missing.map { SubtitleSegmenter.normalizeCase(pieces[$0].text, names: names.all) }
+        // Hizmetin beklemesi yalnız eksik çeviriler içindir; önbellekteki parçalar yerel motor istemez.
+        if !sources.isEmpty, Date() < lock.withLock({ pausedUntil }) {
+            return remember(try await fallback(text), for: text, game: game)
+        }
         // Dakikalık hak bittiyse istek gönderilmez; satır sessizce yerel çeviriyle çevrilir (hata değildir).
         let allowed = sources.isEmpty || budget?.take() != false
         lock.withLock { rateLimited = !allowed }
@@ -581,7 +598,7 @@ public final class AITranslationCore: @unchecked Sendable {
         let translated: [String]
         do {
             translated = sources.isEmpty ? [] : try await request(sources, context: context, game: game)
-            setFailure(nil)
+            if !sources.isEmpty { setFailure(nil) }
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as URLError where error.code == .cancelled && Task.isCancelled {
@@ -600,17 +617,45 @@ public final class AITranslationCore: @unchecked Sendable {
             lock.withLock { pausedUntil = Date().addingTimeInterval(Self.retryAfter) }
             return remember(try await fallback(text), for: text, game: game)
         }
+        var local = false
         for (index, sentence) in zip(missing, translated) {
+            let piece = pieces[index].text
+            if Self.isEcho(piece, sentence), let retried = try await Self.retryEcho(piece, fallback: fallback),
+               !Self.isEcho(piece, retried) {
+                // Yerel çeviri bu motorun önbelleğine yazılmaz.
+                translations[index] = retried
+                local = true
+                continue
+            }
             translations[index] = sentence
-            cache.store(sentence, for: Self.cacheKey(pieces[index].text, game: game))
+            cache.store(sentence, for: Self.cacheKey(piece, game: game))
         }
         let result = zip(pieces, translations).map { $1 ?? $0.text }.joined()
         lock.withLock {
             if speech.count >= 512 { speech.removeAll() }
             speech[Self.cacheKey(text, game: game)] = SpeechScript.lines(pieces: pieces, translations: translations)
         }
-        cache.store(result, for: Self.cacheKey(text, game: game))
+        if !local { cache.store(result, for: Self.cacheKey(text, game: game)) }
         return remember(result, for: text, game: game)
+    }
+
+    /// Model cümleyi çevirmeden geri verdi mi (hattın "zaten hedef dilde" eşiğiyle aynı). Küçük yerel modeller İngilizce
+    /// cümleyi sık sık olduğu gibi döndürüyor ("You think I'm on the run?"); hat bunu Türkçe sanıp hiç göstermiyor,
+    /// önbellek de öyle saklıyordu (#245).
+    static func isEcho(_ source: String, _ translation: String) -> Bool {
+        TextMatch.isSimilar(TextMatch.normalize(source), TextMatch.normalize(translation), threshold: 0.90)
+    }
+
+    /// Geri verilen cümle cihaz üstü çeviriyle bir kez daha denenir; o da aynı kalırsa (ad, konsolun Türkçe menüsü)
+    /// çevrilecek bir şey yoktur ve modelin yanıtı önbelleğe yazılır. Yerel çeviri yoksa ya da hata verirse nil.
+    private static func retryEcho(_ text: String, fallback: (String) async throws -> String) async throws -> String? {
+        do {
+            return try await fallback(text)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return nil
+        }
     }
 
     /// "Ekranı çevir": birbirinden bağımsız parçalar (menü satırı, görev yazısı...) tek istekte, aynı sırada çevrilir.

@@ -42,10 +42,12 @@ import com.couchsubs.mobile.BuildConfig
 import com.couchsubs.mobile.R
 import com.couchsubs.mobile.Services
 import com.couchsubs.mobile.core.SubtitleBackgroundShape
+import com.couchsubs.mobile.core.SubtitlePlacement
 import com.couchsubs.mobile.core.SubtitleTextColor
 import com.couchsubs.mobile.core.TvDisplayMode
 import com.couchsubs.mobile.remoteplay.LoginPasscode
 import com.couchsubs.mobile.service.TranslationService
+import com.couchsubs.mobile.settings.AppSettings
 import com.couchsubs.mobile.settings.EngineChoice
 import com.couchsubs.mobile.settings.SubtitleTarget
 import com.couchsubs.mobile.translation.AiModel
@@ -73,6 +75,7 @@ fun ProfileScreen(onBack: () -> Unit, onSettings: () -> Unit, onPairing: () -> U
     var pool by remember { mutableStateOf(settings.sharePool) }
     var askGame by remember { mutableStateOf(settings.askGame) }
     var speakerNames by remember { mutableStateOf(settings.showSpeakerNames) }
+    var fastReading by remember { mutableStateOf(settings.fastSubtitleDetection) }
     var usage by remember { mutableStateOf(settings.usageData) }
     LaunchedEffect(Unit) { tvs = withContext(Dispatchers.IO) { runCatching { TvDiscovery.search() }.getOrDefault(emptyList()) } }
     ScreenScaffold(top = { TopBar(stringResource(R.string.profile), onBack = onBack) { SettingsAction(onSettings) } }) {
@@ -107,6 +110,9 @@ fun ProfileScreen(onBack: () -> Unit, onSettings: () -> Unit, onPairing: () -> U
             { RowItem(stringResource(R.string.settings_speaker_names), stringResource(R.string.settings_speaker_names_short)) {
                 Switch(speakerNames, { speakerNames = it; settings.showSpeakerNames = it })
             } },
+            { RowItem(stringResource(R.string.settings_fast_reading), stringResource(R.string.settings_fast_reading_short)) {
+                Switch(fastReading, { fastReading = it; settings.fastSubtitleDetection = it })
+            } },
             { RowItem(stringResource(R.string.profile_usage), stringResource(R.string.profile_usage_note)) {
                 Switch(usage, { usage = it; Services.setUsageData(it) })
             } },
@@ -137,6 +143,8 @@ fun SettingsScreen(onBack: () -> Unit, onPacks: () -> Unit, onTarget: () -> Unit
     var screenOn by remember { mutableStateOf(settings.keepScreenOn) }
     var stackPrevious by remember { mutableStateOf(settings.stackPrevious) }
     var displayMode by remember { mutableStateOf(settings.tvDisplayMode) }
+    var placement by remember { mutableStateOf(settings.tvPlacement) }
+    var bottomPercent by remember { mutableStateOf(settings.tvBottomPercent.toFloat()) }
     var passcode by remember { mutableStateOf(settings.loginPasscode ?: "") }
     // Tuvaldeki dört seçenek: Ücretsiz, DeepL, Gemini, Diğer (OpenAI / Claude).
     val segment = when (engine) {
@@ -211,9 +219,12 @@ fun SettingsScreen(onBack: () -> Unit, onPacks: () -> Unit, onTarget: () -> Unit
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TileLabel(stringResource(R.string.settings_text_size))
                 Spacer(Modifier.weight(1f))
-                Text("%${scale.toInt()}", style = Tokens.Type.headline, color = Tokens.Color.text)
+                Text("%${Math.round(scale)}", style = Tokens.Type.headline, color = Tokens.Color.text)
             }
-            Slider(scale, { scale = it; settings.subtitleScale = it.toInt() }, valueRange = 80f..160f, steps = 7,
+            // %10 adımlarla %40–160 (iPhone ile aynı): 13 değer, aradaki 11 durak.
+            Slider(scale, { scale = it; settings.subtitleScale = Math.round(it) },
+                valueRange = AppSettings.MIN_SUBTITLE_SCALE.toFloat()..AppSettings.MAX_SUBTITLE_SCALE.toFloat(),
+                steps = (AppSettings.MAX_SUBTITLE_SCALE - AppSettings.MIN_SUBTITLE_SCALE) / 10 - 1,
                 colors = SliderDefaults.colors(thumbColor = Tokens.Color.text, activeTrackColor = Tokens.Color.accent,
                     inactiveTrackColor = Tokens.Color.borderStrong, activeTickColor = Color.Transparent, inactiveTickColor = Color.Transparent))
             // Önizleme altyazı içeriğidir: boyu ölçeğe göre değişir.
@@ -245,6 +256,32 @@ fun SettingsScreen(onBack: () -> Unit, onPacks: () -> Unit, onTarget: () -> Unit
                 settings.tvBackgroundShape = shape
             }
             Text(stringResource(R.string.settings_background_note), style = Tokens.Type.caption, color = Tokens.Color.secondary)
+            // TV'de çevirinin yeri (Mac ve Windows'taki Yeri seçimi, iPhone ile aynı): üstünde/altında seçilince oyundaki
+            // İngilizce altyazı da görünür; sabit yerde yükseklik kaydırıcıyla ayarlanır, bırakınca TV'de örnek altyazı çıkar.
+            if (settings.target == SubtitleTarget.TV) {
+                val placements = listOf(SubtitlePlacement.COVER, SubtitlePlacement.ABOVE, SubtitlePlacement.BELOW, SubtitlePlacement.FIXED)
+                TileLabel(stringResource(R.string.settings_placement))
+                Segmented(listOf(stringResource(R.string.settings_placement_cover), stringResource(R.string.settings_placement_above),
+                    stringResource(R.string.settings_placement_below), stringResource(R.string.settings_placement_fixed)),
+                    placements.indexOf(placement).coerceAtLeast(0)) {
+                    placement = placements[it]
+                    settings.tvPlacement = placement
+                }
+                if (placement == SubtitlePlacement.FIXED) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TileLabel(stringResource(R.string.settings_position_height))
+                        Spacer(Modifier.weight(1f))
+                        Text("%${bottomPercent.toInt()}", style = Tokens.Type.headline, color = Tokens.Color.text)
+                    }
+                    Slider(bottomPercent, { bottomPercent = it; settings.tvBottomPercent = it.toInt() }, valueRange = 0f..85f,
+                        onValueChangeFinished = { TranslationService.sendTestSubtitle(context.getString(R.string.test_subtitle_text)) },
+                        colors = SliderDefaults.colors(thumbColor = Tokens.Color.text, activeTrackColor = Tokens.Color.accent,
+                            inactiveTrackColor = Tokens.Color.borderStrong, activeTickColor = Color.Transparent, inactiveTickColor = Color.Transparent))
+                    Text(stringResource(R.string.settings_placement_fixed_note), style = Tokens.Type.caption, color = Tokens.Color.secondary)
+                } else {
+                    Text(stringResource(R.string.settings_placement_note), style = Tokens.Type.caption, color = Tokens.Color.secondary)
+                }
+            }
             RowItem(stringResource(R.string.settings_stack_previous)) { Switch(stackPrevious, { stackPrevious = it; settings.stackPrevious = it }) }
             Text(stringResource(R.string.settings_stack_previous_note), style = Tokens.Type.caption, color = Tokens.Color.secondary)
             // Yalnız Android TV uygulaması kullanır: bazı TV'lerde (ör. TCL) uygulama içindeki PS5 görüntüsü siyah kalıyor.
@@ -277,7 +314,8 @@ fun SettingsScreen(onBack: () -> Unit, onPacks: () -> Unit, onTarget: () -> Unit
                 keyboard = KeyboardOptions(keyboardType = KeyboardType.NumberPassword))
             Text(stringResource(R.string.settings_passcode_note), style = Tokens.Type.caption, color = Tokens.Color.secondary)
         }
-        RowList(listOf(
+        var xboxAudio by remember { mutableStateOf(settings.xboxAudioOnDevice) }
+        RowList(listOfNotNull<@Composable () -> Unit>(
             { RowItem(stringResource(R.string.settings_packs), onClick = onPacks) { Pill(stringResource(if (settings.packsEnabled) R.string.main_packs_on else R.string.main_packs_off)) } },
             { RowItem(stringResource(R.string.settings_target), if (settings.target == SubtitleTarget.TV) settings.tvName ?: stringResource(R.string.main_target_tv)
                 else stringResource(R.string.main_target_phone), onClick = onTarget) },
@@ -285,6 +323,10 @@ fun SettingsScreen(onBack: () -> Unit, onPacks: () -> Unit, onTarget: () -> Unit
                 if (settings.xbox) Pill(stringResource(R.string.beta)) } },
             if (settings.xbox) ({ RowItem("Xbox", settings.xboxConsole?.name ?: stringResource(R.string.profile_not_paired), onClick = onPairing) })
             else ({ RowItem(stringResource(R.string.settings_ps5), settings.console?.name ?: stringResource(R.string.profile_not_paired), onClick = onPairing) }),
+            // Yalnız Xbox: uzaktan oynatmada Xbox sesi istemciye verip TV'yi susturabilir (PS5'te ses TV'de kalır).
+            if (settings.xbox) ({ RowItem(stringResource(R.string.settings_xbox_audio), stringResource(R.string.settings_xbox_audio_short)) {
+                Switch(xboxAudio, { xboxAudio = it; settings.xboxAudioOnDevice = it })
+            } }) else null,
             { RowItem(stringResource(R.string.settings_about), BuildConfig.VERSION_NAME, onClick = { open(context, context.getString(R.string.url_source)) }) },
         ))
         XboxSignOutRow()

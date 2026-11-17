@@ -26,19 +26,16 @@ public sealed class LiveServices : IAppServices
     public Task<OnlineKeyCheck> CheckOnlineKeyAsync(string key) => DeepLTranslator.CheckAsync(key);
 
     // Her model kendi önbelleğini kullanır ("gemini:gemini-3.5-flash-lite"); model değişince eski çeviriler karışmaz.
-    public ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback) =>
+    public ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback, Func<string?>? game) =>
         new AiTranslator(provider, key, model, fallback, cache: TranslationCache.Shared(AppPaths.Translations, provider.EngineId(model), "en", "tr"),
-                         game: PlayedGame);
+                         game: game);
 
     public Task<AiTestResult> TestAiKeyAsync(AiProvider provider, string key, string model) => AiTranslator.TestAsync(provider, key, model);
 
     // Yerel model: önbellekte sunucu ve model ayrı tutulur ("local:localhost:11434/qwen2.5:7b").
-    public ITextTranslator? MakeLocalAiTranslator(LocalAiServer server, string key, ITextTranslator? fallback) =>
+    public ITextTranslator? MakeLocalAiTranslator(LocalAiServer server, string key, ITextTranslator? fallback, Func<string?>? game) =>
         new AiTranslator(AiProvider.Local, key, server.Model, fallback, cache: TranslationCache.Shared(AppPaths.Translations, server.EngineId, "en", "tr"),
-                         server: server, game: PlayedGame);
-
-    /// <summary>Oyun paketi eşleştiyse oynanan oyunun adı; yapay zekâya bağlam olarak gider.</summary>
-    private string? PlayedGame() => GamePacks?.ScopeTitle;
+                         server: server, game: game);
 
     public Task<AiTestResult> TestLocalAiAsync(LocalAiServer server, string key) =>
         AiTranslator.TestAsync(AiProvider.Local, key, server.Model, server: server);
@@ -109,6 +106,8 @@ public sealed class LiveServices : IAppServices
         new StreamSession(console, accountId, loginPasscode);
 
     public IStreamSession MakeWindowStream(RemotePlayApp app) => new RemotePlayWindowStream(app);
+    public IStreamSession MakeCaptureWindowStream(WindowCaptureTarget target) => new RemotePlayWindowStream(target);
+    public IReadOnlyList<WindowCaptureTarget> CaptureWindows() => RemotePlayWindowStream.ListCaptureWindows();
     public bool RemotePlayInstalled(RemotePlayApp app) => RemotePlayWindowStream.IsInstalled(app);
 
     public IKeeper MakeKeeper(LgTv tv, string? key, IReadOnlyDictionary<string, string> parameters, Func<bool> appConnected, Action<LgTv> onMoved,
@@ -358,8 +357,11 @@ public sealed class LiveServices : IAppServices
     private sealed class MarianModel : ITranslationModel
     {
         private readonly Ct2ModelStore englishTurkish = new(Path.Combine(AppPaths.Models, "en-tr-ct2"));
+        private readonly CudaRuntimeStore cuda = new(Path.Combine(AppPaths.Data, "cuda-12.8"));
         private MarianTranslator? translator;
+        private Task? cudaDownload;
         private TranslationDevice device = TranslationDevice.Cpu;
+        private int cpuThreads = CpuThreadOptions.Default;
         private int failed;
 
         public event Action? EngineFailure;
@@ -369,6 +371,24 @@ public sealed class LiveServices : IAppServices
         {
             if (device == selected) return;
             device = selected;
+            // NVIDIA sürücüsü (nvcuda.dll) yoksa ~565 MB indirme boşa gider; doğrudan CPU'ya düşülür.
+            if (selected == TranslationDevice.Gpu && File.Exists(Path.Combine(Environment.SystemDirectory, "nvcuda.dll")))
+            {
+                cudaDownload = cuda.StartDownload();
+                _ = cudaDownload.ContinueWith(task =>
+                    StartupGuard.Log("CUDA çalışma zamanı indirilemedi", task.Exception!),
+                    CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+            }
+            translator?.Dispose();
+            translator = null;
+            Interlocked.Exchange(ref failed, 0);
+        }
+
+        public void SelectCpuThreads(int selected)
+        {
+            selected = CpuThreadOptions.Normalize(selected, Environment.ProcessorCount);
+            if (cpuThreads == selected) return;
+            cpuThreads = selected;
             translator?.Dispose();
             translator = null;
             Interlocked.Exchange(ref failed, 0);
@@ -416,7 +436,9 @@ public sealed class LiveServices : IAppServices
             {
                 created = new MarianTranslator(englishTurkish.InstallDirectory,
                     cache: TranslationCache.Shared(AppPaths.Translations, MarianTranslator.EngineId, "en", "tr"),
-                    useGpu: device == TranslationDevice.Gpu, onGpuFallback: () => GpuFallback?.Invoke());
+                    useGpu: device == TranslationDevice.Gpu, onGpuFallback: () => GpuFallback?.Invoke(),
+                    cudaReady: cudaDownload, cudaDirectory: cuda.InstallDirectory,
+                    cpuThreads: cpuThreads);
             }
             catch (Exception error)
             {
@@ -472,6 +494,6 @@ public sealed class FileSettingsStore : ISettingsStore
 
 public sealed class WindowsSleepGuard : ISleepGuard
 {
-    public void Begin() => SleepGuard.Begin();
+    public void Begin(bool keepDisplayOn) => SleepGuard.Begin(keepDisplayOn);
     public void End() => SleepGuard.End();
 }

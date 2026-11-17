@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Kurulumun PSN adımı (tuval: Telefon-PSN). Sony'nin giriş sayfası uygulama içi WebView'da açılır; yönlendirme
 // yakalanır, parola yalnız Sony'ye gider. "Tarayıcıda aç" (adresi yapıştırma) ve "Kapat" hep ekrandadır; sayfa
-// LOAD_TIMEOUT_MS içinde giriş formunu çizmezse nedeni ve "Yeniden dene" gösterilir.
+// LOAD_TIMEOUT_MS içinde giriş formunu çizmezse nedeni ve "Yeniden dene" gösterilir. "Google ile giriş" seçilince
+// (Google WebView'da girişi reddeder) giriş kendiliğinden tarayıcıya geçer. Tarayıcıdan dönünce panodaki yönlendirme
+// adresi kendiliğinden alınır; ekran durumu uygulama arka planda kapatılsa da korunur.
 package com.couchsubs.mobile.ui
 
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -51,11 +54,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -65,8 +70,11 @@ import com.couchsubs.mobile.Services
 import com.couchsubs.mobile.remoteplay.PsnAccount
 import com.couchsubs.mobile.remoteplay.PsnLoadWatch
 import com.couchsubs.mobile.remoteplay.PsnPageProblem
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -80,17 +88,34 @@ private enum class PsnMode { INTRO, WEB, BROWSER }
 
 @Composable
 fun PsnLoginScreen(onBack: (() -> Unit)? = null, onSkip: (() -> Unit)? = null, onDone: () -> Unit) {
-    var mode by remember { mutableStateOf(PsnMode.INTRO) }
+    // Tarayıcıdayken Android uygulamayı kapatabilir ya da etkinliği yeniden kurabilir; dönünce yapıştırma ekranı
+    // yerinde kalsın diye kaydedilir (eskiden giriş ekranına dönülüyordu, adresi yapıştıracak yer kalmıyordu).
+    var mode by rememberSaveable { mutableStateOf(PsnMode.INTRO) }
+    var viaGoogle by rememberSaveable { mutableStateOf(false) }
+    // Son denenen yönlendirme: panoda kalan eski (kullanılmış) kod kendiliğinden yeniden denenmez.
+    var tried by rememberSaveable { mutableStateOf<String?>(null) }
     var problem by remember { mutableStateOf<String?>(null) }
     var why by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    // Önceki girişin verisi giriş ekranı görünür görünmez silinir: kullanıcı "Giriş"e basana kadar WebView ısınır ve
+    // temizlik biter. Eskiden temizlik sayfa açılmadan hemen önce yapılıyordu; ilk açılışta (WebView soğukken) 2 sn'de
+    // bitmiyor, sayfa yine açılıyor, geç biten temizlik Sony'nin ilk yönlendirmede koyduğu çerezleri ve sayfa verisini
+    // siliyordu: giriş sayfası boş kalıyor, ancak "Tarayıcıda aç" ile girilebiliyordu (GitHub #54). Ekranın kapsamında
+    // çalışır: "Giriş"e basılınca yarıda kesilmez.
+    var earlyCleanup by remember { mutableStateOf<Deferred<Result<Unit>>?>(null) }
+    LaunchedEffect(mode) {
+        if (mode == PsnMode.INTRO) earlyCleanup = scope.async { PsnWebData.clear() }
+    }
 
     // Yönlendirme (uygulama içinden ya da tarayıcıdan yapıştırılan) hesap kimliğine çevrilir.
     fun finish(redirect: String) {
+        tried = redirect
         scope.launch {
             try {
                 Services.settings.accountId = withContext(Dispatchers.IO) { PsnAccount.accountIdFromRedirect(redirect) }
+                // Kod tek kullanımlıktır: panoda kalırsa sonraki girişte yeniden denenmesin.
+                clearClipIf(context, redirect)
                 onDone()
             } catch (error: Exception) {
                 Log.w(TAG, "PSN girişi tamamlanmadı", error)
@@ -100,7 +125,8 @@ fun PsnLoginScreen(onBack: (() -> Unit)? = null, onSkip: (() -> Unit)? = null, o
         }
     }
 
-    fun openBrowser() {
+    fun openBrowser(google: Boolean = false) {
+        viaGoogle = google
         mode = PsnMode.BROWSER
         openInBrowser(context)
     }
@@ -137,15 +163,40 @@ fun PsnLoginScreen(onBack: (() -> Unit)? = null, onSkip: (() -> Unit)? = null, o
             if (why) InfoDialog(stringResource(R.string.psn_why), stringResource(R.string.psn_why_body)) { why = false }
         }
         PsnMode.WEB -> PsnWebLogin(
+            earlyCleanup = earlyCleanup,
             onRedirect = ::finish,
             onClose = { mode = PsnMode.INTRO },
-            onBrowser = ::openBrowser,
+            onBrowser = { openBrowser() },
+            onGoogle = { openBrowser(google = true) },
         )
         PsnMode.BROWSER -> PsnBrowserLogin(
+            viaGoogle = viaGoogle,
+            tried = tried,
             onRedirect = ::finish,
             onReopen = { openInBrowser(context) },
             onClose = { mode = PsnMode.INTRO },
         )
+    }
+}
+
+private fun clipboard(context: Context) = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+
+/** Panodaki ilk öğenin metni; pano okunamazsa (odak yok, üretici kısıtı) null. */
+private fun readClip(context: Context): String? = try {
+    clipboard(context)?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+} catch (error: RuntimeException) {
+    Log.w(TAG, "Pano okunamadı", error)
+    null
+}
+
+/** Panoda hâlâ bu yönlendirme varsa silinir (Android 9+). */
+private fun clearClipIf(context: Context, redirect: String) {
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.P) return
+    if (readClip(context)?.let(PsnAccount::redirectFromText) != redirect) return
+    try {
+        clipboard(context)?.clearPrimaryClip()
+    } catch (error: RuntimeException) {
+        Log.w(TAG, "Pano silinemedi", error)
     }
 }
 
@@ -163,7 +214,13 @@ private fun openInBrowser(context: Context) {
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun PsnWebLogin(onRedirect: (String) -> Unit, onClose: () -> Unit, onBrowser: () -> Unit) {
+private fun PsnWebLogin(
+    earlyCleanup: Deferred<Result<Unit>>?,
+    onRedirect: (String) -> Unit,
+    onClose: () -> Unit,
+    onBrowser: () -> Unit,
+    onGoogle: () -> Unit,
+) {
     // Her "Yeniden dene" yeni bir WebView kurar (çöken sayfa süreci de böyle atılır).
     var attempt by remember { mutableIntStateOf(0) }
     var progress by remember { mutableIntStateOf(0) }
@@ -206,23 +263,20 @@ private fun PsnWebLogin(onRedirect: (String) -> Unit, onClose: () -> Unit, onBro
                         }
                     }
                     // Her girişte temiz oturum: önceki çerezler (ör. kendi hesabın) karışmasın. Silme eşzamansızdır; sayfa
-                    // bittikten sonra açılır (yoksa Sony'nin ilk yönlendirmede koyduğu çerezler yolda silinir), ama bazı
+                    // bittikten sonra açılır (yoksa Sony'nin ilk yönlendirmede koyduğu çerezler yolda silinir). İlk denemede
+                    // temizlik giriş ekranında başlamıştır; "Yeniden dene"de (WebView artık sıcak) yeniden yapılır. Bazı
                     // telefonlarda geri çağrı hiç dönmez: en çok COOKIE_WAIT_MS beklenir, sonra sayfa yine açılır.
                     LaunchedEffect(Unit) {
-                        try {
-                            WebStorage.getInstance().deleteAllData()
-                            val cleared = withTimeoutOrNull(PsnLoadWatch.COOKIE_WAIT_MS) {
-                                suspendCancellableCoroutine { done ->
-                                    CookieManager.getInstance().removeAllCookies { if (done.isActive) done.resume(it) }
-                                }
-                            }
-                            if (cleared == null) Log.w(TAG, "Çerez silme ${PsnLoadWatch.COOKIE_WAIT_MS} ms'de dönmedi; sayfa yine açılıyor")
-                            cookiesReady = true
-                        } catch (error: RuntimeException) {
+                        val cleanup = earlyCleanup.takeIf { attempt == 0 } ?: scope.async { PsnWebData.clear() }
+                        val result = withTimeoutOrNull(PsnLoadWatch.COOKIE_WAIT_MS) { cleanup.await() }
+                        val error = result?.exceptionOrNull()
+                        if (error != null) {
                             // WebView kurulu değil ya da güncelleniyor: CookieManager açılamaz.
-                            Log.w(TAG, "WebView açılamadı", error)
                             fail(PsnPageProblem.CRASHED, error.javaClass.simpleName)
+                            return@LaunchedEffect
                         }
+                        if (result == null) Log.w(TAG, "Çerez silme ${PsnLoadWatch.COOKIE_WAIT_MS} ms'de dönmedi; sayfa yine açılıyor")
+                        cookiesReady = true
                     }
                     if (cookiesReady) AndroidView(
                         modifier = Modifier.fillMaxSize(),
@@ -260,6 +314,10 @@ private fun PsnWebLogin(onRedirect: (String) -> Unit, onClose: () -> Unit, onBro
                                         onRedirect(url)
                                     },
                                     onVisible = { visible = true },
+                                    onGoogle = {
+                                        Log.i(TAG, "Google ile giriş seçildi; giriş tarayıcıya taşınıyor")
+                                        onGoogle()
+                                    },
                                     onFailure = ::fail,
                                     schedule = { delayMs, block -> scope.launch { delay(delayMs); block() } },
                                 )
@@ -312,11 +370,32 @@ private fun PsnWebLogin(onRedirect: (String) -> Unit, onClose: () -> Unit, onBro
     }
 }
 
+/** Uygulama içi girişin WebView verisi (çerezler, sayfa depoları). */
+private object PsnWebData {
+    /**
+     * Sayfa depolarını (localStorage, IndexedDB, service worker) ve çerezleri siler. Çerez silme bitene
+     * kadar bekler; sayfa depolarının silinmesinin geri çağrısı yoktur, bu yüzden sayfa yüklenmeden önce yapılmalıdır.
+     * Hata (WebView kurulu değil ya da güncelleniyor) sonuçta döner, iş parçacığını düşürmez.
+     */
+    suspend fun clear(): Result<Unit> = try {
+        WebStorage.getInstance().deleteAllData()
+        val cookies = CookieManager.getInstance()
+        suspendCancellableCoroutine { done -> cookies.removeAllCookies { if (done.isActive) done.resume(Unit) } }
+        Result.success(Unit)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: RuntimeException) {
+        Log.w(TAG, "WebView verisi silinemedi", error)
+        Result.failure(error)
+    }
+}
+
 /** WebView olayları; yönlendirme yakalanır, ana sayfanın hataları beyaz ekran yerine bildirilir. */
 private class LoginClient(
     private val watch: PsnLoadWatch,
     private val onRedirect: (String) -> Unit,
     private val onVisible: () -> Unit,
+    private val onGoogle: () -> Unit,
     private val onFailure: (PsnPageProblem, String?) -> Unit,
     private val schedule: (Long, () -> Unit) -> Job,
 ) : WebViewClient() {
@@ -341,6 +420,16 @@ private class LoginClient(
         return true
     }
 
+    /** Google WebView'da girişi reddeder ("disallowed_useragent"); sayfa açılmadan giriş tarayıcıya taşınır. */
+    private fun leaveForGoogle(url: String): Boolean {
+        if (!PsnAccount.isGoogleSignIn(url)) return false
+        if (!redirected && !cancelled) {
+            cancel()
+            onGoogle()
+        }
+        return true
+    }
+
     private fun fail(problem: PsnPageProblem, detail: String?) {
         if (redirected || cancelled) return
         cancel()
@@ -348,11 +437,11 @@ private class LoginClient(
     }
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-        request.isForMainFrame && capture(request.url.toString())
+        request.isForMainFrame && (capture(request.url.toString()) || leaveForGoogle(request.url.toString()))
 
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
         // shouldOverrideUrlLoading her yönlendirmede (ör. POST'tan sonraki) çağrılmaz; sayfa başlarken de bakılır.
-        if (capture(url)) {
+        if (capture(url) || leaveForGoogle(url)) {
             view.stopLoading()
             return
         }
@@ -415,16 +504,37 @@ private class LoginClient(
     }
 }
 
-/** Tarayıcıda giriş: Sony girişten sonra tarayıcıyı yönlendirme adresine götürür; kullanıcı o adresi yapıştırır. */
+/**
+ * Tarayıcıda giriş: Sony girişten sonra tarayıcıyı yönlendirme adresine götürür. O adres Sony'nin alanında olduğundan
+ * (App Link kurulamaz) tarayıcı uygulamaya kendiliğinden dönmez; kullanıcı adresi kopyalar. Uygulamaya dönülünce
+ * panoda yönlendirme adresi varsa kendiliğinden alınır ve giriş tamamlanır; yoksa adres elle yapıştırılır.
+ */
 @Composable
-private fun PsnBrowserLogin(onRedirect: (String) -> Unit, onReopen: () -> Unit, onClose: () -> Unit) {
-    var text by remember { mutableStateOf("") }
+private fun PsnBrowserLogin(
+    viaGoogle: Boolean,
+    tried: String?,
+    onRedirect: (String) -> Unit,
+    onReopen: () -> Unit,
+    onClose: () -> Unit,
+) {
+    var text by rememberSaveable { mutableStateOf("") }
     val redirect = PsnAccount.redirectFromText(text)
+    val context = LocalContext.current
+    // Android 10'dan beri pano yalnız pencere odaktayken okunabilir: tarayıcıdan dönüp pencere odak alınca bakılır.
+    val focused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(focused) {
+        if (!focused) return@LaunchedEffect
+        val found = readClip(context)?.let(PsnAccount::redirectFromText)?.takeIf { it != tried } ?: return@LaunchedEffect
+        Log.i(TAG, "Panoda yönlendirme adresi bulundu")
+        text = found
+        onRedirect(found)
+    }
     ScreenScaffold(top = { TopBar(onBack = onClose) }, bottom = {
         GhostButton(stringResource(R.string.psn_browser_reopen), onClick = onReopen)
         PrimaryButton(stringResource(R.string.next), enabled = redirect != null) { redirect?.let(onRedirect) }
     }) {
         Heading(stringResource(R.string.psn_browser_title), stringResource(R.string.psn_browser_body))
+        if (viaGoogle) NoteTile(stringResource(R.string.psn_browser_google), Tokens.Color.secondary)
         Field(text, { text = it }, stringResource(R.string.psn_browser_field), keyboard = KeyboardOptions(keyboardType = KeyboardType.Uri))
         if (text.isNotBlank() && redirect == null) NoteTile(stringResource(R.string.psn_browser_wrong))
     }

@@ -307,6 +307,32 @@ final class AITranslationTests: XCTestCase {
         XCTAssertFalse(user(0).contains("KRATOS"))
     }
 
+    /// Model cümleyi çevirmeden geri verirse cümle yerel çeviriyle yeniden denenir ve yanıt önbelleğe yazılmaz (#245:
+    /// qwen2.5:3b "You think I'm on the run?" cümlesini olduğu gibi döndürdü, hat onu Türkçe sanıp göstermedi). Yerel
+    /// çeviri de aynı kalırsa (ad) modelin yanıtı kalır ve önbelleğe yazılır.
+    func testEchoedSentenceIsRetriedLocallyAndNotCached() async throws {
+        FakeAI.replyText = #"["You think I'm on the run?"]"#
+        let core = make(.openAI)
+        var asked: [String] = []
+        let local: (String) async throws -> String = { text in
+            asked.append(text)
+            return "yerel: " + text
+        }
+        let first = try await core.translate("Tommy: You think I'm on the run?", fallback: local)
+        XCTAssertEqual(first, "Tommy: yerel: You think I'm on the run?")
+        XCTAssertEqual(asked, ["You think I'm on the run?"])
+        _ = try await core.translate("Tommy: You think I'm on the run?", fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 2)
+
+        FakeAI.replyText = #"["Thomas Angelo."]"#
+        let names = make(.openAI)
+        let same: (String) async throws -> String = { $0 }
+        let name = try await names.translate("Thomas Angelo.", fallback: same)
+        XCTAssertEqual(name, "Thomas Angelo.")
+        _ = try await names.translate("Thomas Angelo.", fallback: same)
+        XCTAssertEqual(FakeAI.requests.count, 3)
+    }
+
     func testOpenAIRequest() async throws {
         _ = try await make(.openAI).translate("Run!", fallback: local)
         let (request, body) = FakeAI.requests[0]
@@ -484,6 +510,15 @@ final class AITranslationTests: XCTestCase {
         XCTAssertEqual(try AIRequest.translations(from: "<think>…</think>Gidelim.", count: 1), ["Gidelim."])
     }
 
+    /// Yerel modellerin bitiş işaretleri (`</s>`, `<|im_end|>`) ekranda kalmaz; sondaki fazla virgül diziyi bozmaz.
+    func testLocalControlTokensAndTrailingComma() throws {
+        XCTAssertEqual(try AIRequest.translations(from: "[\"Yere yat!\"]</s>", count: 1), ["Yere yat!"])
+        XCTAssertEqual(try AIRequest.translations(from: "[Yere yat!]</s>", count: 1), ["Yere yat!"])
+        XCTAssertEqual(try AIRequest.translations(from: "Defol buradan!<|im_end|>", count: 1), ["Defol buradan!"])
+        XCTAssertEqual(try AIRequest.translations(from: "<s>[\"Bir.\", \"İki.\",]<|eot_id|>", count: 2), ["Bir.", "İki."])
+        XCTAssertEqual(try AIRequest.translations(from: "[\"<b> etiketi kalır\"]", count: 1), ["<b> etiketi kalır"])
+    }
+
     /// Sunucu kapalıysa ya da model indirilmemişse o satır ücretsiz çeviriyle gelir, durum bildirilir.
     func testLocalFailuresFallBack() async throws {
         FakeAI.timeout = true
@@ -540,13 +575,13 @@ final class AITranslationTests: XCTestCase {
 
         _ = try await translator.translate("This belongs to the first game.", fallback: local)
         game.value = "Second game"
-        _ = try await translator.translate("This belongs to the second game.", fallback: local)
+        let secondTranslation = try await translator.translate("This belongs to the second game.", fallback: local)
 
         XCTAssertTrue(user(1).hasPrefix("Game: Second game\n"))
         XCTAssertFalse(user(1).contains("English: This belongs to the first game."))
 
         _ = try await translator.translate("Another line here.", fallback: local)
-        XCTAssertTrue(user(2).contains("English: This belongs to the second game.\nTurkish: [tr] This belongs to the second game."))
+        XCTAssertTrue(user(2).contains("English: This belongs to the second game.\nTurkish: \(secondTranslation)"))
     }
 
     func testSeveralSentencesGoAsOneArray() async throws {
@@ -672,6 +707,41 @@ final class AITranslationTests: XCTestCase {
         XCTAssertEqual(reported, [.quotaExceeded])
         // Yerel çeviri bu motorun önbelleğine yazılmaz.
         XCTAssertNil(cache.value(for: "Run!"))
+    }
+
+    func testCachedSentencesSurviveServicePauseWithoutLocalWork() async throws {
+        for failure in ["server", "timeout", "invalid-reply", "daily-quota", "minute-quota"] {
+            FakeAI.requests = []
+            FakeAI.timeout = failure == "timeout"
+            switch failure {
+            case "daily-quota":
+                FakeAI.failure = (429, rateLimitBody(quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier"))
+            case "minute-quota":
+                FakeAI.failure = (429, rateLimitBody(quotaId: "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"))
+            case "invalid-reply": FakeAI.failure = (200, "{}")
+            default: FakeAI.failure = (503, "{}")
+            }
+            let cache = TranslationCache()
+            cache.store("Koş!", for: "Run!")
+            cache.store("Saklan!", for: "Hide!")
+            let translator = make(.gemini, cache: cache)
+            var calls: [String] = []
+            let fallback: (String) async throws -> String = { calls.append($0); return "yerel: " + $0 }
+            let failed = try await translator.translate("Wait!", fallback: fallback)
+            XCTAssertEqual(failed, "yerel: Wait!")
+            let error = translator.lastFailure
+            let cached = try await translator.translate("KRATOS: Run! Hide!", fallback: fallback)
+            XCTAssertEqual(cached, "KRATOS: Koş! Saklan!", failure)
+            XCTAssertEqual(FakeAI.requests.count, 1, failure)
+            XCTAssertEqual(calls, ["Wait!"], failure)
+            XCTAssertEqual(translator.lastFailure, error, failure)
+            XCTAssertEqual(translator.spokenLines(for: "KRATOS: Run! Hide!") { _ in [] }.last?.speaker, "KRATOS")
+            let missing = try await translator.translate("Run! Jump!", fallback: fallback)
+            XCTAssertEqual(missing, "yerel: Run! Jump!")
+            XCTAssertEqual(calls, ["Wait!", "Run! Jump!"])
+            XCTAssertEqual(FakeAI.requests.count, 1)
+            XCTAssertNil(cache.value(for: "Run! Jump!"))
+        }
     }
 
     func testTimeoutFallsBack() async throws {

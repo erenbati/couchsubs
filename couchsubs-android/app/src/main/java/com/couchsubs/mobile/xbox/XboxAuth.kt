@@ -50,14 +50,24 @@ class XboxAuth(
     /**
      * Kullanıcı kodu onaylayana kadar bekler (sunucunun aralığıyla). Onaylanınca kullanıcı jetonu kaydedilir.
      * [cancelled] true dönerse [InterruptedException] atılır.
+     *
+     * Ağ hatası girişi bitirmez: kullanıcı kodu tarayıcıda yazarken uygulama arka plandadır ve Android (pil tasarrufu,
+     * veri tasarrufu, Doze) arka plandaki isteği keser. Eskiden tek bir kesik istek girişi "İnternete bağlanılamadı"
+     * ile bitiriyordu; kullanıcı onaylayıp döndüğünde giriş takılı kalıyordu. Kodun süresi dolana kadar sorulmaya devam edilir.
      */
     fun pollDeviceCode(code: XboxDeviceCode, cancelled: () -> Boolean = { false }): XboxUserToken {
         val deadline = clock() + code.expiresInSeconds * 1000L
         var interval = code.intervalSeconds * 1000L
         while (true) {
             if (cancelled()) throw InterruptedException("Microsoft girişi iptal edildi")
-            val response = http.request("POST", "$LOGIN/token", mapOf("Content-Type" to FORM),
-                formBody("grant_type" to "urn:ietf:params:oauth:grant-type:device_code", "client_id" to CLIENT_ID, "device_code" to code.deviceCode))
+            val response = try {
+                http.request("POST", "$LOGIN/token", mapOf("Content-Type" to FORM),
+                    formBody("grant_type" to "urn:ietf:params:oauth:grant-type:device_code", "client_id" to CLIENT_ID, "device_code" to code.deviceCode))
+            } catch (error: XboxException) {
+                if (error.kind != XboxError.NETWORK || clock() >= deadline) throw error
+                sleep(interval)
+                continue
+            }
             if (response.ok) {
                 val token = XboxUserToken.fromResponse(parseObject(response.body), clock())
                 synchronized(lock) { reset(); userToken = token }

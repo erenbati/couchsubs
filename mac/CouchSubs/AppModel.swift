@@ -455,9 +455,10 @@ final class AppModel: ObservableObject {
                 || settings.openAIModel != oldValue.openAIModel || settings.claudeModel != oldValue.claudeModel
                 || settings.localAIBaseURL != oldValue.localAIBaseURL || settings.localAIModel != oldValue.localAIModel
             if translationChanged { Task { await refreshTranslatorStatus() } }
-            if isRunning, settings.sourceLanguage != oldValue.sourceLanguage || settings.targetLanguage != oldValue.targetLanguage
-                || translationChanged {
-                Task { await refreshTranslatorStatus() }
+            let languageChanged = settings.sourceLanguage != oldValue.sourceLanguage
+                || settings.targetLanguage != oldValue.targetLanguage
+            if isRunning, languageChanged || translationChanged || settings.fastSubtitleDetection != oldValue.fastSubtitleDetection {
+                if languageChanged { Task { await refreshTranslatorStatus() } }
                 makePipeline()
             }
         }
@@ -527,7 +528,7 @@ final class AppModel: ObservableObject {
     /// Ayarlarda listelenen paketler (açılışta arka planda yüklenince dolar).
     @Published var installedPacks: [GamePackLibrary.Info] = []
     private let pool: LinePool
-    /// Oynanan oyun: PS5'in bildirdiği, paketten tanınan ya da kullanıcının seçtiği (havuza giden satırlar bu oyunla gider).
+    /// Oynanan oyun: PS5'in bildirdiği, kullanıcının seçtiği ya da paketten tanınan (havuza giden satırlar bu oyunla gider).
     let gameChoice: GameChoice
     private var poolTimer: Task<Void, Never>?
     private var terminateObserver: NSObjectProtocol?
@@ -629,6 +630,8 @@ final class AppModel: ObservableObject {
             if game != nil { self?.packsForGame() }
         }
         gameChoice.packTitles = { [weak self] in GameCatalog.packGames(self?.installedPacks ?? []) }
+        // Elle seçilen oyunda satırlar yalnız o oyunun paketinde aranır, paketi yoksa hiç aranmaz (#218).
+        gameChoice.packs = packs
 
         // Paketler ilk altyazıyı bekletmesin diye açılışta arka planda yüklenir.
         let packs = self.packs
@@ -1248,8 +1251,7 @@ final class AppModel: ObservableObject {
                 self?.keeper?.reconnect()
             }
         }
-        sleepActivity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled],
-                                                              reason: "Translating game subtitles")
+        keepAwake()
         isRunning = true
         if screenHotkey == nil { screenHotkey = GlobalHotkey(.translateScreen) { [weak self] in self?.translateScreen() } }
         screenHotkey?.enabled = true
@@ -1279,6 +1281,23 @@ final class AppModel: ObservableObject {
         Task { await refreshTVApp() }
     }
 
+    /// Çeviri sürerken bilgisayar ekranı da açık kalsın mı: görüntü bu Mac'teki Remote Play penceresinden okunuyorsa
+    /// (ekran kapanınca ScreenCaptureKit kare vermez) ya da altyazı bu ekranda gösteriliyorsa. X'te bildirildi: kullanıcı
+    /// TV'de oynayıp Mac'e dokunmayınca ekran kendi ayarıyla (prizdeyken çoğu zaman 10 dakika) kapanıyor, altyazı
+    /// kesiliyordu. PS5'ten doğrudan okunup yalnız TV'ye gönderiliyorsa ekran kendi ayarıyla kapanabilir.
+    var keepsDisplayOn: Bool {
+        settings.frameSource == .remotePlayWindow || settings.output.showsOnComputer
+    }
+
+    /// Mac'in boşta uyuması (ve gerekiyorsa ekranın kapanması) engellenir; çeviri sürerken ayar değişince yeniden kurulur.
+    private func keepAwake() {
+        var options: ProcessInfo.ActivityOptions = [.userInitiated, .idleSystemSleepDisabled]
+        if keepsDisplayOn { options.insert(.idleDisplaySleepDisabled) }
+        let previous = sleepActivity
+        sleepActivity = ProcessInfo.processInfo.beginActivity(options: options, reason: "Translating game subtitles")
+        if let previous { ProcessInfo.processInfo.endActivity(previous) }
+    }
+
     /// Altyazının yeri değişti: TV seçildiyse TV uygulaması açılır, kaldırıldıysa artık açık tutulmaz.
     private func outputChanged() {
         server.sendsToTV = settings.output.showsOnTV
@@ -1288,6 +1307,7 @@ final class AppModel: ObservableObject {
         }
         updateClickThroughHotkey()
         guard isRunning else { return }
+        keepAwake()
         if settings.output.showsOnTV {
             startKeeper()
         } else {
@@ -1395,9 +1415,11 @@ final class AppModel: ObservableObject {
         pipeline?.reset()
         // Eski hatta süren okuma beklenmez; yeni hat ilk karesini hemen alır.
         frameGate.reset()
+        let scheduler = ReadScheduler(maxReuse: settings.fastSubtitleDetection
+            ? ReadScheduler.fastMaxReuse : ReadScheduler.defaultMaxReuse)
         let pipeline = SubtitlePipeline(reader: VisionReader(language: settings.sourceLanguage),
                                         translator: makeTranslator(),
-                                        server: server, scheduler: ReadScheduler())
+                                        server: server, scheduler: scheduler)
         pipeline.showSpeakerNames = settings.showSpeakerNames
         pipeline.onPair = { [weak self, weak pipeline] source, translation in
             self?.lastSource = source
@@ -1450,9 +1472,11 @@ final class AppModel: ObservableObject {
         let engine = settings.onlineEngine
         guard onlineTranslationActive, let storeKey = engine.storeKey else { return local }
         let online: TextTranslator & OnlineTranslating
-        // Oyun paketi eşleştiyse oyunun adı modele bağlam olarak gider.
-        let packs = self.packs
-        let game: @Sendable () -> String? = { packs.scopeTitle }
+        // Oynanan oyunun adı modele bağlam olarak gider, önbellek de oyuna göre ayrılır. Ad kararlı oyundur (`GameSense`:
+        // PS5'in bildirdiği, kullanıcının seçtiği ya da son 20 satırın 5'i aynı paketten gelince o paketin oyunu); son
+        // eşleşen paket değil, yoksa tek bir ortak satır adı başka oyuna geçirirdi (#27). Oyun bilinmiyorsa ad gitmez.
+        let sense = gameChoice.sense
+        let game: @Sendable () -> String? = { sense.current?.name }
         if engine == .local, let server = settings.localAIServer {
             // Yerel modelin anahtarı isteğe bağlıdır; önbellekte sunucu ve model ayrı tutulur.
             let key = store.load(String.self, for: storeKey) ?? ""
@@ -1747,6 +1771,10 @@ final class AppModel: ObservableObject {
         case .notFound(let host):
             return String(format: String(localized: "PS5 not found at %@. Make sure it is on and on the same network. Reconnecting…"), host)
         case .network: return String(localized: "Can't reach the PS5. Reconnecting…")
+        // Eskiden "Yeniden bağlanılıyor… (Unknown Session Request Error)" görünüyordu (GitHub #33, #202).
+        case .rejected(let code?):
+            return String(format: String(localized: "The PS5 rejected the connection (code %@). Another Remote Play app (PS Remote Play) may be open, or the PS5 may be in another session. Close PS Remote Play, restart the PS5, then try again."), String(format: "0x%08x", code))
+        case .rejected(nil): return String(localized: "The PS5 didn't start the session. Another Remote Play app (PS Remote Play) may be open, or the PS5 may be in another session. Close PS Remote Play, restart the PS5, then try again.")
         case .other(let detail) where !detail.isEmpty: return String(format: String(localized: "Reconnecting… (%@)"), detail)
         case .other, .stopped: return String(localized: "Reconnecting…")
         }

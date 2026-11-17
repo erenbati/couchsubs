@@ -74,6 +74,17 @@ struct ProfileScreen: View {
                 toggleRow("Show speaker name", "Keeps the character's name in front of the translation (ARTHUR: …). The name itself is never translated.",
                           isOn: $model.settings.showSpeakerNames)
                 RowDivider()
+                toggleRow("Check unchanged subtitle areas more often",
+                          "When the subtitle area looks unchanged, read it again after 2 frames instead of 20. Uses more CPU.",
+                          isOn: $model.settings.fastSubtitleDetection)
+                RowDivider()
+                // Yalnız Xbox: uzaktan oynatmada Xbox sesi istemciye verip TV'yi susturabilir (PS5'te ses TV'de kalır).
+                if model.isXbox {
+                    toggleRow("Play Xbox sound on this device",
+                              "Xbox remote play sends the sound to this device; if you turn this off, the game may stay silent.",
+                              isOn: $model.settings.xboxAudioOnDevice)
+                    RowDivider()
+                }
                 toggleRow("Usage data", "Error and usage statistics", isOn: $usageData)
             }
             Tile(spacing: 0) {
@@ -181,7 +192,9 @@ struct SettingsScreen: View {
                     Spacer()
                     Text(verbatim: "%\(percent)").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
                 }
-                Slider(value: Binding(get: { Double(percent) }, set: { setPercent(Int($0)) }), in: 80...160, step: 10)
+                // %40–160 (Android ile aynı). Alt sınır eskiden %80'di (TV'de 37 piksel), TV'de en küçüğü bile büyük
+                // kalıyordu (#218); %40 TV'de 18 piksel, Mac'teki (20) ve Windows'taki (16) en küçük boya denk.
+                Slider(value: Binding(get: { Double(percent) }, set: { setPercent(Int($0.rounded())) }), in: 40...160, step: 10)
                     .tint(Mobile.Palette.accent)
                 Text(verbatim: "Dinliyor musun beni?")
                     .font(Mobile.TypeScale.subtitle(landscape: false, scale: Double(percent) / 100))
@@ -216,6 +229,30 @@ struct SettingsScreen: View {
                               selection: $model.settings.style.backgroundShape)
                 Text("Drag Background all the way to Solid to fully hide the English subtitle in the game. A full-width band also covers the sides.")
                     .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                // TV'de çevirinin yeri (Mac ve Windows'taki Yeri seçimi, Android ile aynı): üstünde/altında seçilince oyundaki
+                // İngilizce altyazı da görünür; sabit yerde yükseklik kaydırıcıyla ayarlanır, bırakınca TV'de örnek altyazı çıkar.
+                if model.settings.output.showsOnTV {
+                    Text("Subtitle position on TV").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                    SegmentedTabs(options: [SubtitlePlacement.cover: "Cover", .above: "Above", .below: "Below", .fixed: "Fixed"],
+                                  selection: $model.settings.style.placement)
+                    if model.settings.style.placement == .fixed {
+                        HStack {
+                            Text("Height on screen").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                            Spacer()
+                            Text(verbatim: "%\(model.settings.style.bottomPercent)").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                        }
+                        Slider(value: Binding(get: { Double(model.settings.style.bottomPercent) },
+                                              set: { model.settings.style.bottomPercent = Int($0.rounded()) }), in: 0...85) { editing in
+                            if !editing { model.sendTestSubtitle() }
+                        }
+                        .tint(Mobile.Palette.accent)
+                        Text("A sample subtitle appears on the TV when you let go of the slider. In fixed position you can also move subtitles with the ▲ and ▼ buttons on the TV remote.")
+                            .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                    } else {
+                        Text("Cover: the translation hides the English subtitle in the game. Choose Above or Below to see the English subtitle too, with the translation right above or below it.")
+                            .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                    }
+                }
                 Toggle(isOn: $model.settings.style.stackPrevious) {
                     VStack(alignment: .leading, spacing: Mobile.Space.hair) {
                         Text("Keep previous lines above in fast dialogue").font(Mobile.TypeScale.headline)

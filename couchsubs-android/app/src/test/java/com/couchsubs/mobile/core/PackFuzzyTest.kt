@@ -73,6 +73,13 @@ class PackLookupFuzzyTest {
         assertFalse(PackLookup.isOverlay("Listen to me,"))
         assertFalse(PackLookup.isOverlay("Hey, Franklin!"))
     }
+
+    /** Uzun satırdaki "•" OCR lekesidir: satır köşe yazısı sayılıp atlanmaz, yalnız ikinci satırın Türkçesi gelmez (#245). */
+    @Test
+    fun longLineWithStrayBulletIsNotAnOverlay() {
+        assertFalse(PackLookup.isOverlay("I have a business meeting there with a colleague• Not that it's anything to do"))
+        assertNull(match("I have a business meeting there with a colleague• Not that it's anything to do\nWho is that?"))
+    }
 }
 
 class PackFuzzyTest {

@@ -15,7 +15,10 @@ private final class FakeHTTP: XboxHTTP, @unchecked Sendable {
 
     func request(_ method: String, _ url: String, headers: [String: String], body: String?) async throws -> XboxHTTPResponse {
         lock.lock(); calls.append(Call(method: method, url: url, headers: headers, body: body)); lock.unlock()
-        return answer(method, url, body)
+        let response = answer(method, url, body)
+        // Durum -1: ağ hatası (istek kesildi).
+        if response.status == -1 { throw XboxError(.network, "offline") }
+        return response
     }
 }
 
@@ -98,6 +101,22 @@ final class XboxAuthTests: XCTestCase {
         XCTAssertEqual(saved.value, "A")
         let signedIn = await auth.signedIn
         XCTAssertTrue(signedIn)
+    }
+
+    func testDeviceCodePollSurvivesNetworkDrops() async throws {
+        // Kullanıcı Safari'deyken arka plandaki istek kesilir; giriş bitmemeli, onay gelince tamamlanmalı.
+        let polls = Counter()
+        let http = FakeHTTP { _, _, _ in
+            switch polls.next() {
+            case 1: return status(400, #"{"error":"authorization_pending"}"#)
+            case 2, 3: return status(-1)
+            default: return ok(#"{"access_token":"A","refresh_token":"R","expires_in":3600}"#)
+            }
+        }
+        let auth = XboxAuth(http: http, clock: { now }, sleep: { _ in })
+        let token = try await auth.pollDeviceCode(XboxDeviceCode(userCode: "U", deviceCode: "D", verificationURI: "u", expiresIn: 900, interval: 5))
+        XCTAssertEqual(token.accessToken, "A")
+        XCTAssertEqual(http.calls.count, 4)
     }
 
     func testChainRefreshesAndCaches() async throws {
@@ -221,6 +240,19 @@ final class XboxProtocolTests: XCTestCase {
         XCTAssertEqual(Double(bitPattern: bits), 1234.5)
     }
 
+    func testFrameAckPacketMatchesPlayer() {
+        // Input/Packet.ts: 14 bayt başlık + 1 bayt sayı + kare başına 28 bayt; tür 1 = Metadata.
+        let frames = [XboxFrameAck(serverDataKey: 5, arrivalMs: 100, decodedMs: 104), XboxFrameAck(serverDataKey: 3000, arrivalMs: 116, decodedMs: 120)]
+        let packet = XboxChannels.frameAckPacket(sequence: 7, timestampMs: 130, frames: frames)
+        XCTAssertEqual(packet.count, 14 + 1 + 28 * 2)
+        func u32(_ offset: Int) -> UInt32 { packet[offset..<offset + 4].enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * UInt32($1.offset)) } }
+        XCTAssertEqual(packet[0], 1)
+        XCTAssertEqual(u32(2), 7)
+        XCTAssertEqual(packet[14], 2)
+        XCTAssertEqual((0..<7).map { u32(15 + $0 * 4) }, [5, 100, 100, 104, 104, 130, 130])
+        XCTAssertEqual(u32(15 + 28), 3000)
+    }
+
     func testMessagesAndMunging() throws {
         let messages = try XboxChannels.configurationMessages().map { try parseJSON($0) }
         XCTAssertEqual(messages.count, 6)
@@ -255,12 +287,42 @@ final class XboxSessionMachineTests: XCTestCase {
         XCTAssertEqual(m.status("Provisioning", errorDetails: nil), .retry(delayMs: 5000))
         XCTAssertEqual(m.start(), .play)
         _ = m.played()
-        XCTAssertEqual(m.status("Failed", errorDetails: #"{"code":"ServerInUse"}"#), .retry(delayMs: 5000))
-        if case let .failed(kind, _, _) = m.phase { XCTAssertEqual(kind, .busy) } else { XCTFail() }
+        // Konsol yayını reddetti: yeniden denenmez.
+        XCTAssertEqual(m.status("Failed", errorDetails: #"{"code":"ServerInUse"}"#), .retry(delayMs: nil))
+        if case let .failed(kind, _, willRetry, _) = m.phase { XCTAssertEqual(kind, .busy); XCTFalse(willRetry) } else { XCTFail() }
         XCTAssertEqual(m.fail(.signInRequired, "giriş"), .retry(delayMs: nil))
         m.stop()
         XCTAssertEqual(m.start(), .nothing)
         XCTAssertEqual(m.fail(.network, "x"), .nothing)
+    }
+
+    func testErrorDetailsStopsRetrying() {
+        var m = XboxSessionMachine()
+        _ = m.start(); _ = m.played()
+        // Boş ayrıntı hata sayılmaz.
+        XCTAssertEqual(m.status("Provisioning", errorDetails: #"{"code":null,"message":null}"#), .pollState(delayMs: 1000))
+        XCTAssertEqual(m.status("Provisioning", errorDetails: #"{"code":"Conflict","message":"x"}"#), .retry(delayMs: nil))
+    }
+
+    func testRetriesBackOffThenStop() {
+        var m = XboxSessionMachine()
+        XCTAssertEqual(m.fail(.network, "kopma"), .retry(delayMs: 5000))
+        XCTAssertEqual(m.fail(.network, "kopma"), .retry(delayMs: 15000))
+        XCTAssertEqual(m.fail(.network, "kopma"), .retry(delayMs: 45000))
+        XCTAssertEqual(m.fail(.network, "kopma"), .retry(delayMs: nil))
+    }
+
+    func testHealthyStreamResetsRetries() {
+        let now = FakeClock()
+        var m = XboxSessionMachine(clock: { now.value })
+        _ = m.fail(.network, "kopma"); _ = m.fail(.network, "kopma")
+        _ = m.start(); _ = m.played(); _ = m.status("Provisioned", errorDetails: nil); _ = m.streaming()
+        now.value += 60_000
+        XCTAssertEqual(m.fail(.network, "kopma"), .retry(delayMs: 5000))
+        // Kısa süren yayın sayacı sıfırlamaz.
+        _ = m.start(); _ = m.played(); _ = m.status("Provisioned", errorDetails: nil); _ = m.streaming()
+        now.value += 1_000
+        XCTAssertEqual(m.fail(.network, "kopma"), .retry(delayMs: 15000))
     }
 
     func testOutOfOrderIgnored() {
@@ -275,6 +337,10 @@ private final class Counter: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
     func next() -> Int { lock.lock(); defer { lock.unlock() }; value += 1; return value }
+}
+
+private final class FakeClock: @unchecked Sendable {
+    var value: Double = 1_000
 }
 
 private final class Box: @unchecked Sendable {

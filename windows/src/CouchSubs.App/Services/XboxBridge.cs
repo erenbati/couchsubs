@@ -3,6 +3,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using CouchSubs.Core;
 using CouchSubs.Shell;
@@ -37,6 +38,10 @@ internal sealed class XboxBridge : IDisposable
         {
             UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+            // Node her zaman UTF-8 yazar ve okur. Kodlama verilmezse .NET sistemin kod sayfasını (Türkçe Windows'ta 857/1254)
+            // kullanır ve konsol adındaki "ı" bozulur: "Oturma Odası" → "Oturma OdasA+" (#223). Girişte BOM yazılmaz.
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+            StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
         };
         info.ArgumentList.Add(script);
         process = Process.Start(info) ?? throw new InvalidOperationException(Localizer.Current["The Xbox streaming component couldn't start."]);
@@ -160,8 +165,8 @@ public sealed class XboxService : IXboxService, IDisposable
             item.GetProperty("model").GetString() ?? "Xbox", item.GetProperty("streamingEnabled").GetBoolean())).ToArray();
     }
 
-    public CouchSubs.RemotePlay.IStreamSession MakeStream(XboxConsole console, string token) =>
-        new XboxStreamSession(bridge, console, token, refreshed => TokenUpdated?.Invoke(refreshed));
+    public CouchSubs.RemotePlay.IStreamSession MakeStream(XboxConsole console, string token, bool legacyFrameRate) =>
+        new XboxStreamSession(bridge, console, token, refreshed => TokenUpdated?.Invoke(refreshed), legacyFrameRate);
 
     public void Dispose() => bridge.Dispose();
 }

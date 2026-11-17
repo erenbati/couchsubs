@@ -1,6 +1,69 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+using System.Collections.Concurrent;
+using System.Reflection;
+using System.Runtime.InteropServices;
+
 namespace CouchSubs.RemotePlay.Tests;
+
+public class StaleSessionEventTests
+{
+    [Theory]
+    [InlineData(NativeMethods.EventConnected, 0)]
+    [InlineData(NativeMethods.EventLoginPin, 0)]
+    [InlineData(NativeMethods.EventQuit, NativeMethods.QuitNetwork)]
+    public async Task QueuedNativeEventsFromStoppedGenerationAreIgnored(int eventType, int quitReason)
+    {
+        var console = new RegisteredConsole("127.0.0.1", "test", new byte[16], new byte[16]);
+        var session = new StreamSession(console, new byte[8]);
+        var states = new ConcurrentQueue<SessionState>();
+        session.StateChanged += states.Enqueue;
+        var queue = (SerialQueue)typeof(StreamSession)
+            .GetField("queue", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(session)!;
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var handled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        object? box = null;
+        var boxHandle = default(GCHandle);
+
+        try
+        {
+            queue.Post(() =>
+            {
+                entered.Set();
+                release.Wait();
+            });
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(2)), "session queue did not reach the test barrier");
+
+            // Queue Connect first, then a native callback. Stop advances the generation and queues CloseBox
+            // behind both actions, reproducing a callback already waiting when Stop is called.
+            session.Start();
+            const int eventGeneration = 1;
+            var boxType = typeof(StreamSession).GetNestedType("SessionBox", BindingFlags.NonPublic)!;
+            var constructor = boxType.GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic, null,
+                [typeof(StreamSession), typeof(int)], null)!;
+            box = constructor.Invoke([session, eventGeneration]);
+            boxHandle = (GCHandle)boxType.GetField("handle", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(box)!;
+            typeof(StreamSession).GetField("box", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(session, box);
+            typeof(StreamSession).GetMethod("Handle", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(session, [eventType, quitReason, null, eventGeneration, null]);
+
+            session.Stop();
+            queue.Post(() => handled.TrySetResult(true));
+            release.Set();
+            await handled.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+            Assert.Empty(states);
+        }
+        finally
+        {
+            release.Set();
+            session.Dispose();
+            if (boxHandle.IsAllocated) boxHandle.Free();
+        }
+    }
+}
 
 public class ReconnectPolicyTests
 {
@@ -148,8 +211,13 @@ public class DisconnectReasonTests
     public void SessionRequestLogLinesAreClassified(string line, DisconnectKind kind) =>
         Assert.Equal(new DisconnectReason(kind), DisconnectReasons.SessionRequestHint(line));
 
+    /// <summary>PS5 kayıt dışı bir kodla reddetti: kod ayrıntıda (libchiaki "unknown" der).</summary>
+    [Fact]
+    public void OtherApplicationReasonIsRejection() =>
+        Assert.Equal(new DisconnectReason(DisconnectKind.Rejected, "0x80108bff"),
+                     DisconnectReasons.SessionRequestHint("Reported Application Reason: 0x80108bff (unknown)"));
+
     [Theory]
-    [InlineData("Reported Application Reason: 0x80108b33 (unknown)")]
     [InlineData("Reported Application Reason: garbage")]
     [InlineData("Session request successful")]
     [InlineData("Failed to parse session request response")]
@@ -162,8 +230,12 @@ public class DisconnectReasonTests
     {
         var invalid = new DisconnectReason(DisconnectKind.RegistrationInvalid);
         Assert.Equal(invalid, DisconnectReasons.FromNative(NativeMethods.QuitOther, DisconnectReasons.UnknownSessionRequest, invalid));
-        Assert.Equal(new DisconnectReason(DisconnectKind.Other, DisconnectReasons.UnknownSessionRequest),
+        Assert.Equal(new DisconnectReason(DisconnectKind.Rejected),
                      DisconnectReasons.FromNative(NativeMethods.QuitOther, DisconnectReasons.UnknownSessionRequest, null));
+        var rejected = new DisconnectReason(DisconnectKind.Rejected, "0x80108bff");
+        Assert.Equal(rejected, DisconnectReasons.FromNative(NativeMethods.QuitOther, DisconnectReasons.UnknownSessionRequest, rejected));
+        // PS5 oturum isteğine yanıt verdi: reddetmesi "bulunamadı" değildir.
+        Assert.Equal(rejected, StreamSession.Classify(rejected, false, "192.168.1.70"));
         Assert.Equal(new DisconnectReason(DisconnectKind.Other, "Version Mismatch"),
                      DisconnectReasons.FromNative(NativeMethods.QuitOther, "Version Mismatch", invalid));
         Assert.Equal(new DisconnectReason(DisconnectKind.InUse), DisconnectReasons.FromNative(NativeMethods.QuitInUse, null, invalid));

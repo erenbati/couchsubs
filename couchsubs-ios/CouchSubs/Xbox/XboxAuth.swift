@@ -91,8 +91,16 @@ actor XboxAuth {
         var interval = code.interval * 1000
         while true {
             try Task.checkCancellation()
-            let response = try await http.request("POST", "\(Self.login)/token", headers: ["Content-Type": Self.form], body: formBody([
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"), ("client_id", Self.clientId), ("device_code", code.deviceCode)]))
+            // Ağ hatası girişi bitirmez: kullanıcı kodu Safari'de yazarken uygulama arka plandadır ve istek kesilir
+            // (Android'de de aynı). Kodun süresi dolana kadar sorulmaya devam edilir.
+            let response: XboxHTTPResponse
+            do {
+                response = try await http.request("POST", "\(Self.login)/token", headers: ["Content-Type": Self.form], body: formBody([
+                    ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"), ("client_id", Self.clientId), ("device_code", code.deviceCode)]))
+            } catch let failure as XboxError where failure.kind == .network && clock() < deadline {
+                try await sleep(interval)
+                continue
+            }
             if response.ok {
                 let token = try XboxUserToken.fromResponse(try parseJSON(response.body), now: clock())
                 reset()

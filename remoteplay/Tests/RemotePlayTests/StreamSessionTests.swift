@@ -268,7 +268,8 @@ final class DisconnectReasonTests: XCTestCase {
                        .registrationInvalid)
         XCTAssertEqual(DisconnectReason.sessionRequestHint(fromLog: "Reported Application Reason: 0x80108B02 (Invalid PSN ID)"),
                        .registrationInvalid)
-        XCTAssertNil(DisconnectReason.sessionRequestHint(fromLog: "Reported Application Reason: 0x80108b33 (unknown)"))
+        XCTAssertEqual(DisconnectReason.sessionRequestHint(fromLog: "Reported Application Reason: 0x80108bff (unknown)"),
+                       .rejected(0x80108bff))
         XCTAssertNil(DisconnectReason.sessionRequestHint(fromLog: "Reported Application Reason: garbage"))
         XCTAssertEqual(DisconnectReason.sessionRequestHint(fromLog: "Session request connect failed eventually."), .network)
         XCTAssertEqual(DisconnectReason.sessionRequestHint(fromLog: "Failed to receive session request response"), .network)
@@ -282,8 +283,11 @@ final class DisconnectReasonTests: XCTestCase {
         XCTAssertEqual(DisconnectReason(quit: CHIAKI_QUIT_REASON_SESSION_REQUEST_UNKNOWN, sessionRequestHint: .registrationInvalid),
                        .registrationInvalid)
         XCTAssertEqual(DisconnectReason(quit: CHIAKI_QUIT_REASON_SESSION_REQUEST_UNKNOWN, sessionRequestHint: .network), .network)
-        XCTAssertEqual(DisconnectReason(quit: CHIAKI_QUIT_REASON_SESSION_REQUEST_UNKNOWN, sessionRequestHint: nil),
-                       .other("Unknown Session Request Error"))
+        XCTAssertEqual(DisconnectReason(quit: CHIAKI_QUIT_REASON_SESSION_REQUEST_UNKNOWN, sessionRequestHint: .rejected(0x80108bff)),
+                       .rejected(0x80108bff))
+        XCTAssertEqual(DisconnectReason(quit: CHIAKI_QUIT_REASON_SESSION_REQUEST_UNKNOWN, sessionRequestHint: nil), .rejected(nil))
+        // PS5 oturum isteğine yanıt verdi: reddetmesi "bulunamadı" değildir.
+        XCTAssertEqual(DisconnectReason.classify(.rejected(nil), searchAnswered: false, host: "192.168.1.70"), .rejected(nil))
         XCTAssertEqual(DisconnectReason(quit: CHIAKI_QUIT_REASON_SESSION_REQUEST_RP_IN_USE, sessionRequestHint: .network), .inUse)
         // PS5 aramaya yanıt vermediyse bağlanamama "bulunamadı"dır; geçersiz kayıt öyle kalır.
         XCTAssertEqual(DisconnectReason.classify(.registrationInvalid, searchAnswered: false, host: "192.168.1.70"), .registrationInvalid)

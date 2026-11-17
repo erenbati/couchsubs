@@ -16,6 +16,8 @@ import { gameKey } from "./games.js";
 
 const MAX_LINES = 200;
 const DAILY_LIMIT = 5000;
+// D1 ücretsiz planda çağrı başına sorgu sınırı var; her deneme 2 sorgu. Yoğun çakışmada 503 busy dön, sorgu sınırına takılıp 500 verme.
+const QUOTA_CAS_ATTEMPTS = 8;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TAG = /<[^<>]{0,40}>/g;
 // PS5 oyun kimliği: dört harf, beş rakam, isteğe bağlı "_00" eki (PPSA01234, CUSA00419_00).
@@ -82,49 +84,73 @@ async function submit(req, env) {
   const lines = body.lines.slice(0, MAX_LINES);
   const day = new Date().toISOString().slice(0, 10);
 
-  const q = await env.DB.prepare("SELECT count FROM quota WHERE install=? AND day=?").bind(install, day).first();
-  const used = q?.count || 0;
-  if (used >= DAILY_LIMIT) return json({ error: "quota" }, 429, { "retry-after": "3600" });
-  const room = Math.min(lines.length, DAILY_LIMIT - used);
-
-  // Türkçe, PS5 sistem yazısı ve yarım okumalar hiç yazılmaz (eski sürümler süzmeden gönderiyor). Aynı istekteki
-  // yinelenen anahtar bir kez sayılır.
-  const fresh = new Map();
-  for (const l of lines.slice(0, room)) {
-    const text = String(l?.text || "").trim().replace(/\s+/g, " ");
-    if (!accepts(text)) continue;
-    const c = canon(text);
-    if (c.split(" ").length < 2) continue;
-    const k = await key(text); // istemcinin anahtarına güvenmeyiz, yeniden hesaplarız
-    // Oyun bilgisi isteğe bağlıdır (eski sürümler göndermez); geçersizse yok sayılır, satır yine alınır.
-    if (!fresh.has(k)) fresh.set(k, { text, title: titleId(l?.titleId), game: gameName(l?.game) });
+  // Reserve capacity with compare-and-swap. The previous read-then-batch increment let concurrent
+  // requests both spend the same remaining quota. Retry if another request changed the count first.
+  let room;
+  let reserved = false;
+  for (let attempt = 0; attempt < QUOTA_CAS_ATTEMPTS; attempt++) {
+    const q = await env.DB.prepare("SELECT count FROM quota WHERE install=? AND day=?").bind(install, day).first();
+    const used = q?.count || 0;
+    if (used >= DAILY_LIMIT) return json({ error: "quota" }, 429, { "retry-after": "3600" });
+    room = Math.min(lines.length, DAILY_LIMIT - used);
+    if (room === 0) {
+      reserved = true;
+      break;
+    }
+    const result = await env.DB.prepare(
+      "INSERT INTO quota(install,day,count) VALUES(?,?,?) " +
+      "ON CONFLICT(install,day) DO UPDATE SET count=count+excluded.count WHERE quota.count=?"
+    ).bind(install, day, room, used).run();
+    if (result.meta?.changes > 0) {
+      reserved = true;
+      break;
+    }
   }
-  // Günlükte (wrangler tail) yalnız sayılar ve oyun kimliğinin biçimi: oyun bilgisinin gelip gelmediği görülsün.
-  console.log(JSON.stringify(submitSummary(body, lines)));
+  if (!reserved) return json({ error: "busy" }, 503, { "retry-after": "1" });
 
-  // D1'in günlük yazma kotası (ücretsiz 100.000 satır; tablo satırı ve her dizin girdisi ayrı sayılır) için: önce
-  // görülme kaydı (sightings, WITHOUT ROWID: satır başına tek yazma). Bu kurulum satırı zaten bildirdiyse (changes 0)
-  // hiçbir şeye dokunulmaz. Satır havuza (lines) yalnız ikinci farklı kurulumdan gelince yazılır: tek kurulumun
-  // gördüğü satır havuza hiç girmez (paket ve dışa aktarım zaten en az iki kurulum ister). Kota satırı istek
-  // başına tek yazmadır.
-  const now = new Date().toISOString();
-  const entries = [...fresh];
-  const seen = entries.length
-    ? await env.DB.batch(entries.map(([k]) =>
-      env.DB.prepare("INSERT OR IGNORE INTO sightings(key,install) VALUES(?,?)").bind(k, install)))
-    : [];
-  // Oyun bilgisi satırın ilk bilinen oyunudur: sonra gelen başka oyun üstüne yazmaz (COALESCE). Metin ve oyun
-  // bilgisi, satırı havuza sokan (ikinci) kurulumun isteğinden alınır.
-  const stmts = [];
-  entries.forEach(([k, line], i) => {
-    if (!(seen[i]?.meta?.changes > 0)) return;
-    stmts.push(env.DB.prepare(UPSERT).bind(k, line.text, now, now, line.title, line.game, k));
-  });
-  const recorded = stmts.length;
-  stmts.push(env.DB.prepare(
-    "INSERT INTO quota(install,day,count) VALUES(?,?,?) ON CONFLICT(install,day) DO UPDATE SET count=count+excluded.count"
-  ).bind(install, day, room));
-  await env.DB.batch(stmts);
+  const fresh = new Map();
+  let entries = [];
+  let recorded = 0;
+  try {
+    // Türkçe, PS5 sistem yazısı ve yarım okumalar hiç yazılmaz (eski sürümler süzmeden gönderiyor).
+    // Aynı istekteki yinelenen anahtar bir kez sayılır.
+    for (const l of lines.slice(0, room)) {
+      const text = String(l?.text || "").trim().replace(/\s+/g, " ");
+      if (!accepts(text)) continue;
+      const c = canon(text);
+      if (c.split(" ").length < 2) continue;
+      const k = await key(text); // istemcinin anahtarına güvenmeyiz, yeniden hesaplarız
+      // Oyun bilgisi isteğe bağlıdır (eski sürümler göndermez); geçersizse yok sayılır, satır yine alınır.
+      if (!fresh.has(k)) fresh.set(k, { text, title: titleId(l?.titleId), game: gameName(l?.game) });
+    }
+    // Günlükte (wrangler tail) yalnız sayılar ve oyun kimliğinin biçimi: oyun bilgisinin gelip gelmediği görülsün.
+    console.log(JSON.stringify(submitSummary(body, lines)));
+
+    // Günlük D1 yazma kotası için: kurulumun görülme kaydı (sightings) ile en az iki kurulumun gördüğü
+    // satırın havuza eklenmesi (lines) aynı transaction içinde gerçekleşir. Tek kurulumda upsert etkisizdir;
+    // aynı kurulum tekrar gönderince de idempotent upsert hiçbir satırı değiştirmez.
+    const now = new Date().toISOString();
+    entries = [...fresh];
+    // Görülme ve satır güncellemesini tek D1 batch transaction'ında yap: ikinci adım hata
+    // verirse yalnız sightings yazılı kalmamalı (yoksa tekrar göndermek satırı kalıcı olarak kaybettirir).
+    // UPSERT, distinct sightings sayısına göre idempotenttir; aynı kurulum tekrar gönderince sayıyı artırmaz.
+    const writes = [
+      ...entries.map(([k]) =>
+        env.DB.prepare("INSERT OR IGNORE INTO sightings(key,install) VALUES(?,?)").bind(k, install)),
+      ...entries.map(([k, line]) =>
+        env.DB.prepare(UPSERT).bind(k, line.text, now, now, line.title, line.game, k)),
+    ];
+    const results = writes.length ? await env.DB.batch(writes) : [];
+    recorded = results.slice(0, entries.length).filter((r) => r?.meta?.changes > 0).length;
+  } catch (error) {
+    // Undo the reservation if filtering, hashing, or the atomic write batch fails. A failed compensation
+    // leaves quota conservative rather than risking an over-limit counter.
+    if (room > 0) {
+      await env.DB.prepare("UPDATE quota SET count=count-? WHERE install=? AND day=? AND count>=?")
+        .bind(room, install, day, room).run().catch(() => {});
+    }
+    throw error;
+  }
   await vote(env, install, entries);
   return json({ accepted: fresh.size, recorded });
 }
@@ -149,16 +175,23 @@ async function vote(env, install, entries) {
 }
 
 // Satırı görenlerin sayısı sightings'ten okunur (az önce yazılan görülme dahil); en az ikiyse lines'a girer ya da
-// sayacı bir artar. Tek kurulumda SELECT boş döner, yazma olmaz.
+// installs sayısı kesin distinct görülme sayısına eşitlenir. Tek kurulumda SELECT boş döner, yazma olmaz.
 export const UPSERT =
   "INSERT INTO lines(key,text,installs,first_seen,last_seen,title_id,game) " +
   "SELECT ?,?,n,?,?,?,? FROM (SELECT COUNT(*) AS n FROM sightings WHERE key=?) WHERE n>=2 " +
-  "ON CONFLICT(key) DO UPDATE SET installs=installs+1, last_seen=excluded.last_seen, " +
-  "title_id=COALESCE(lines.title_id,excluded.title_id), game=COALESCE(lines.game,excluded.game)";
+  "ON CONFLICT(key) DO UPDATE SET installs=excluded.installs, last_seen=excluded.last_seen, " +
+  "title_id=COALESCE(lines.title_id,excluded.title_id), game=COALESCE(lines.game,excluded.game) " +
+  "WHERE lines.installs < excluded.installs";
 
 async function exportLines(url, env) {
-  const min = Math.max(1, Number(url.searchParams.get("min") || 2));
-  const limit = Math.min(20000, Number(url.searchParams.get("limit") || 5000));
+  const min = Number(url.searchParams.get("min") || 2);
+  const requestedLimit = Number(url.searchParams.get("limit") || 5000);
+  // SQLite LIMIT -1 sınırsızdır; geçersiz sayılar sorgu kotasını ve yanıt boyutunu aşmamalı.
+  if (!Number.isSafeInteger(min) || min < 1 ||
+      !Number.isSafeInteger(requestedLimit) || requestedLimit < 1) {
+    return json({ error: "bad_request" }, 400);
+  }
+  const limit = Math.min(20000, requestedLimit);
   const all = url.searchParams.get("all") === "1";
   // Oyuna göre süzme yalnız geçişten sonra çalışır (title_id ve game sütunları); süzgeçsiz istek eskisi gibi.
   const title = titleId(url.searchParams.get("title"));

@@ -50,6 +50,10 @@ public enum DisconnectKind
     RegistrationInvalid,
     /// <summary>PS5 Ayarlar'daki giriş şifresini kabul etmedi. Yeniden gönderilmez (yanlış şifreyle döngüye girilmez).</summary>
     LoginPasscodeIncorrect,
+    /// <summary>PS5 oturum isteğini kayıt dışı bir nedenle reddetti ya da yanıtı okunamadı; libchiaki bunu yalnız
+    /// "Unknown Session Request Error" diye verir (GitHub #33, #202). Ayrıntı: PS5'in "Reported Application Reason" kodu
+    /// (ör. 0x80108bff; günlükte kod yoksa null).</summary>
+    Rejected,
 }
 
 /// <summary>PS5 oturum giriş şifresi (4 hane). PS5 ikinci hesapta şifre isterse Ayarlar'da kayıtlı şifre gönderilir.</summary>

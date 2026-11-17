@@ -51,9 +51,11 @@ class AreasTest {
 
     private class Recorder : RegionSender {
         val sent = mutableListOf<Pair<String, String>>()
+        val placements = mutableListOf<Pair<TextBox?, Double?>>()
         var cleared = 0
         override fun sendRegion(id: String, text: String, box: TextBox?, lineHeight: Double?) {
             sent.add(id to text)
+            placements.add(box to lineHeight)
         }
         override fun clearRegions() {
             cleared++
@@ -170,6 +172,31 @@ class AreasTest {
         assertEquals("q" to "", recorder.sent.last())
         watcher.reset()
         assertEquals(0, recorder.cleared)
+    }
+
+    @Test
+    fun sameTextAtNewGeometryUpdatesRegionWithoutRetranslating() {
+        val recorder = Recorder()
+        val calls = mutableListOf<String>()
+        var top = 0.2
+        var height = 0.1
+        val watcher = RegionWatcher({
+            Reading(listOf(TextLine("Find the blacksmith", TextBox(0.1, top, 0.9, top + height))))
+        }, { calls.add(it); "TR: $it" }, recorder)
+        val area = ExtraArea(id = "q", name = "Quest", region = ExtraAreaPreset.QUEST.region)
+        fun pass(value: Int) = watcher.pass(setOf(area.id), listOf(area to RegionWatcher.Crop(Unit, signature(value))))
+
+        pass(10)
+        pass(10)
+        val first = recorder.placements[0]
+        top = 0.45
+        height = 0.2
+        pass(60)
+
+        assertEquals(listOf("q" to "TR: Find the blacksmith", "q" to "TR: Find the blacksmith"), recorder.sent)
+        assertTrue(first.first != recorder.placements[1].first)
+        assertTrue(first.second != recorder.placements[1].second)
+        assertEquals(listOf("Find the blacksmith"), calls)
     }
 
     @Test
