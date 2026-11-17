@@ -255,13 +255,13 @@
     // Çevirinin yeri TV ile aynı: İngilizce satırı örterek (cover), üstünde (above) ya da altında (below);
     // ekranın kenarında yer yoksa öbür yana geçer. Satırın yeri bilinmiyorsa ya da ?bottom verildiyse sabit yükseklik.
     var mode = box && !fixed.bottom ? placement : 'fixed';
-    if (mode === 'below' && box.bottom > 0.88) mode = 'above';
-    if (mode === 'above' && box.top < 0.12) mode = 'below';
     if (mode !== 'cover' && mode !== 'above' && mode !== 'below') mode = 'fixed';
-    shownMode = mode;
     wrap.style.left = '';
     wrap.style.right = '';
+    wrap.style.top = '';
+    wrap.style.bottom = '';
     if (mode === 'cover') {
+      shownMode = mode;
       // Kutu sayfanın tamamına göre yerleşir: kap tüm sayfayı kaplar.
       wrap.style.top = '0';
       wrap.style.bottom = '0';
@@ -284,22 +284,35 @@
       line.style.maxWidth = '';
       line.className = 'on';
       apply(lastStyle);
+      // apply() may restore a fixed bottom from the previous subtitle. Pick the new mode first,
+      // then position the wrapper without carrying stale vertical coordinates forward.
+      wrap.style.top = '';
+      wrap.style.bottom = '';
+      var gap = 1.2;
       if (mode !== 'fixed') {
         // Kap İngilizce satırın hemen üstüne ya da altına oturur, yatayda satırın ortasına hizalanır.
-        var gap = 1.2;
         var center = (box.left + box.right) / 2;
         var half = Math.max(0.3, Math.min(center, 1 - center));
         wrap.style.left = (Math.max(0.02, center - half) * 100) + '%';
         wrap.style.right = (Math.max(0.02, 1 - center - half) * 100) + '%';
-        if (mode === 'above') {
-          wrap.style.top = '';
-          wrap.style.bottom = ((1 - box.top) * 100 + gap) + '%';
-        } else {
-          wrap.style.bottom = '';
-          wrap.style.top = (box.bottom * 100 + gap) + '%';
-        }
+        var viewportHeight = window.innerHeight || 1080;
+        var subtitleHeight = line.getBoundingClientRect().height;
+        var gapPixels = viewportHeight * gap / 100;
+        var fitsAbove = subtitleHeight <= box.top * viewportHeight - gapPixels;
+        var fitsBelow = subtitleHeight <= (1 - box.bottom) * viewportHeight - gapPixels;
+        if (mode === 'above' && !fitsAbove) mode = fitsBelow ? 'below' : 'fixed';
+        else if (mode === 'below' && !fitsBelow) mode = fitsAbove ? 'above' : 'fixed';
+      }
+      shownMode = mode;
+      if (mode === 'above') {
+        wrap.style.bottom = ((1 - box.top) * 100 + gap) + '%';
+      } else if (mode === 'below') {
+        wrap.style.top = (box.bottom * 100 + gap) + '%';
       } else {
-        wrap.style.top = '';
+        wrap.style.left = '';
+        wrap.style.right = '';
+        var bottom = Number(fixed.bottom || lastStyle.bottomPercent);
+        if (bottom >= 0 && bottom <= 85) wrap.style.bottom = bottom + '%';
       }
     }
     timer = setTimeout(hide, Math.max(1000, duration || 8000));
