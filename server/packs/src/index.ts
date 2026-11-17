@@ -98,10 +98,6 @@ async function list(env: Env): Promise<Response> {
 
 async function download(request: Request, env: Env, id: string, rate: RateLimiter, now: number): Promise<Response> {
   if (!PACK_ID.test(id)) return json({ error: "not_found" }, 404);
-  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
-  const retry = rate.take(ip, now);
-  if (retry !== null) return json({ error: "rate_limited" }, 429, { "retry-after": String(retry) });
-
   const object = await env.PACKS.get(`packs/${id}.json.gz`);
   if (!object || !object.body) return json({ error: "not_found" }, 404);
   const headers: Record<string, string> = {
@@ -121,6 +117,10 @@ async function download(request: Request, env: Env, id: string, rate: RateLimite
     return tag === "*" || tag.replace(/^W\//, "") === object.httpEtag;
   });
   if (matches) return new Response(null, { status: 304, headers });
+  // Only a 200 response transfers a pack. Cache validation and missing IDs do not use download quota.
+  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+  const retry = rate.take(ip, now);
+  if (retry !== null) return json({ error: "rate_limited" }, 429, { "retry-after": String(retry) });
   return new Response(object.body, { status: 200, headers });
 }
 
