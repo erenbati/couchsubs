@@ -293,6 +293,17 @@ test("kimliksiz oyun adları anahtara göre birleşir; tek kurulumun adı ayrı 
   assert.equal(jobPackId(jobs[0]), "pool-gta-6");
 });
 
+test("Latin dışı oyunlar ayrı paket alır, karışık adlar ASCII adla çakışmaz", () => {
+  const names = ["星の旅", "夜の旅", "GTA 6 海外"];
+  const votes = new Map(names.map((name) => [gameKey(name), 2]));
+  const jobs = nameJobs(names.map((game) => ({ game, lines: 320 })), votes);
+  assert.equal(jobs.length, 3, "Latin dışı adlar sessizce elenmemeli");
+  const ids = jobs.map(jobPackId);
+  assert.equal(new Set(ids).size, 3);
+  assert.ok(ids.every((id) => /^[a-z0-9][a-z0-9-]{0,63}$/.test(id)));
+  assert.notEqual(jobPackId({ titleId: null, gameKey: gameKey("GTA 6 海外") }), "pool-gta-6");
+});
+
 test("uzun oyun adları sunucunun kabul ettiği paket kimliği sınırında kalır", () => {
   const id = jobPackId({ titleId: null, gameKey: "x".repeat(80) });
   assert.match(id, /^[a-z0-9][a-z0-9-]{0,63}$/);
