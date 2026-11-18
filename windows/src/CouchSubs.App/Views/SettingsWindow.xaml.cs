@@ -360,7 +360,7 @@ public partial class SettingsWindow : Window
                     Clip = new RectangleGeometry(new Rect(0, 0, 52, 52), 8, 8),
                 };
             }
-            catch (Exception error) when (error is IOException or FormatException or NotSupportedException)
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or FormatException or NotSupportedException)
             {
                 // A corrupted optional cover must never hide the pack or prevent opening Settings.
             }
@@ -430,9 +430,16 @@ public partial class SettingsWindow : Window
             if (new FileInfo(picker.FileName).Length > 8 * 1024 * 1024)
                 throw new InvalidDataException("Image exceeds 8 MB.");
             using var source = File.OpenRead(picker.FileName);
-            var decoder = BitmapDecoder.Create(source, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
-            if (decoder.Frames.Count == 0) throw new InvalidDataException("Empty image.");
-            var frame = decoder.Frames[0];
+            // Decode a bounded preview instead of expanding a potentially huge original into RAM.
+            var frame = new BitmapImage();
+            frame.BeginInit();
+            frame.CacheOption = BitmapCacheOption.OnLoad;
+            frame.DecodePixelWidth = 512;
+            frame.StreamSource = source;
+            frame.EndInit();
+            frame.Freeze();
+            if (frame.PixelWidth > 4096 || frame.PixelHeight > 4096)
+                throw new InvalidDataException("Image dimensions are too large.");
             var side = Math.Min(frame.PixelWidth, frame.PixelHeight);
             if (side == 0) throw new InvalidDataException("Empty image.");
             var crop = new CroppedBitmap(frame,
