@@ -26,7 +26,13 @@ def put(table, en, tr):
 
 
 for l in lines:
-    if not all(l["tr"]) or not l["sents"]:
+    if not l["sents"]:
+        continue
+    # zip(sents, tr) silently drops unmatched sentences; a full-line translation
+    # built from only one of them would publish incorrect subtitles.
+    if not isinstance(l["tr"], list) or len(l["tr"]) != len(l["sents"]):
+        raise SystemExit("reviewed subtitle has mismatched sentence and translation counts")
+    if not all(l["tr"]):
         continue
     whole = " ".join(t.strip() for t in l["tr"])
     # Türkçesi İngilizcesiyle aynı satırlar (adlar, ünlemler) parça olarak girer, tam satır olarak değil.
