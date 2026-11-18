@@ -55,6 +55,8 @@ public struct SubtitleStabilizer {
     /// Ekrandaki (gönderilmiş) satır: sadeleştirilmiş satırlar alt alta, ve ilk okunduğu hali.
     private var sent = ""
     private var sentRaw = ""
+    /// Yeniden deneme veya geri çekme sent durumunu temizlese de ekrandaki satırın temizlenmesi bekleniyor.
+    private var clearPending = false
     private var emptySince: Int?
     /// Boş okunan bölgede satırın yerinin değiştiği (ya da yeri bilinmediği için kalkmış sayıldığı) an.
     private var goneSince: Int?
@@ -91,7 +93,7 @@ public struct SubtitleStabilizer {
             candidateCount = 0
             let since = emptySince ?? time
             emptySince = since
-            guard !sent.isEmpty else { return .none }
+            guard !sent.isEmpty || clearPending else { return .none }
             // Satırın yeri son okunduğu kareden beri değişmediyse yazı tanıma kaçırmıştır; kalkma sayılmaz.
             if goneSince == nil && !looksUnchanged(signature) { goneSince = time }
             let gone = goneSince.map { time - $0 >= clearAfterMs } ?? false
@@ -181,12 +183,14 @@ public struct SubtitleStabilizer {
 
     /// Ekrandaki satırı geçmişe yazar (kalktı ya da yerine başkası geldi).
     private mutating func leaveScreen(at time: Int) {
-        guard !sent.isEmpty else { return }
-        history.append((sent, sentRaw, time))
-        if history.count > Self.historySize { history.removeFirst() }
-        sent = ""
-        sentRaw = ""
-        lastSeen = nil
+        if !sent.isEmpty {
+            history.append((sent, sentRaw, time))
+            if history.count > Self.historySize { history.removeFirst() }
+            sent = ""
+            sentRaw = ""
+            lastSeen = nil
+        }
+        clearPending = false
     }
 
     /// Satır nokta, ünlem, soru ya da üç noktayla bitiyor mu (kapanan tırnak ve parantezler yok sayılır).
@@ -207,6 +211,7 @@ public struct SubtitleStabilizer {
     /// sayılır, ekranda kaldıkça sonraki okumada yeniden verilir. Yoksa gerçek bir yeni satır "gönderildi" sayılıp hiç
     /// çevrilmiyordu (Windows: WithdrawSent, Android: withdrawSent).
     public mutating func withdrawSent() {
+        if !sent.isEmpty { clearPending = true }
         sent = ""
         sentRaw = ""
         lastSeen = nil
@@ -215,7 +220,10 @@ public struct SubtitleStabilizer {
     /// Son gönderilen satırı unutur (ör. çevirisi başarısız oldu); satır ekranda kaldıkça yeniden kararlı sayılıp çevrilir,
     /// ama en erken `retryAfterMs` sonra: kalıcı hatada (dil paketi eksik) her karede çevirmene gidilmez.
     public mutating func forgetSent() {
-        if !sent.isEmpty { forgotten = sent }
+        if !sent.isEmpty {
+            forgotten = sent
+            clearPending = true
+        }
         retryAt = now() + Self.retryAfterMs
         sent = ""
         sentRaw = ""
@@ -235,9 +243,10 @@ public struct SubtitleStabilizer {
         lastSeen = nil
         history.removeAll()
         forgotten = ""
-        guard !sent.isEmpty else { return .none }
+        let shouldClear = !sent.isEmpty || clearPending
         sent = ""
         sentRaw = ""
-        return .clear
+        clearPending = false
+        return shouldClear ? .clear : .none
     }
 }

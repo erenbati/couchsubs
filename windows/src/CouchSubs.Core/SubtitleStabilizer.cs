@@ -95,6 +95,8 @@ public sealed class SubtitleStabilizer(double similarity = 0.85, int stableFrame
     /// <summary>Ekrandaki (gönderilmiş) satır: sadeleştirilmiş satırlar alt alta, ve ilk okunduğu hali.</summary>
     private string sent = "";
     private string sentRaw = "";
+    /// <summary>Yeniden deneme veya geri çekme sent durumunu temizlese de ekrandaki satırın temizlenmesi bekleniyor.</summary>
+    private bool clearPending;
     private long? emptySince;
     /// <summary>Boş okunan bölgede satırın yerinin değiştiği (ya da yeri bilinmediği için kalkmış sayıldığı) an.</summary>
     private long? goneSince;
@@ -125,7 +127,7 @@ public sealed class SubtitleStabilizer(double similarity = 0.85, int stableFrame
             candidate = "";
             candidateCount = 0;
             emptySince ??= time;
-            if (sent.Length == 0) return StabilizerAction.None;
+            if (sent.Length == 0 && !clearPending) return StabilizerAction.None;
             // Satırın yeri son okunduğu kareden beri değişmediyse yazı tanıma kaçırmıştır; kalkma sayılmaz.
             if (goneSince is null && !LooksUnchanged(signature)) goneSince = time;
             if ((goneSince is { } gone && time - gone >= clearAfterMs) || time - emptySince >= HoldUnchangedMs)
@@ -230,12 +232,15 @@ public sealed class SubtitleStabilizer(double similarity = 0.85, int stableFrame
     /// <summary>Ekrandaki satırı geçmişe yazar (kalktı ya da yerine başkası geldi).</summary>
     private void LeaveScreen(long time)
     {
-        if (sent.Length == 0) return;
-        history.Add((sent, sentRaw, time));
-        if (history.Count > HistorySize) history.RemoveAt(0);
-        sent = "";
-        sentRaw = "";
-        lastSeen = null;
+        if (sent.Length > 0)
+        {
+            history.Add((sent, sentRaw, time));
+            if (history.Count > HistorySize) history.RemoveAt(0);
+            sent = "";
+            sentRaw = "";
+            lastSeen = null;
+        }
+        clearPending = false;
     }
 
     /// <summary>Satır nokta, ünlem, soru ya da üç noktayla bitiyor mu (kapanan tırnak ve parantezler yok sayılır).</summary>
@@ -255,7 +260,11 @@ public sealed class SubtitleStabilizer(double similarity = 0.85, int stableFrame
     /// </summary>
     public void ForgetSent()
     {
-        if (sent.Length > 0) forgotten = sent;
+        if (sent.Length > 0)
+        {
+            forgotten = sent;
+            clearPending = true;
+        }
         retryAt = now() + RetryAfterMs;
         sent = "";
         sentRaw = "";
@@ -272,6 +281,7 @@ public sealed class SubtitleStabilizer(double similarity = 0.85, int stableFrame
     /// </summary>
     public void WithdrawSent()
     {
+        if (sent.Length > 0) clearPending = true;
         sent = "";
         sentRaw = "";
         lastSeen = null;
@@ -288,9 +298,10 @@ public sealed class SubtitleStabilizer(double similarity = 0.85, int stableFrame
         lastSeen = null;
         history.Clear();
         forgotten = "";
-        if (sent.Length == 0) return StabilizerAction.None;
+        var shouldClear = sent.Length > 0 || clearPending;
         sent = "";
         sentRaw = "";
-        return StabilizerAction.Clear;
+        clearPending = false;
+        return shouldClear ? StabilizerAction.Clear : StabilizerAction.None;
     }
 }

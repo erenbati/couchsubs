@@ -66,6 +66,8 @@ class SubtitleStabilizer(
     /** Ekrandaki (gönderilmiş) satır: sadeleştirilmiş satırlar alt alta, ve ilk okunduğu hali. */
     private var sent = ""
     private var sentRaw = ""
+    /** Retry/withdraw state can clear while the previous subtitle still needs an output clear. */
+    private var clearPending = false
     private var emptySince: Long? = null
     /** Boş okunan bölgede satırın yerinin değiştiği (ya da yeri bilinmediği için kalkmış sayıldığı) an. */
     private var goneSince: Long? = null
@@ -87,7 +89,7 @@ class SubtitleStabilizer(
             candidate = ""
             candidateCount = 0
             val since = emptySince ?: time.also { emptySince = it }
-            if (sent.isEmpty()) return StabilizerAction.None
+            if (sent.isEmpty() && !clearPending) return StabilizerAction.None
             // Satırın yeri son okunduğu kareden beri değişmediyse yazı tanıma kaçırmıştır; kalkma sayılmaz.
             if (goneSince == null && !looksUnchanged(signature)) goneSince = time
             val gone = goneSince?.let { time - it >= clearAfterMs } ?: false
@@ -160,12 +162,14 @@ class SubtitleStabilizer(
     private fun isSame(text: String, rows: String) = rows.isNotEmpty() && TextMatch.isSameSubtitle(text, rows)
 
     private fun leaveScreen(time: Long) {
-        if (sent.isEmpty()) return
-        history.add(Left(sent, sentRaw, time))
-        if (history.size > HISTORY_SIZE) history.removeAt(0)
-        sent = ""
-        sentRaw = ""
-        lastSeen = null
+        if (sent.isNotEmpty()) {
+            history.add(Left(sent, sentRaw, time))
+            if (history.size > HISTORY_SIZE) history.removeAt(0)
+            sent = ""
+            sentRaw = ""
+            lastSeen = null
+        }
+        clearPending = false
     }
 
     /** Çeviri kaynağıyla neredeyse aynıysa metin zaten hedef dildedir (ör. konsolun Türkçe menüleri). */
@@ -178,6 +182,7 @@ class SubtitleStabilizer(
      * çevrilmiyordu (Windows: WithdrawSent, Mac/iPhone: withdrawSent).
      */
     fun withdrawSent() {
+        if (sent.isNotEmpty()) clearPending = true
         sent = ""
         sentRaw = ""
         lastSeen = null
@@ -185,7 +190,10 @@ class SubtitleStabilizer(
 
     /** Son gönderilen satırı unutur (çevirisi başarısız oldu); ekranda kaldıkça en erken [RETRY_AFTER_MS] sonra yeniden çevrilir. */
     fun forgetSent() {
-        if (sent.isNotEmpty()) forgotten = sent
+        if (sent.isNotEmpty()) {
+            forgotten = sent
+            clearPending = true
+        }
         retryAt = now() + RETRY_AFTER_MS
         sent = ""
         sentRaw = ""
@@ -202,9 +210,10 @@ class SubtitleStabilizer(
         lastSeen = null
         history.clear()
         forgotten = ""
-        if (sent.isEmpty()) return StabilizerAction.None
+        val shouldClear = sent.isNotEmpty() || clearPending
         sent = ""
         sentRaw = ""
-        return StabilizerAction.Clear
+        clearPending = false
+        return if (shouldClear) StabilizerAction.Clear else StabilizerAction.None
     }
 }
