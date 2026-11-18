@@ -287,7 +287,15 @@ async function buildPack(env, job, cache, known) {
   const previous = packs.find((p) => p.id === id);
   if (!previous && count < MIN_LINES) return { id, built: false, entries: count };
   const contentSha = await sha256Hex(new TextEncoder().encode(body));
-  if (previous && cache.contentSha === contentSha) return { id, built: false, unchanged: true, entries: count };
+  if (previous && cache.contentSha === contentSha) {
+    // The index may outlive an R2 object removed independently.
+    // An unchanged source hash is only enough when the published file exists.
+    const packKey = `packs/${id}.json.gz`;
+    const published = env.PACKS.head
+      ? await env.PACKS.head(packKey)
+      : await env.PACKS.get(packKey);
+    if (published) return { id, built: false, unchanged: true, entries: count };
+  }
   const data = await gzip(body);
   const sha256 = await sha256Hex(data);
   // Önce dosya, sonra liste: liste hiçbir zaman olmayan dosyayı göstermez.

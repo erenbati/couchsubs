@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GENERAL, jobPackId, parseReply, runAutopack } from "../src/autopack.js";
+import { GENERAL, GENERAL_TITLE, jobPackId, packBody, parseReply, runAutopack } from "../src/autopack.js";
 
 test("malformed current-night state is rebuilt instead of stopping the scheduler", async () => {
   const now = new Date("2026-11-20T04:00:00Z");
@@ -378,4 +378,48 @@ test("long ASCII game names keep separate translation caches when their pack IDs
   assert.equal(cacheFiles.length, 2, "distinct published pack IDs must not share a translation cache");
   const cachedKeys = cacheFiles.map((name) => Object.keys(JSON.parse(stored.get(name)).lines));
   assert.deepEqual(cachedKeys.map((keys) => keys.length), [1, 1]);
+});
+
+test("unchanged cache re-publishes a pack whose R2 object disappeared", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const k = "1111111111111111";
+  const cache = { lines: { [k]: { k, en: "We need to leave right now.", tr: "Hemen gitmemiz gerekiyor." } }, skip: {}, fail: {} };
+  const content = packBody("pool-genel", GENERAL_TITLE, cache, new BigUint64Array(), null).body;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
+  cache.contentSha = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const stored = new Map([
+    ["auto/state.json", JSON.stringify({ night: "2026-11-20", queue: [{ titleId: GENERAL, game: null, lines: 350 }], translated: 0, done: [] })],
+    ["auto/tr/GENEL.json", JSON.stringify(cache)],
+    ["index.json", JSON.stringify({ packs: [{ id: "pool-genel", title: GENERAL_TITLE, version: 4 }] })],
+  ]);
+  const written = [];
+  const env = {
+    AI: {},
+    PACKS: {
+      get: async (name) => name === "auto/known-keys.bin"
+        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        : stored.has(name) ? { text: async () => stored.get(name) } : null,
+      head: async (name) => stored.has(name) ? { key: name } : null,
+      put: async (name, data) => { written.push(name); stored.set(name, data); },
+    },
+    DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) }) },
+  };
+  const outcome = await runAutopack(env, now);
+  assert.equal(outcome.phase, "build");
+  assert.equal(outcome.built, true, "pack must be re-published even when its input hash has not changed");
+  assert.equal(outcome.version, 5);
+  assert.ok(written.includes("packs/pool-genel.json.gz"));
+  assert.equal(JSON.parse(stored.get("index.json")).packs[0].version, 5);
+
+  // A later run with a real pack object and the same cache must remain unchanged.
+  stored.set("auto/state.json", JSON.stringify({
+    night: "2026-11-20", queue: [{ titleId: GENERAL, game: null, lines: 350 }],
+    translated: 0, done: [],
+  }));
+  written.length = 0;
+  const again = await runAutopack(env, now);
+  assert.equal(again.unchanged, true, "existing package must retain normal no-op behavior");
+  assert.equal(again.built, false);
+  assert.equal(written.includes("packs/pool-genel.json.gz"), false);
+  assert.equal(JSON.parse(stored.get("index.json")).packs[0].version, 5);
 });
