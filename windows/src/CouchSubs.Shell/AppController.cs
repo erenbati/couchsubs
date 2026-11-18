@@ -1363,8 +1363,10 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         if (ShowsOnTv) StartKeeper();
         else
         {
-            keeper?.Stop();
+            var stoppedKeeper = keeper;
             keeper = null;
+            stoppedKeeper?.Stop();
+            if (stoppedKeeper is not null) server.ExitTvApp();
         }
     }
 
@@ -1431,13 +1433,15 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
 
     public void Stop()
     {
+        var stoppedKeeper = keeper;
+        keeper = null;
+        stoppedKeeper?.Stop();
+        if (stoppedKeeper is not null) server.ExitTvApp();
         session?.Stop();
         session?.Dispose();
         session = null;
         UpdateGameProbe(connected: false);
         StopGameSense();
-        keeper?.Stop();
-        keeper = null;
         pipeline?.Reset();
         if (pipeline is not null) SubtitleLog.Write("oturum bitti");
         pipeline = null;

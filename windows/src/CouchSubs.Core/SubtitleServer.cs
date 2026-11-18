@@ -226,6 +226,9 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
         EventSent?.Invoke(SubtitleEvent.Cleared);
     }
 
+    /// <summary>TV uygulamasını kapatır; çeviri durduğunda HDMI girişine dönmesine izin verir.</summary>
+    public void ExitTvApp() => Broadcast(Frame("exit", new SortedDictionary<string, object>()));
+
     /// <summary>
     /// "Ekranı çevir" sonuçları: <c>screen</c> olayı her çeviriyi yazının yeri (<c>box</c>), tipik satır yüksekliği
     /// (<c>line</c>, ekrana oranla) ve çok parçalıysa <c>paragraphs</c> ile taşır. TV öncekinin yerine bunları koyar.

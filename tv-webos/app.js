@@ -892,6 +892,7 @@
     onEvent('screen-clear', hideScreen);
     onEvent('region', showRegion);
     onEvent('region-clear', hideRegions);
+    onEvent('exit', function () { leaving = true; platform.exit(); });
     onEvent('style', applyStyle);
     onEvent('speech', function (data) { if (data.url) playSpeech(server + data.url); });
     onEvent('speech-stop', stopSpeech);
