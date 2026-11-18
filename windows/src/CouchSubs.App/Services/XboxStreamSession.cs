@@ -14,7 +14,7 @@ using Microsoft.Web.WebView2.Wpf;
 namespace CouchSubs.App.Services;
 
 /// <summary>Receives Xbox WebRTC video in an off-screen WebView2 and passes decoded frames to the normal OCR pipeline.</summary>
-internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, string token, Action<string> tokenUpdated, bool legacyFrameRate) : IStreamSession
+internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, string token, Action<string> tokenUpdated, bool legacyFrameRate, bool playAudio) : IStreamSession
 {
     // Oynatıcı sayfası yalnız WebRTC el sıkışma komutlarını çağırabilir; giriş ve token dönen komutlar ona kapalı.
     private static readonly HashSet<string> PlayerCommands = ["sdp", "chatSdp", "ice", "keepalive"];
@@ -160,12 +160,23 @@ internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, 
         browser.CoreWebView2.Settings.IsStatusBarEnabled = false;
         browser.CoreWebView2.Settings.AreDevToolsEnabled = false;
         browser.CoreWebView2.SetVirtualHostNameToFolderMapping("couchsubs-xbox.local", folder, CoreWebView2HostResourceAccessKind.DenyCors);
+        try
+        {
+            await browser.CoreWebView2.Profile.SetPermissionStateAsync(
+                CoreWebView2PermissionKind.Autoplay, "https://couchsubs-xbox.local",
+                playAudio ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Default);
+        }
+        catch (Exception error)
+        {
+            // Eski WebView2 çalışma zamanları bu izin türünü desteklemeyebilir; sesi engellemek akışı durdurmamalı.
+            Log($"otomatik ses izni ayarlanamadı: {error.Message}");
+        }
         browser.CoreWebView2.WebMessageReceived += OnMessage;
         browser.CoreWebView2.NavigationCompleted += (_, result) =>
         {
             try
             {
-                if (result.IsSuccess) browser?.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new { kind = "start", legacyFrameRate }));
+                if (result.IsSuccess) browser?.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new { kind = "start", legacyFrameRate, playAudio }));
                 else browserEnded?.TrySetResult(true);
             }
             catch { browserEnded?.TrySetResult(true); }

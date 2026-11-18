@@ -370,9 +370,10 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             var windowAppChanged = value.FrameSource == FrameSource.RemotePlayWindow && old.RemotePlayApp != value.RemotePlayApp;
             var captureWindowChanged = value.FrameSource == FrameSource.CaptureWindow && old.CaptureWindow != value.CaptureWindow;
             var xboxFrameRateChanged = IsXbox && old.XboxLegacyFrameRate != value.XboxLegacyFrameRate;
-            if (isRunning && (old.FrameSource != value.FrameSource || windowAppChanged || captureWindowChanged || xboxFrameRateChanged))
+            var xboxAudioChanged = IsXbox && old.XboxAudioOnComputer != value.XboxAudioOnComputer;
+            if (isRunning && (old.FrameSource != value.FrameSource || windowAppChanged || captureWindowChanged || xboxFrameRateChanged || xboxAudioChanged))
             {
-                // Görüntü kaynağı ya da Xbox kare aralığı değişti: akış yeni seçimle yeniden başlar.
+                // Görüntü kaynağı, Xbox kare aralığı ya da Xbox ses çıkışı değişti: akış yeni seçimle yeniden başlar.
                 Stop();
                 _ = StartAsync().ContinueWith(task => RemotePlayLog.Note($"Çeviri yeniden başlatılamadı: {task.Exception?.GetBaseException().Message}"),
                                               TaskContinuationOptions.OnlyOnFaulted);
@@ -1278,7 +1279,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             if (IsXbox)
             {
                 RemotePlayLog.Note($"Çeviri başladı; {ConsoleTitle} bağlantısı açılıyor.");
-                stream = (services.Xbox ?? throw new InvalidOperationException(text["Xbox streaming isn't available in this version."])).MakeStream(xboxConsole!, xboxToken!, settings.XboxLegacyFrameRate);
+                stream = (services.Xbox ?? throw new InvalidOperationException(text["Xbox streaming isn't available in this version."]))
+                    .MakeStream(xboxConsole!, xboxToken!, settings.XboxLegacyFrameRate, settings.XboxAudioOnComputer);
                 xboxNameChecked = false;
             }
             else if (readsWindow)

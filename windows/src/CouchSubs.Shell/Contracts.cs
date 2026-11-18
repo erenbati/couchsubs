@@ -269,6 +269,8 @@ public sealed record UserSettings
     public FrameSource FrameSource { get; init; } = FrameSource.Ps5;
     /// <summary>Xbox karelerini #244 öncesindeki 200 ms aralıkla al; varsayılan 66 ms.</summary>
     public bool XboxLegacyFrameRate { get; init; }
+    /// <summary>Xbox Remote Play oyun sesini bu bilgisayarda çal; eski ayarlarda açıktır.</summary>
+    public bool XboxAudioOnComputer { get; init; } = true;
     /// <summary>OBS veya başka bir açık pencere seçildiyse yalnız bu pencere yakalanır (varsayılan null).</summary>
     public WindowCaptureTarget? CaptureWindow { get; init; }
     /// <summary>Pencereden okunurken hangi Remote Play uygulaması (bkz. <see cref="Shell.RemotePlayApp"/>).</summary>
@@ -413,7 +415,7 @@ public interface IXboxService
     Task<XboxLoginChallenge> BeginLoginAsync();
     Task<string> CompleteLoginAsync();
     Task<IReadOnlyList<XboxConsole>> DiscoverAsync(string token);
-    IStreamSession MakeStream(XboxConsole console, string token, bool legacyFrameRate);
+    IStreamSession MakeStream(XboxConsole console, string token, bool legacyFrameRate, bool playAudio);
 }
 
 /// <summary>Cihaz üstü çeviri modeli: kurulu mu, indir, çevirmen oluştur.</summary>

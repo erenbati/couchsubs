@@ -94,6 +94,7 @@ public partial class SettingsWindow : Window
         AppearanceChoice.SelectedItem = AppearanceChoice.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == settings.Appearance.ToString());
         FrameSourceChoice.SelectedItem = FrameSourceChoice.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == settings.FrameSource.ToString());
         RemotePlayAppChoice.SelectedItem = RemotePlayAppChoice.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == settings.RemotePlayApp.ToString());
+        XboxAudioOnComputer.IsChecked = settings.XboxAudioOnComputer;
         XboxLegacyFrameRate.IsChecked = settings.XboxLegacyFrameRate;
         PlayStationPictureSourceCard.Visibility = controller.IsXbox ? Visibility.Collapsed : Visibility.Visible;
         XboxPictureSourceCard.Visibility = controller.IsXbox ? Visibility.Visible : Visibility.Collapsed;
@@ -170,6 +171,9 @@ public partial class SettingsWindow : Window
 
     private void OnXboxLegacyFrameRate(object sender, RoutedEventArgs e) =>
         Update(s => s with { XboxLegacyFrameRate = XboxLegacyFrameRate.IsChecked == true });
+
+    private void OnXboxAudioOnComputer(object sender, RoutedEventArgs e) =>
+        Update(s => s with { XboxAudioOnComputer = XboxAudioOnComputer.IsChecked == true });
 
     private void OnRemotePlayApp(object sender, SelectionChangedEventArgs e)
     {

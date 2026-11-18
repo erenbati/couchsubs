@@ -1814,7 +1814,7 @@ internal sealed class FakeXbox(IReadOnlyList<XboxConsole> consoles) : IXboxServi
     public Task<XboxLoginChallenge> BeginLoginAsync() => throw new NotSupportedException();
     public Task<string> CompleteLoginAsync() => throw new NotSupportedException();
     public Task<IReadOnlyList<XboxConsole>> DiscoverAsync(string token) => Task.FromResult(consoles);
-    public IStreamSession MakeStream(XboxConsole console, string token, bool legacyFrameRate)
+    public IStreamSession MakeStream(XboxConsole console, string token, bool legacyFrameRate, bool playAudio)
     {
         LegacyFrameRateRequests.Add(legacyFrameRate);
         return new FakeStream();
