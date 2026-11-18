@@ -81,8 +81,8 @@ enum TVText {
     static var androidSupported: String { String(localized: "Debugging must be on in the TV's developer options. Leave it on so updates can be installed.") }
     static var androidTvs: String { String(localized: "Android TVs on the network") }
     static var androidNone: String { String(localized: "No Android TV found. Is the TV on and on the same Wi-Fi? You can also type its address below (on the TV: Settings › Network & Internet › the connected network).") }
-    static var androidDebugOn: String { String(localized: "Network debugging is on (5555)") }
-    static var androidDebugOff: String { String(localized: "Debugging port is closed") }
+    static var androidDebugOn: String { String(localized: "TCP 5555 is reachable") }
+    static var androidDebugOff: String { String(localized: "TCP 5555 is unreachable; wireless debugging uses a separate port") }
     static var androidMode: String { String(localized: "Connection") }
     static var androidModeNetwork: String { String(localized: "USB/network debugging") }
     static var androidModeWireless: String { String(localized: "Wireless debugging") }

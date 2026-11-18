@@ -12682,34 +12682,34 @@
         }
       }
     },
-    "Network debugging is on (5555)": {
+    "TCP 5555 is reachable": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Network debugging is on (5555)"
+            "value": "TCP 5555 is reachable"
           }
         },
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ağ hata ayıklaması açık (5555)"
+            "value": "TCP 5555 erişilebilir"
           }
         }
       }
     },
-    "Debugging port is closed": {
+    "TCP 5555 is unreachable; wireless debugging uses a separate port": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Debugging port is closed"
+            "value": "TCP 5555 is unreachable; wireless debugging uses a separate port"
           }
         },
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Hata ayıklama portu kapalı"
+            "value": "TCP 5555 erişilemiyor; kablosuz hata ayıklama ayrı bir port kullanır"
           }
         }
       }
