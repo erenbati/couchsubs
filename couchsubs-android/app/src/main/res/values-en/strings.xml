@@ -371,8 +371,8 @@
     <string name="tvinstall_android_supported">Debugging must be on in the TV\'s developer options. Leave it on so updates can be installed.</string>
     <string name="tvinstall_android_tvs">Android TVs on the network</string>
     <string name="tvinstall_android_none">No Android TV found. Is the TV on and on the same Wi-Fi? You can also type its address below (on the TV: Settings › Network &amp; Internet › the connected network).</string>
-    <string name="tvinstall_android_debug_on">Network debugging is on (5555)</string>
-    <string name="tvinstall_android_debug_off">Debugging port is closed</string>
+    <string name="tvinstall_android_debug_on">TCP 5555 is reachable</string>
+    <string name="tvinstall_android_debug_off">TCP 5555 is unreachable; wireless debugging uses a separate port</string>
     <string name="tvinstall_android_mode">Connection</string>
     <string name="tvinstall_android_mode_network">USB/network debugging</string>
     <string name="tvinstall_android_mode_wireless">Wireless debugging</string>

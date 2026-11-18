@@ -51,8 +51,8 @@ import java.io.File
 
 private const val TAG = "CouchSubsTvInstall"
 
-/** Ağda görülen Android TV: DIAL'la bulunan ya da 5555'i açık olan. */
-private data class AndroidCandidate(val host: String, val name: String, val debugging: Boolean)
+/** Ağda görülen Android TV: DIAL'la bulunan ya da eski tip ADB portu 5555'i açık olan. */
+private data class AndroidCandidate(val host: String, val name: String, val legacyAdbReachable: Boolean)
 
 private sealed interface AndroidState {
     data object Idle : AndroidState
@@ -81,7 +81,7 @@ internal fun AndroidTvInstallScreen(onBack: () -> Unit, onDone: () -> Unit, bran
     LaunchedEffect(Unit) {
         val found = withContext(Dispatchers.IO) { findAndroidTvs(phoneIp) }
         candidates = found
-        if (address.isEmpty()) found.firstOrNull { it.debugging }?.let { address = it.host }
+        if (address.isEmpty()) found.firstOrNull { it.legacyAdbReachable }?.let { address = it.host }
     }
 
     fun install(allowReplace: Boolean = false) {
@@ -158,8 +158,8 @@ internal fun AndroidTvInstallScreen(onBack: () -> Unit, onDone: () -> Unit, bran
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Tokens.Space.hair)) {
                                 Text(tv.name, style = Tokens.Type.headline, color = Tokens.Color.text)
                                 Text(tv.host, style = Tokens.Type.caption, color = Tokens.Color.secondary)
-                                StatusLabel(stringResource(if (tv.debugging) R.string.tvinstall_android_debug_on else R.string.tvinstall_android_debug_off),
-                                    ok = tv.debugging)
+                                StatusLabel(stringResource(if (tv.legacyAdbReachable) R.string.tvinstall_android_debug_on else R.string.tvinstall_android_debug_off),
+                                    ok = tv.legacyAdbReachable)
                             }
                             if (selected) SelectedCheck()
                         }
@@ -248,7 +248,7 @@ private fun androidFailureText(failure: AndroidState.Failed): String {
 private fun mustRemoveOnTv(failure: AndroidState.Failed) =
     failure.error == AndroidInstallError.INSTALL_FAILED && AndroidTvInstaller.needsReplace(failure.detail.orEmpty())
 
-/** Ağdaki Android TV'ler: SSDP'de DIAL ile görünenler ve ağın /24 bölümünde 5555 portu açık olanlar. */
+/** Ağdaki Android TV'ler: SSDP'de DIAL ile görünenler ve ağın /24 bölümünde TCP 5555'i yanıtlayanlar. */
 private suspend fun findAndroidTvs(phoneIp: String?): List<AndroidCandidate> = withContext(Dispatchers.IO) {
     val dial = runCatching { TvDiscovery.search() }.getOrDefault(emptyList()).filter { it.brand == TvBrand.ANDROID_TV }
     val gate = Semaphore(32)
@@ -260,5 +260,5 @@ private suspend fun findAndroidTvs(phoneIp: String?): List<AndroidCandidate> = w
     }
     val named = dial.associate { it.host to it.name }
     (named.keys + open).distinct().map { AndroidCandidate(it, named[it] ?: "Android TV", it in open) }
-        .sortedByDescending { it.debugging }
+        .sortedByDescending { it.legacyAdbReachable }
 }

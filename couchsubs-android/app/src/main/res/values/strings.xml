@@ -379,8 +379,8 @@
     <string name="tvinstall_android_supported">TV\'nin geliştirici seçeneklerinde hata ayıklama açık olmalı. Güncellemeler için açık bırak.</string>
     <string name="tvinstall_android_tvs">Ağdaki Android TV\'ler</string>
     <string name="tvinstall_android_none">Android TV bulunamadı. TV açık ve aynı Wi-Fi\'da mı? Adresini aşağıya elle yazabilirsin (TV\'de Ayarlar › Ağ ve İnternet › bağlı ağ).</string>
-    <string name="tvinstall_android_debug_on">Ağ hata ayıklaması açık (5555)</string>
-    <string name="tvinstall_android_debug_off">Hata ayıklama portu kapalı</string>
+    <string name="tvinstall_android_debug_on">TCP 5555 erişilebilir</string>
+    <string name="tvinstall_android_debug_off">TCP 5555 erişilemiyor; kablosuz hata ayıklama ayrı bir port kullanır</string>
     <string name="tvinstall_android_mode">Bağlantı yolu</string>
     <string name="tvinstall_android_mode_network">USB/ağ hata ayıklama</string>
     <string name="tvinstall_android_mode_wireless">Kablosuz hata ayıklama</string>
