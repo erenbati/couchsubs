@@ -1,6 +1,10 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Choose game cover…": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Choose game cover…"}},"tr":{"stringUnit":{"state":"translated","value":"Oyun kapağı seç…"}}}},
+    "Remove game cover": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Remove game cover"}},"tr":{"stringUnit":{"state":"translated","value":"Oyun kapağını kaldır"}}}},
+    "The game cover could not be saved.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"The game cover could not be saved."}},"tr":{"stringUnit":{"state":"translated","value":"Oyun kapağı kaydedilemedi."}}}},
+    "Images": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Images"}},"tr":{"stringUnit":{"state":"translated","value":"Görseller"}}}},
     "Try demo mode (no console needed)": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Try demo mode (no console needed)"}},"tr":{"stringUnit":{"state":"translated","value":"Deneme modu (konsol olmadan dene)"}}}},
     "Demo mode": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Demo mode"}},"tr":{"stringUnit":{"state":"translated","value":"Deneme modu"}}}},
     "Exit": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Exit"}},"tr":{"stringUnit":{"state":"translated","value":"Çık"}}}},
