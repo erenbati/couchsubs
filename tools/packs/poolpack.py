@@ -70,13 +70,21 @@ def load_export(path):
     """wrangler --json çıktısı ([{results: [...]}]) ya da /v1/export yanıtı ({lines: [...]})."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if isinstance(data, dict) and "lines" in data:
-        return data["lines"]
+        rows = data["lines"]
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise SystemExit("invalid pool export lines array")
+        return rows
     if isinstance(data, list):
         rows = []
         for part in data:
-            rows += part.get("results", []) if isinstance(part, dict) else []
+            if not isinstance(part, dict) or part.get("success") is False:
+                raise SystemExit("failed D1 query or malformed export response")
+            chunk = part.get("results")
+            if not isinstance(chunk, list) or not all(isinstance(row, dict) for row in chunk):
+                raise SystemExit("invalid D1 export results array")
+            rows += chunk
         return rows
-    raise SystemExit("tanınmayan dosya biçimi")
+    raise SystemExit("unrecognized export file format")
 
 
 def known_keys(directory=PACKS):

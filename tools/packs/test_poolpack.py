@@ -48,6 +48,22 @@ class PoolPackTests(unittest.TestCase):
             b.write_text(json.dumps({"lines": [{"text": "One two.", "installs": 2}]}))
             self.assertEqual(pp.load_export(a), pp.load_export(b))
 
+    def test_rejects_failed_d1_exports_and_invalid_line_collections(self):
+        bad = [
+            [{"success": False, "error": "remote D1 query failed", "results": []}],
+            [{"success": False, "results": [{"text": "We need to leave."}]}],
+            {"lines": None},
+            {"lines": "not a line array"},
+            [{"success": True, "results": None}],
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "export.json"
+            for result in bad:
+                with self.subTest(payload=result):
+                    path.write_text(json.dumps(result), encoding="utf-8")
+                    with self.assertRaises(SystemExit):
+                        pp.load_export(path)
+
     def test_dry_run_never_translates(self):
         with tempfile.TemporaryDirectory() as d:
             export = Path(d) / "pool.json"
