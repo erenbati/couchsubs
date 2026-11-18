@@ -19,7 +19,7 @@ public enum SubtitleSegmenter {
     // Etiket: satır ya da cümle başında, en çok üç sözcüklü ad ve iki nokta.
     // Ya tümü büyük harf ("ATREUS:", "OLD MAN:") ya da her sözcüğü büyük harfle başlayan ("Kratos:", "Mimir Head:").
     private static let label = try! NSRegularExpression(pattern:
-        #"^(\p{Lu}[\p{Lu}\d'’.\-]+(?: \p{Lu}[\p{Lu}\d'’.\-]*){0,2}|\p{Lu}\p{Ll}[\p{L}'’.\-]*(?: \p{Lu}[\p{L}'’.\-]*){0,2}):\s+"#)
+        #"^(\p{Lu}[\p{Lu}\d'’.\-]+(?: \p{Lu}[\p{Lu}\d'’.\-]*){0,2}|\p{Lu}\p{Ll}[\p{L}'’.\-]*(?: \p{Lu}[\p{L}'’.\-]*){0,2}):(?:\s+|$)"#)
     private static let dash = try! NSRegularExpression(pattern: #"^[-–—]+\s*"#)
 
     /// Büyük harfle başlayıp iki noktayla biten ama ad olmayan oyun başlıkları; bunlar çevrilir.
