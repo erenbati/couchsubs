@@ -1,0 +1,1 @@
+0.9.23: The TV app closes when translation stops or the computer turns off TV output.

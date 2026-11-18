@@ -6,6 +6,7 @@ CouchSubs'ın yeni deneme sürümü. Türkçe dil desteği olmayan PS5 oyunları
 
 **Bu sürümde yeni**
 
+- **TV uygulaması 0.9.23:** Çeviri durdurulunca ya da bilgisayarda TV çıktısı kapatılınca bağlı TV uygulaması kapanır (#268).
 - **Xbox bağlan-kop döngüsü durdu (Windows, #262):** Yayın kopunca uygulama her 5 saniyede bir yeniden bağlanıyor, konsol da her seferinde "oyun başka yerde açıldı" deyip oyunu düşürüyordu. Artık en çok 3 kez (5, 15, 45 sn arayla) deneniyor; konsol kalıcı hata verirse hiç denenmiyor ve nedeni ekranda yazıyor. `altyazi.log` dosyasına `[Xbox]` satırları yazılıyor (jeton yazılmaz); sorun sürerse bu dosyayı gönderebilirsiniz.
 - **Xbox telefonlarda (Android, iPhone):** Microsoft girişi, kodu tarayıcıda yazarken uygulama arka planda kalınca "İnternete bağlanılamadı" ile bitmiyor; kod dokununca kopyalanıyor, adımlar açıkça yazıyor (#249). Uzaktan oynatmada oyunun sesi artık telefonda çalıyor; yeni "Xbox sesini bu cihazda çal" ayarı, varsayılan açık (#251). Telefon her kareyi Xbox'a onaylıyor, yayın kendi kendine kapanmıyor (#209, #235, #238); yeniden bağlanınca kare durumu sıfırlanıyor (#204). Windows'ta Xbox kareleri daha sık okunuyor, eski kare birikmiyor (#244); Xbox adındaki Türkçe karakter bozulmuyor (#233).
 - **Windows pencereleri (#223, #256, #268, #270):** Ayarlar, Geçmiş ve Hakkında pencereleri ana pencereyi kilitlemiyor, ikinci kopyası açılmıyor. Ayarlar kenar çubuğunun başlığı koyu görünümde okunuyor.

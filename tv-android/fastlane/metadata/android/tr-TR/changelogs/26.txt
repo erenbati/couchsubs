@@ -1,0 +1,1 @@
+0.9.23: Çeviri durdurulunca veya bilgisayarda TV çıktısı kapatılınca TV uygulaması kapanır.
