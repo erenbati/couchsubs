@@ -196,6 +196,10 @@ async function exportLines(url, env) {
   // Oyuna göre süzme yalnız geçişten sonra çalışır (title_id ve game sütunları); süzgeçsiz istek eskisi gibi.
   const title = titleId(url.searchParams.get("title"));
   const game = gameName(url.searchParams.get("game"));
+  // A requested but invalid filter must not silently turn into an all-games export.
+  if ((url.searchParams.has("title") && !title) || (url.searchParams.has("game") && !game)) {
+    return json({ error: "bad_request" }, 400);
+  }
   const where = ["installs>=?"];
   const args = [min];
   if (!all) where.push("exported=0");
