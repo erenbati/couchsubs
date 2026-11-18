@@ -210,13 +210,18 @@ async function exportLines(url, env) {
 
 async function markExported(req, env) {
   const body = await req.json().catch(() => null);
-  if (!Array.isArray(body?.keys)) return json({ error: "bad_request" }, 400);
-  const keys = body.keys.slice(0, 20000);
-  for (let i = 0; i < keys.length; i += 100) {
-    await env.DB.batch(keys.slice(i, i + 100).map((k) =>
-      env.DB.prepare("UPDATE lines SET exported=1 WHERE key=?").bind(String(k))));
+  if (!Array.isArray(body?.keys) || !body.keys.every((k) =>
+    typeof k === "string" && /^[0-9a-f]{16}$/i.test(k))) {
+    return json({ error: "bad_request" }, 400);
   }
-  return json({ marked: keys.length });
+  const keys = body.keys.slice(0, 20000);
+  let marked = 0;
+  for (let i = 0; i < keys.length; i += 100) {
+    const results = await env.DB.batch(keys.slice(i, i + 100).map((k) =>
+      env.DB.prepare("UPDATE lines SET exported=1 WHERE key=? AND exported=0").bind(k.toLowerCase())));
+    marked += results.reduce((sum, result) => sum + (result?.meta?.changes ?? 0), 0);
+  }
+  return json({ marked });
 }
 
 // Dağıtımın bellek önbelleği: görülme tablosunu taramak okuma kotası harcar, herkese açık adres sık çağrılmasın.

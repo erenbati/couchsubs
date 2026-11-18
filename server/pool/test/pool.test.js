@@ -426,3 +426,57 @@ test("exported endpoint rejects malformed JSON and missing keys rather than repo
   assert.equal(valid.status, 200);
   assert.deepEqual(await valid.json(), { marked: 0 });
 });
+
+
+test("mark-exported reports only newly marked stored lines, not requested key count", async () => {
+  const stored = new Map([["1111111111111111", false], ["2222222222222222", true]]);
+  const sqls = [];
+  const DB = {
+    prepare: (sql) => ({
+      bind: (key) => ({ sql, key }),
+    }),
+    batch: async (statements) => statements.map(({ sql, key }) => {
+      sqls.push(sql);
+      const newlyMarked = stored.get(key) === false;
+      if (newlyMarked) stored.set(key, true);
+      return { meta: { changes: newlyMarked ? 1 : 0 } };
+    }),
+  };
+  const env = { DB, ADMIN_TOKEN: "t" };
+  const postKeys = async (keys) => worker.fetch(new Request("https://pool.test/v1/exported", {
+    method: "POST",
+    headers: { authorization: "Bearer t", "content-type": "application/json" },
+    body: JSON.stringify({ keys }),
+  }), env);
+  const result = await postKeys(["1111111111111111", "1111111111111111", "2222222222222222", "3333333333333333"]);
+  assert.equal(result.status, 200);
+  assert.deepEqual(await result.json(), { marked: 1 }, "duplicates, already exported and unknown keys are not newly marked");
+  assert.equal(stored.get("1111111111111111"), true);
+  assert.ok(sqls.every((sql) => /exported=0/.test(sql)), "only previously unexported records can be counted");
+  const repeat = await postKeys(["1111111111111111"]);
+  assert.deepEqual(await repeat.json(), { marked: 0 }, "an idempotent retry should not report another mark");
+});
+
+
+test("mark-exported refuses malformed individual hash keys before executing SQL", async () => {
+  let writes = 0;
+  const env = {
+    ADMIN_TOKEN: "t",
+    DB: {
+      prepare: (sql) => ({ bind: (key) => ({ sql, key }) }),
+      batch: async (statements) => {
+        writes += statements.length;
+        return statements.map(() => ({ meta: { changes: 1 } }));
+      },
+    },
+  };
+  for (const keys of [[null], [42], [{}], [true], [""], ["123"], ["not-a-hash"]]) {
+    const reply = await worker.fetch(new Request("https://pool.test/v1/exported", {
+      method: "POST",
+      headers: { authorization: "Bearer t", "content-type": "application/json" },
+      body: JSON.stringify({ keys }),
+    }), env);
+    assert.equal(reply.status, 400, JSON.stringify(keys));
+    assert.equal(writes, 0, "invalid hashes must not touch D1");
+  }
+});
