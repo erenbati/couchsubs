@@ -40,6 +40,13 @@ https://github.com/user-attachments/assets/bb8569d8-115d-49c7-a772-da2d9e171c17
 | **Bilgisayar ekranındaki altyazı penceresi** | |
 | <img src="docs/screenshots/windows/pencere.png" width="420" alt="Altyazı penceresi tasarımı"> | |
 
+
+Windows'ta oyun paketlerinin kare rozetine tıklayarak kendi **PNG/JPEG oyun kapağınızı** seçebilirsiniz.
+Görsel 128×128 PNG olarak yalnız bilgisayarınızdaki
+`%LOCALAPPDATA%\\CouchSubs\\covers` klasörüne kaydedilir; sağ tıkla kaldırılabilir. Kapak yoksa
+ACS/COD gibi kısaltma görünür. Uygulama telifli oyun görsellerini indirmez veya dağıtmaz.
+
+
 **Telefon uygulaması** (Android: [Google Play](https://play.google.com/store/apps/details?id=com.couchsubs.mobile); iPhone yakında; tasarım; o da tamamen ücretsiz, hesap gerekmez; yatay altyazı ekranı:
 [09-altyazi.png](docs/screenshots/telefon/09-altyazi.png)):
 
