@@ -422,7 +422,7 @@ public partial class SettingsWindow : Window
         var picker = new OpenFileDialog
         {
             Title = text["Choose game cover…"], CheckFileExists = true,
-            Filter = "Images (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg",
+            Filter = $"{text["Images"]} (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg",
         };
         if (picker.ShowDialog(this) != true) return;
         try
