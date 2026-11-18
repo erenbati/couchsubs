@@ -42,3 +42,19 @@ it("refuses an index whose advertised pack ID does not match its downloadable fi
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+it.each([
+  ["invalid characters in package ID", "invalid_name", { format: 2, id: "invalid_name", title: "Game", entries: { abc: "Text" } }],
+  ["blank package title", "valid-game", { format: 2, id: "valid-game", title: " ", entries: { abc: "Text" } }],
+  ["non-object subtitle entries", "valid-game", { format: 2, id: "valid-game", title: "Game", entries: "not a map" }],
+])("does not generate an index rejected by the pack API: %s", (_label, id, manifest) => {
+  const dir = mkdtempSync(join(tmpdir(), "couchsubs-invalid-index-"));
+  try {
+    writeFileSync(join(dir, id + ".json.gz"), gzipSync(Buffer.from(JSON.stringify(manifest))));
+    expect(() => execFileSync(process.execPath, [script, dir, "7"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    })).toThrow();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

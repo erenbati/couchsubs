@@ -146,6 +146,8 @@ struct PSNScreen: View {
                 InfoTile(symbol: "lock.shield", title: "We don't keep your password", caption: "You sign in on Sony's page")
                     .bentoWide()
             }
+            // Kol ikinci hesaba atanırsa ana hesapla açılan oyun onu kendi kolu saymaz (GitHub #231).
+            MobileNote(text: String(localized: "When you turn on the controller to play, choose your MAIN account on the PS5. Don't play with the second account CouchSubs signs in with, or the controller won't work in the game."))
             if model.accountId != nil { MobilePill(text: String(localized: "Signed in"), dot: true) }
             if working { ProgressView().tint(Mobile.Palette.accent) }
             if let error { MobileNote(text: error) }

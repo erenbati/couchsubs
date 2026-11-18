@@ -272,7 +272,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     public bool HasAccount => accountId is not null;
     public RegisteredConsole? Console => console;
     public LgTv? Tv => tv;
-    public bool IsRunning { get => isRunning; private set => Set(ref isRunning, value, [nameof(Ps5StatusText), nameof(Ps5Tone), nameof(TvTone)]); }
+    public bool IsRunning { get => isRunning; private set => Set(ref isRunning, value, [nameof(Ps5StatusText), nameof(Ps5Tone), nameof(TvTone), nameof(ShowsMainAccountTip)]); }
     public bool IsStarting { get => isStarting; private set => Set(ref isStarting, value); }
     public SessionState SessionState { get => sessionState; private set => Set(ref sessionState, value, [nameof(Ps5StatusText), nameof(Ps5Tone)]); }
     public string Ps5StatusText => IsXbox ? XboxStatusText()
@@ -311,7 +311,9 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
                               || settings.FrameSource == FrameSource.Ps5 && console is not null && accountId is not null)
                             && (ShowsOnComputer || HasTv);
     public string LastSource { get => lastSource; private set => Set(ref lastSource, value); }
-    public string LastTranslation { get => lastTranslation; private set => Set(ref lastTranslation, value); }
+    public string LastTranslation { get => lastTranslation; private set => Set(ref lastTranslation, value, [nameof(ShowsMainAccountTip)]); }
+    /// <summary>PS5'ten (ikinci hesap) çeviri başladı, ilk altyazı gelmedi: "kolu açınca ana hesabı seçin" ipucu görünür (GitHub #231).</summary>
+    public bool ShowsMainAccountTip => isRunning && !IsXbox && settings.FrameSource == FrameSource.Ps5 && lastTranslation.Length == 0;
     /// <summary>TV'ye giden son satırın ölçümleri tek satırda ("OCR 40 ms · Çeviri 300 ms · Gecikme 520 ms"); satır gelene kadar boş.</summary>
     public string MetricsText { get => metricsText; private set => Set(ref metricsText, value); }
     /// <summary>Çevrilen satırlar, en yenisi başta (bu ve önceki oturumlar). Değişince bu özellik bildirilir.</summary>
@@ -368,9 +370,10 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             var windowAppChanged = value.FrameSource == FrameSource.RemotePlayWindow && old.RemotePlayApp != value.RemotePlayApp;
             var captureWindowChanged = value.FrameSource == FrameSource.CaptureWindow && old.CaptureWindow != value.CaptureWindow;
             var xboxFrameRateChanged = IsXbox && old.XboxLegacyFrameRate != value.XboxLegacyFrameRate;
-            if (isRunning && (old.FrameSource != value.FrameSource || windowAppChanged || captureWindowChanged || xboxFrameRateChanged))
+            var xboxAudioChanged = IsXbox && old.XboxAudioOnComputer != value.XboxAudioOnComputer;
+            if (isRunning && (old.FrameSource != value.FrameSource || windowAppChanged || captureWindowChanged || xboxFrameRateChanged || xboxAudioChanged))
             {
-                // Görüntü kaynağı ya da Xbox kare aralığı değişti: akış yeni seçimle yeniden başlar.
+                // Görüntü kaynağı, Xbox kare aralığı ya da Xbox ses çıkışı değişti: akış yeni seçimle yeniden başlar.
                 Stop();
                 _ = StartAsync().ContinueWith(task => RemotePlayLog.Note($"Çeviri yeniden başlatılamadı: {task.Exception?.GetBaseException().Message}"),
                                               TaskContinuationOptions.OnlyOnFaulted);
@@ -379,6 +382,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
                                      || old.GeminiModel != value.GeminiModel || old.OpenAiModel != value.OpenAiModel
                                      || old.ClaudeModel != value.ClaudeModel
                                      || old.LocalAiBaseUrl != value.LocalAiBaseUrl || old.LocalAiModel != value.LocalAiModel
+                                     || old.AiInstruction != value.AiInstruction
                                      || old.TranslationDevice != value.TranslationDevice
                                      || old.CpuTranslationThreads != value.CpuTranslationThreads;
             if (translationChanged && !isRunning) RefreshTranslatorStatus();
@@ -1276,7 +1280,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             if (IsXbox)
             {
                 RemotePlayLog.Note($"Çeviri başladı; {ConsoleTitle} bağlantısı açılıyor.");
-                stream = (services.Xbox ?? throw new InvalidOperationException(text["Xbox streaming isn't available in this version."])).MakeStream(xboxConsole!, xboxToken!, settings.XboxLegacyFrameRate);
+                stream = (services.Xbox ?? throw new InvalidOperationException(text["Xbox streaming isn't available in this version."]))
+                    .MakeStream(xboxConsole!, xboxToken!, settings.XboxLegacyFrameRate, settings.XboxAudioOnComputer);
                 xboxNameChecked = false;
             }
             else if (readsWindow)
@@ -1782,7 +1787,11 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         if (reader is null) return;
         var scheduler = new ReadScheduler(maxReuse: settings.FastSubtitleDetection
             ? ReadScheduler.FastMaxReuse : ReadScheduler.DefaultMaxReuse);
-        var built = new SubtitlePipeline(reader, MakeTranslator(), server, scheduler) { ShowSpeakerNames = settings.ShowSpeakerNames };
+        var built = new SubtitlePipeline(reader, MakeTranslator(), server, scheduler)
+        {
+            ShowSpeakerNames = settings.ShowSpeakerNames,
+            SkipsTurkish = settings.TargetLanguage == "tr",
+        };
         built.MetricsReady += metrics => post(() => MetricsText = metrics.Summary(text));
         built.PairShown += (source, translation) =>
         {
@@ -1839,6 +1848,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             regionWatcher = new RegionWatcher(reader, MakeTranslator(), server) { Log = SubtitleLog.Write };
         }
         regionWatcher.PackLookup = PacksActive ? services.FindInPacks : null;
+        regionWatcher.SkipsTurkish = settings.TargetLanguage == "tr";
     }
 
     // --- Geçmiş ---
@@ -1892,13 +1902,13 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         if (engine == TranslationEngine.Local && settings.LocalAiServer is { } server)
         {
             // Yerel modelin anahtarı isteğe bağlıdır; önbellekte sunucu ve model ayrı tutulur.
-            online = services.MakeLocalAiTranslator(server, store.Load<string>(storeKey) ?? "", fallback, game);
+            online = services.MakeLocalAiTranslator(server, store.Load<string>(storeKey) ?? "", fallback, game, settings.AiInstruction);
         }
         else
         {
             if (store.Load<string>(storeKey) is not { Length: > 0 } key) return local;
             online = engine.Provider() is { } provider
-                ? services.MakeAiTranslator(provider, key, provider.Model(settings.ModelFor(provider)).Id, fallback, game)
+                ? services.MakeAiTranslator(provider, key, provider.Model(settings.ModelFor(provider)).Id, fallback, game, settings.AiInstruction)
                 : services.MakeOnlineTranslator(key, fallback);
         }
         if (online is null) return local;
@@ -2159,6 +2169,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     private FirewallPrompt firewallPrompt;
     /// <summary>Bu çeviri oturumunda kural bulundu; her denetimde kurallar yeniden taranmaz.</summary>
     private bool firewallRuleSeen;
+    /// <summary>Beta.44'ün her profili açan geniş kuralı bulundu; TV bağlıyken bu kural çalışıyor demektir.</summary>
+    private bool legacyFirewallRule;
     private bool checkingFirewall;
     private DateTime? ps5TroubleSince;
     private DateTime? tvWaitingSince;
@@ -2182,6 +2194,13 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             ClearFirewallPrompt();
             return;
         }
+        // Eski geniş kural varken TV bağlanıyorsa izin sorunu yoktur; kart çıkmaz, eski kural silinmeye açılmaz.
+        if (legacyFirewallRule && tvClients > 0)
+        {
+            if (firewallPrompt is FirewallPrompt.Offer or FirewallPrompt.Failed or FirewallPrompt.PublicNetwork)
+                FirewallPrompt = FirewallPrompt.None;
+            return;
+        }
         var now = Clock();
         var stuck = now - ps5TroubleSince >= Ps5TroubleDelay || now - tvWaitingSince >= TvWaitDelay;
         if (!stuck || firewallPrompt != FirewallPrompt.None || firewallRuleSeen || checkingFirewall) return;
@@ -2190,7 +2209,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         {
             var prompt = await FirewallProblemAsync(firewall);
             if (!isRunning) return;
-            if (prompt == FirewallPrompt.None) firewallRuleSeen = true;
+            // Eski kuralla TV bağlıyken None döner; TV sonra düşerse yeniden bakılsın diye kilitlenmez.
+            if (prompt == FirewallPrompt.None) firewallRuleSeen = !legacyFirewallRule;
             else FirewallPrompt = prompt;
         }
         finally
@@ -2206,6 +2226,12 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     public async Task<bool> AllowThroughFirewallAsync()
     {
         if (services.Firewall is not { } firewall || firewallPrompt == FirewallPrompt.Working) return false;
+        // Ortak ağda eski geniş kuralı silmek çalışan TV bağlantısını keser; önce ağ Özel yapılmalı.
+        if (await LegacyRuleOnPublicNetworkAsync(firewall))
+        {
+            FirewallPrompt = FirewallPrompt.PublicNetwork;
+            return false;
+        }
         FirewallPrompt = FirewallPrompt.Working;
         bool added;
         try { added = await firewall.AddRuleAsync(); }
@@ -2213,6 +2239,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         FirewallPrompt = added ? FirewallPrompt.Allowed : FirewallPrompt.Failed;
         if (!added) return false;
         firewallRuleSeen = true;
+        legacyFirewallRule = false;
         if (isRunning)
         {
             session?.ReconnectNow();
@@ -2242,12 +2269,31 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     /// <summary>
     /// Bağlantı takıldığında gösterilecek kart. İzin yalnız Özel ağda geçerlidir: kural olsa da bilgisayarın ağı "Ortak"
     /// ise TV ve PS5 yine engellenir. Eskiden kural varsa hiçbir şey gösterilmiyor, kullanıcı sebebini göremiyordu.
+    /// Eski geniş kural varsa izin düğmesi o kuralı siler: TV bağlıysa kart çıkmaz, ağ Ortak ise ağı Özel yapmak söylenir.
     /// </summary>
-    private static async Task<FirewallPrompt> FirewallProblemAsync(IFirewall firewall)
+    private async Task<FirewallPrompt> FirewallProblemAsync(IFirewall firewall)
     {
-        if (!await HasFirewallRuleAsync(firewall)) return FirewallPrompt.Offer;
-        try { return await Task.Run(firewall.HasPublicNetwork) ? FirewallPrompt.PublicNetwork : FirewallPrompt.None; }
-        catch (Exception) { return FirewallPrompt.None; }
+        if (!await HasFirewallRuleAsync(firewall))
+        {
+            try { legacyFirewallRule = await Task.Run(firewall.HasLegacyRule); }
+            catch (Exception) { legacyFirewallRule = false; }
+            if (!legacyFirewallRule) return FirewallPrompt.Offer;
+            if (tvClients > 0) return FirewallPrompt.None;
+            return await IsPublicNetworkAsync(firewall) ? FirewallPrompt.PublicNetwork : FirewallPrompt.Offer;
+        }
+        return await IsPublicNetworkAsync(firewall) ? FirewallPrompt.PublicNetwork : FirewallPrompt.None;
+    }
+
+    private static async Task<bool> IsPublicNetworkAsync(IFirewall firewall)
+    {
+        try { return await Task.Run(firewall.HasPublicNetwork); }
+        catch (Exception) { return false; }
+    }
+
+    private static async Task<bool> LegacyRuleOnPublicNetworkAsync(IFirewall firewall)
+    {
+        try { return await Task.Run(firewall.HasLegacyRule) && await IsPublicNetworkAsync(firewall); }
+        catch (Exception) { return false; }
     }
 
     /// <summary>Kurallar arka planda taranır; okunamayan izin verilmiş gibi gösterilmez.</summary>

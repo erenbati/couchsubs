@@ -202,6 +202,11 @@ struct RunningScreen: View {
             if model.sessionState != .streaming {
                 MobileNote(text: model.ps5StatusText, tone: Mobile.Palette.secondary)
             }
+            // İlk altyazı gelene kadar: kolu açınca PS5'te ana hesap seçilmeli (GitHub #231).
+            if model.recentLines.isEmpty && !model.isXbox {
+                MobileNote(text: String(localized: "When you turn on the controller to play, choose your MAIN account on the PS5. Don't play with the second account CouchSubs signs in with, or the controller won't work in the game."),
+                           tone: Mobile.Palette.secondary)
+            }
             GameSection(choice: model.gameChoice)
             Tile {
                 Text("Now").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)

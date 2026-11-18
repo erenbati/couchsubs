@@ -144,14 +144,17 @@ internal sealed class FakeServices : IAppServices
     public AiTestResult AiTest { get; set; } = new(OnlineKeyState.Valid, "KRATOS: Şimdi gidiyoruz.");
     public List<(AiProvider Provider, string Key, string Model)> AiTests { get; } = [];
     public List<(AiProvider Provider, string Key, string Model)> AiTranslators { get; } = [];
+    public List<string?> AiInstructions { get; } = [];
     public Task<AiTestResult> TestAiKeyAsync(AiProvider provider, string key, string model)
     {
         AiTests.Add((provider, key, model));
         return Task.FromResult(AiTest);
     }
-    public ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback, Func<string?>? game)
+    public ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback, Func<string?>? game,
+                                             string? instruction = null)
     {
         AiTranslators.Add((provider, key, model));
+        AiInstructions.Add(instruction);
         return fallback ?? Translation.Create("en", "tr");
     }
     public List<(LocalAiServer Server, string Key)> LocalTests { get; } = [];
@@ -161,8 +164,10 @@ internal sealed class FakeServices : IAppServices
         LocalTests.Add((server, key));
         return Task.FromResult(AiTest);
     }
-    public ITextTranslator? MakeLocalAiTranslator(LocalAiServer server, string key, ITextTranslator? fallback, Func<string?>? game)
+    public ITextTranslator? MakeLocalAiTranslator(LocalAiServer server, string key, ITextTranslator? fallback, Func<string?>? game,
+                                                  string? instruction = null)
     {
+        AiInstructions.Add(instruction);
         LocalTranslators.Add((server, key));
         return fallback ?? Translation.Create("en", "tr");
     }
@@ -1306,6 +1311,10 @@ public class AppControllerRunTests
 
         await controller.StartAsync();
         Assert.Equal((AiProvider.Claude, "sk-good", "claude-sonnet-5-5"), Assert.Single(services.AiTranslators));
+        Assert.Equal("", Assert.Single(services.AiInstructions));
+        // Ek talimat değişince çeviri hattı yeni talimatla kurulur (#306).
+        controller.Settings = controller.Settings with { AiInstruction = "Be blunt." };
+        Assert.Equal("Be blunt.", services.AiInstructions[^1]);
         Assert.Empty(services.OnlineTranslators);
 
 
@@ -1330,7 +1339,7 @@ public class AppControllerRunTests
         controller.Settings = controller.Settings with { LocalAiBaseUrl = LocalAiServer.LmStudioUrl, LocalAiModel = " qwen2.5-7b-instruct " };
         Assert.Equal(OnlineKeyState.Valid, (await controller.TestLocalAiAsync()).State);
         var (server, key) = Assert.Single(services.LocalTests);
-        Assert.Equal("http://localhost:1234/v1/chat/completions", server.ChatUrl.AbsoluteUri);
+        Assert.Equal("http://127.0.0.1:1234/v1/chat/completions", server.ChatUrl.AbsoluteUri);
         Assert.Equal("qwen2.5-7b-instruct", server.Model);
         Assert.Equal("", key);
         Assert.False(controller.HasKey(TranslationEngine.Local));
@@ -1814,7 +1823,7 @@ internal sealed class FakeXbox(IReadOnlyList<XboxConsole> consoles) : IXboxServi
     public Task<XboxLoginChallenge> BeginLoginAsync() => throw new NotSupportedException();
     public Task<string> CompleteLoginAsync() => throw new NotSupportedException();
     public Task<IReadOnlyList<XboxConsole>> DiscoverAsync(string token) => Task.FromResult(consoles);
-    public IStreamSession MakeStream(XboxConsole console, string token, bool legacyFrameRate)
+    public IStreamSession MakeStream(XboxConsole console, string token, bool legacyFrameRate, bool playAudio)
     {
         LegacyFrameRateRequests.Add(legacyFrameRate);
         return new FakeStream();

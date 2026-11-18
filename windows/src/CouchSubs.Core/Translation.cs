@@ -29,6 +29,12 @@ public interface ITextTranslator
     bool TranslatesTogether => false;
 
     /// <summary>
+    /// Hat satır başındaki konuşan adını ("PRICE: …") ayırıp çevirmene yalnız cümleyi verir; ad buradan öğrenilir ve
+    /// sonraki cümlelerin içinde geçince çeviriden korunur (#287).
+    /// </summary>
+    void NoteSpeaker(string name) { }
+
+    /// <summary>
     /// Birbirinden bağımsız metinleri ("ekranı çevir"deki menü satırları, görev yazıları) aynı sırada çevirir.
     /// Varsayılan: sırayla tek tek.
     /// </summary>

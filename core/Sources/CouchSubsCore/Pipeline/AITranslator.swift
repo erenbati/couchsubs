@@ -20,16 +20,22 @@ public final class AITranslator: TextTranslator, OnlineTranslating {
     /// `server`: yerel modelin (Ollama, LM Studio) sunucusu. `session` verilmezse hizmete uygun zaman aşımıyla kurulur.
     /// `budget` verilmezse modelin uygulama genelindeki ortak dakikalık hakkı kullanılır.
     /// `game`: oynanan oyunun adı (ör. eşleşen oyun paketinin başlığı); biliniyorsa modele bağlam olarak gider.
+    /// `instruction`: Ayarlardaki "Ek talimat"; sistem talimatının sonuna eklenir, boşsa hiçbir şey değişmez.
     public init(provider: AIProvider, key: String, model: String?, server: LocalAIServer? = nil, fallback: TextTranslator,
                 session: URLSession? = nil, cache: TranslationCache = TranslationCache(), budget: RequestBudget? = nil,
-                game: (@Sendable () -> String?)? = nil) {
+                game: (@Sendable () -> String?)? = nil, instruction: String? = nil) {
         core = AITranslationCore(provider: provider, key: key, model: model, server: server, session: session, cache: cache,
-                                 budget: budget, game: game)
+                                 budget: budget, game: game, instruction: instruction)
         self.fallback = fallback
     }
 
     public func translate(_ text: String) async throws -> String {
         try await core.translate(text) { [fallback] line in try await fallback.translate(line) }
+    }
+
+    public func noteSpeaker(_ name: String) {
+        core.noteSpeaker(name)
+        fallback.noteSpeaker(name)
     }
 
     /// Yalnız yerel yedeği hazırlar; AI isteği, dakika kotası veya konuşma bağlamı oluşturmaz.

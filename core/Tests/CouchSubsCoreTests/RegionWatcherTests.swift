@@ -81,6 +81,25 @@ final class RegionWatcherTests: XCTestCase {
         XCTAssertEqual(server.sent.map(\.text), ["TR: Find the blacksmith"])
     }
 
+    /// Ekranda zaten Türkçe olan yazı (bozuk okunmuş olsa da) çevrilmez, kutu gösterilmez (#289).
+    func testTurkishTextIsNotTranslated() async {
+        let reader = Reader(), translator = Translator(), server = Server()
+        let watcher = RegionWatcher(reader: reader, translator: translator, server: server)
+        reader.lines = [line("Sistem Yazillml Güncellem€")]
+        for _ in 0..<3 { await watcher.pass(frame(10), areas: [quest]) }
+        XCTAssertEqual(translator.calls, [])
+        XCTAssertTrue(server.sent.allSatisfy { $0.text.isEmpty })
+    }
+
+    func testEnglishTextWithTurkishNameIsTranslated() async {
+        let reader = Reader(), translator = Translator(), server = Server()
+        let watcher = RegionWatcher(reader: reader, translator: translator, server: server)
+        reader.lines = [line("Atatürk said no.")]
+        for _ in 0..<3 { await watcher.pass(frame(10), areas: [quest]) }
+        XCTAssertEqual(translator.calls, ["Atatürk said no."])
+        XCTAssertEqual(server.sent.map(\.text), ["TR: Atatürk said no."])
+    }
+
     func testFailedReadKeepsShownTextAndDiscardsUnconfirmedReading() async {
         let reader = Reader(), translator = Translator(), server = Server()
         let watcher = RegionWatcher(reader: reader, translator: translator, server: server)

@@ -139,12 +139,15 @@ public sealed record AiModel(
 
 /// <summary>
 /// Kullanıcının bilgisayarındaki (ya da ağındaki) OpenAI uyumlu model sunucusu: Ollama, LM Studio (Mac'teki
-/// LocalAIServer ile aynı). Adres "http://localhost:11434/v1" gibi <c>/v1</c> ile biten temel adrestir.
+/// LocalAIServer ile aynı). Adres "http://127.0.0.1:11434/v1" gibi <c>/v1</c> ile biten temel adrestir.
 /// </summary>
 public sealed record LocalAiServer
 {
-    /// <summary>Ollama'nın OpenAI uyumlu adresi (docs.ollama.com/api/openai-compatibility).</summary>
-    public const string OllamaUrl = "http://localhost:11434/v1";
+    /// <summary>
+    /// Ollama'nın OpenAI uyumlu adresi (docs.ollama.com/api/openai-compatibility). "localhost" değil: Windows'ta
+    /// localhost önce IPv6'ya (::1) gider, Ollama yalnız IPv4'te dinlediği için istek başına ~2 sn kaybolur (#295).
+    /// </summary>
+    public const string OllamaUrl = "http://127.0.0.1:11434/v1";
     /// <summary>LM Studio'nun yerel sunucusu (lmstudio.ai/docs/app/api/endpoints/openai).</summary>
     public const string LmStudioUrl = "http://localhost:1234/v1";
     /// <summary>Türkçeyi iyi bilen, sıradan bir bilgisayarda çalışan model.</summary>
@@ -184,8 +187,18 @@ public sealed record LocalAiServer
         return new Uri(builder.Uri.GetLeftPart(UriPartial.Path).TrimEnd('/'));
     }
 
-    /// <summary>İsteğin gittiği adres.</summary>
-    public Uri ChatUrl => new(BaseUrl.AbsoluteUri.TrimEnd('/') + "/chat/completions");
+    /// <summary>
+    /// İsteğin gittiği adres. Kullanıcı "localhost" yazdıysa istek 127.0.0.1'e gider (IPv6 gecikmesi, #295); başka
+    /// adrese dokunulmaz.
+    /// </summary>
+    public Uri ChatUrl => new(PreferIPv4(BaseUrl).AbsoluteUri.TrimEnd('/') + "/chat/completions");
+
+    /// <summary>"localhost" adını 127.0.0.1 yapar; başka adresi olduğu gibi bırakır.</summary>
+    public static Uri PreferIPv4(Uri url) =>
+        string.Equals(url.Host, "localhost", StringComparison.OrdinalIgnoreCase) ? new UriBuilder(url) { Host = "127.0.0.1" }.Uri : url;
+
+    /// <summary>Ollama'da düşünme kapatılır: Gemma, Qwen3 gibi düşünen modeller altyazı çevirisinde boşuna yavaşlar (#295).</summary>
+    public bool DisablesThinking => Kind == LocalAiServerKind.Ollama;
 
     /// <summary>Kullanıcıya gösterilen kısa adres: "http://localhost:11434".</summary>
     public string Address => BaseUrl.GetLeftPart(UriPartial.Authority);

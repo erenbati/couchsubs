@@ -293,6 +293,17 @@ test("kimliksiz oyun adları anahtara göre birleşir; tek kurulumun adı ayrı 
   assert.equal(jobPackId(jobs[0]), "pool-gta-6");
 });
 
+test("Latin dışı oyunlar ayrı paket alır, karışık adlar ASCII adla çakışmaz", () => {
+  const names = ["星の旅", "夜の旅", "GTA 6 海外"];
+  const votes = new Map(names.map((name) => [gameKey(name), 2]));
+  const jobs = nameJobs(names.map((game) => ({ game, lines: 320 })), votes);
+  assert.equal(jobs.length, 3, "Latin dışı adlar sessizce elenmemeli");
+  const ids = jobs.map(jobPackId);
+  assert.equal(new Set(ids).size, 3);
+  assert.ok(ids.every((id) => /^[a-z0-9][a-z0-9-]{0,63}$/.test(id)));
+  assert.notEqual(jobPackId({ titleId: null, gameKey: gameKey("GTA 6 海外") }), "pool-gta-6");
+});
+
 test("uzun oyun adları sunucunun kabul ettiği paket kimliği sınırında kalır", () => {
   const id = jobPackId({ titleId: null, gameKey: "x".repeat(80) });
   assert.match(id, /^[a-z0-9][a-z0-9-]{0,63}$/);
@@ -366,4 +377,52 @@ test("a failed line write does not silently lose its sighting on retry", async (
   assert.equal(retry.status, 200);
   assert.equal(DB.lines.size, 1, "retry must still publish a line seen by two distinct installs");
   assert.equal([...DB.lines.values()][0].installs, 2);
+});
+
+test("admin export endpoints reject methods outside their documented routes", async () => {
+  const DB = fakeDB();
+  const env = { DB, ADMIN_TOKEN: "t" };
+  const invoke = (path, method, body) => worker.fetch(new Request("https://pool.test" + path, {
+    method,
+    headers: { authorization: "Bearer t" },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  }), env);
+
+  for (const [path, method, body, allow] of [
+    ["/v1/export", "POST", { keys: ["1234567890abcdef"] }, "GET"],
+    ["/v1/exported", "GET", null, "POST"],
+    ["/v1/export", "PATCH", { keys: [] }, "GET"],
+  ]) {
+    DB.last = null;
+    const writes = DB.writes;
+    const response = await invoke(path, method, body);
+    assert.equal(response.status, 405, method + " " + path);
+    assert.equal(response.headers.get("allow"), allow);
+    assert.equal(DB.last, null, "wrong methods must not run a DB read");
+    assert.equal(DB.writes, writes, "wrong methods must not mutate DB");
+  }
+  assert.equal((await invoke("/v1/export", "GET")).status, 200);
+  assert.equal((await invoke("/v1/exported", "POST", { keys: [] })).status, 200);
+});
+
+test("exported endpoint rejects malformed JSON and missing keys rather than reporting success", async () => {
+  const DB = fakeDB();
+  const env = { DB, ADMIN_TOKEN: "t" };
+  for (const body of ["{broken", "null", "{}", '{"keys":null}', '{"keys":"abc"}']) {
+    const writes = DB.writes;
+    const request = new Request("https://pool.test/v1/exported", {
+      method: "POST",
+      headers: { authorization: "Bearer t" },
+      body,
+    });
+    const reply = await worker.fetch(request, env);
+    assert.equal(reply.status, 400, "invalid export payload: " + body);
+    assert.equal(DB.writes, writes, "invalid export must not run an update");
+  }
+  const valid = await worker.fetch(new Request("https://pool.test/v1/exported", {
+    method: "POST", headers: { authorization: "Bearer t" },
+    body: JSON.stringify({ keys: [] }),
+  }), env);
+  assert.equal(valid.status, 200);
+  assert.deepEqual(await valid.json(), { marked: 0 });
 });

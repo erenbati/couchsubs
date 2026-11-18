@@ -55,6 +55,7 @@ final class PhoneModel: ObservableObject {
             let translationChanged = settings.onlineTranslation != oldValue.onlineTranslation
                 || settings.onlineEngine != oldValue.onlineEngine || settings.geminiModel != oldValue.geminiModel
                 || settings.openAIModel != oldValue.openAIModel || settings.claudeModel != oldValue.claudeModel
+                || settings.aiInstruction != oldValue.aiInstruction
             if translationChanged { Task { await refreshTranslatorStatus() } }
             if isRunning, translationChanged || settings.fastSubtitleDetection != oldValue.fastSubtitleDetection {
                 makePipeline()
@@ -582,6 +583,7 @@ final class PhoneModel: ObservableObject {
         let pipeline = SubtitlePipeline(reader: VisionReader(language: settings.sourceLanguage), translator: makeTranslator(),
                                         server: server, scheduler: scheduler)
         pipeline.showSpeakerNames = settings.showSpeakerNames
+        pipeline.skipsTurkish = settings.targetLanguage == "tr"
         pipeline.onPair = { [weak self, weak pipeline] source, translation in
             self?.lastSource = source
             self?.lastTranslation = translation
@@ -613,6 +615,7 @@ final class PhoneModel: ObservableObject {
     private func makeRegionWatcher(packLookup: ((String) -> PackMatch?)?) -> RegionWatcher {
         let watcher = RegionWatcher(reader: VisionReader(language: settings.sourceLanguage), translator: makeTranslator(), server: server)
         watcher.packLookup = packLookup
+        watcher.skipsTurkish = settings.targetLanguage == "tr"
         watcher.onLog = { SubtitleLog.write($0) }
         return watcher
     }
@@ -741,7 +744,7 @@ final class PhoneModel: ObservableObject {
             let sense = gameChoice.sense
             online = AITranslator(provider: provider, key: key, model: model, fallback: local,
                                   cache: Self.translationCache(engine: provider.engineID(model: model), source: source, target: target),
-                                  game: { sense.current?.name })
+                                  game: { sense.current?.name }, instruction: settings.aiInstruction)
         } else {
             online = DeepLTranslator(key: key, fallback: local,
                                      cache: Self.translationCache(engine: DeepLTranslator.engineID, source: source, target: target))

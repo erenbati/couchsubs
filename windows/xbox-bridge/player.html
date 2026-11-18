@@ -9,6 +9,8 @@
   const pending = new Map();
   let nextId = 0;
   let player;
+  let playAudio = true;
+  let audioObserver;
   let frameTimer = 0;
   let lastFrame = 0;
   // Varsayılan 66 ms kısa altyazıyı daha hızlı yakalar; Xbox ayarından #244 öncesindeki 200 ms'ye dönülebilir.
@@ -59,7 +61,20 @@
     player.getEventBus().on('connectionstate', event => {
       send({ kind: 'state', state: event.state });
       if (event.state === 'connected') {
-        if (player?._audioComponent?._audioRender) player._audioComponent._audioRender.muted = true;
+        const applyAudioPreference = () => {
+          const audio = player?._audioComponent?._audioRender;
+          if (!audio) return false;
+          audio.muted = !playAudio;
+          return true;
+        };
+        if (!applyAudioPreference() && !audioObserver) {
+          audioObserver = new MutationObserver(() => {
+            if (!applyAudioPreference()) return;
+            audioObserver?.disconnect();
+            audioObserver = undefined;
+          });
+          audioObserver.observe(document.getElementById('stream'), { childList: true, subtree: true });
+        }
         const attach = () => {
           const video = document.querySelector('#stream video');
           if (!video) return false;
@@ -100,6 +115,8 @@
   function stop() {
     clearInterval(frameTimer);
     clearInterval(keepalive);
+    audioObserver?.disconnect();
+    audioObserver = undefined;
     for (const item of pending.values()) item.reject(new Error('Xbox stream stopped'));
     pending.clear();
     player?.close();
@@ -115,6 +132,7 @@
     } else if (message.kind === 'frameDone') frameWaiting = false;
     else if (message.kind === 'start') {
       frameMs = message.legacyFrameRate ? 200 : 66;
+      playAudio = message.playAudio !== false;
       start();
     }
     else if (message.kind === 'stop') stop();

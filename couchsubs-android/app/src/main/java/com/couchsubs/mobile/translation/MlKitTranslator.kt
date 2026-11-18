@@ -40,6 +40,8 @@ class MlKitTranslator(
 
     override fun translate(text: String): String = line.translate(text)
 
+    override fun noteSpeaker(name: String) = line.noteSpeaker(name)
+
     /**
      * Aynı modeli ve önbelleği kullanan, kendi satır bağlamı olan çevirmen (ek alanlar için: görev yazısı altyazının
      * kısa satırına bağlam olmasın).

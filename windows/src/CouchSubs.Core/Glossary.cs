@@ -129,6 +129,21 @@ public sealed class Glossary
         terms[english.ToLowerInvariant()] = (english, turkish, exact);
     }
 
+    /// <summary>
+    /// Konuşan etiketlerinden öğrenilen adlar <c>keepExact</c> olarak eklenmiş sözlük (#287). Yalnız <paramref name="text"/>
+    /// içinde (büyük/küçük harfe bakmadan) geçen adlar eklenir: önbellek anahtarındaki iz, oturumda öğrenilen bütün adlara
+    /// değil, satırdakilere bağlı kalır. Sözlükte zaten olan terim değişmez. Eklenecek ad yoksa sözlüğün kendisi döner.
+    /// </summary>
+    public Glossary KeepingNames(IEnumerable<string> names, string text)
+    {
+        var present = SpeakerNameGuard.Occurring(names, text, exact: false)
+            .Where(name => !_terms.ContainsKey(name.ToLowerInvariant())).ToList();
+        if (present.Count == 0) return this;
+        var merged = new Dictionary<string, (string, string, bool)>(_terms, StringComparer.Ordinal);
+        foreach (var name in present) Add(merged, name, name, exact: true);
+        return new Glossary(merged, _phrases, _lines);
+    }
+
     /// <summary>Sözlükleri birleştirir; aynı terimde sonraki kazanır.</summary>
     public static Glossary Merge(IEnumerable<Glossary> glossaries)
     {

@@ -213,4 +213,30 @@ public class DeepLTranslatorTests
 
         Assert.Equal(OnlineKeyState.Invalid, (await DeepLTranslator.CheckAsync("  ")).State);
     }
+
+    /// <summary>
+    /// Yerel çeviri yokken (inmemiş) tek bir hata DeepL'i bir dakika durduruyor, bu sürede gelen her satır düşüyordu.
+    /// DeepL yine denenmeli.
+    /// </summary>
+    [Fact]
+    public async Task ErrorPauseWithoutLocalStillTriesDeepL()
+    {
+        var calls = 0;
+        var deepL = new FakeDeepL((request, body) => ++calls == 1 ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) : Echo(request, body));
+        var translator = new DeepLTranslator("abc:fx", null, new HttpClient(deepL), glossary: new GlossaryStore(null));
+        await Assert.ThrowsAsync<TranslatorException>(() => translator.TranslateAsync("Run!"));
+        Assert.Equal("[tr] Hide!", await translator.TranslateAsync("Hide!"));
+        Assert.Equal(2, deepL.Requests.Count);
+    }
+
+    /// <summary>DeepL 429 (çok sık istek) sonrası bekleme yerel çeviri olmasa da korunur.</summary>
+    [Fact]
+    public async Task TooManyRequestsPauseHoldsWithoutLocal()
+    {
+        var deepL = new FakeDeepL((_, _) => new HttpResponseMessage(HttpStatusCode.TooManyRequests));
+        var translator = new DeepLTranslator("abc:fx", null, new HttpClient(deepL), glossary: new GlossaryStore(null));
+        await Assert.ThrowsAsync<TranslatorException>(() => translator.TranslateAsync("Run!"));
+        await Assert.ThrowsAsync<TranslatorException>(() => translator.TranslateAsync("Hide!"));
+        Assert.Single(deepL.Requests);
+    }
 }

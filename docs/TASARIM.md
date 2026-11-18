@@ -28,6 +28,8 @@ Masaüstünde ücret, paywall ve Pro yoktur; oyun paketleri ücretsizdir ("Ücre
 
 2026-11-17: ölçüler sıkılaştırıldı (denetim yükseklikleri 40/44/52, düğme yazısı 15, boşluk 24/12/16; yazı boyları
 aynı). Ana ekranda çeviri motoru ve kısayol durum karosu gibi değil, tek bilgi karosunda satır olarak durur.
+Telefonda (iPhone ve Android) denetimler bilerek daha büyüktür: düğme ve satır 52, küçük ve simge düğmesi 44, düğme
+yazısı 17; dokunma alanı Android'de en az 48 dp, iOS'ta en az 44 pt kalır.
 
 2026-11-12: onaylı tuvale göre sadeleştirildi (AI Design Check 136 → 0 bulgu). Telefon ayrıntıları ve tuval:
 `TASARIM-MOBIL.md` (tasarım tuvali klasörü).

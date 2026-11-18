@@ -244,11 +244,16 @@ public sealed record UserSettings
     public string OpenAiModel { get; init; } = AiProvider.OpenAi.DefaultModel().Id;
     public string ClaudeModel { get; init; } = AiProvider.Claude.DefaultModel().Id;
     /// <summary>
-    /// Yerel model sunucusunun adresi (Ollama: http://localhost:11434/v1, LM Studio: http://localhost:1234/v1) ve
+    /// Yerel model sunucusunun adresi (Ollama: http://127.0.0.1:11434/v1, LM Studio: http://localhost:1234/v1) ve
     /// kullanıcının yazdığı model adı.
     /// </summary>
     public string LocalAiBaseUrl { get; init; } = LocalAiServer.OllamaUrl;
     public string LocalAiModel { get; init; } = LocalAiServer.DefaultModel;
+    /// <summary>
+    /// Ayarlardaki "Ek talimat" (#306): yapay zekâ çevirmeninin (Gemini, OpenAI, Claude, yerel model) sistem talimatının
+    /// sonuna eklenir; boşsa hiçbir şey değişmez. Eski ayar dosyalarında yoktur, boş açılır.
+    /// </summary>
+    public string AiInstruction { get; init; } = "";
     /// <summary>Altyazı TV'de mi, bilgisayar ekranındaki pencerede mi, ikisinde de mi. Eski kayıtlar TV ile açılır.</summary>
     public SubtitleOutput Output { get; init; } = SubtitleOutput.Tv;
     /// <summary>Bilgisayar ekranındaki altyazı penceresi tıklamaları alttaki pencereye (oyun, PS Remote Play) geçirir.</summary>
@@ -269,6 +274,8 @@ public sealed record UserSettings
     public FrameSource FrameSource { get; init; } = FrameSource.Ps5;
     /// <summary>Xbox karelerini #244 öncesindeki 200 ms aralıkla al; varsayılan 66 ms.</summary>
     public bool XboxLegacyFrameRate { get; init; }
+    /// <summary>Xbox Remote Play oyun sesini bu bilgisayarda çal; eski ayarlarda açıktır.</summary>
+    public bool XboxAudioOnComputer { get; init; } = true;
     /// <summary>OBS veya başka bir açık pencere seçildiyse yalnız bu pencere yakalanır (varsayılan null).</summary>
     public WindowCaptureTarget? CaptureWindow { get; init; }
     /// <summary>Pencereden okunurken hangi Remote Play uygulaması (bkz. <see cref="Shell.RemotePlayApp"/>).</summary>
@@ -413,7 +420,7 @@ public interface IXboxService
     Task<XboxLoginChallenge> BeginLoginAsync();
     Task<string> CompleteLoginAsync();
     Task<IReadOnlyList<XboxConsole>> DiscoverAsync(string token);
-    IStreamSession MakeStream(XboxConsole console, string token, bool legacyFrameRate);
+    IStreamSession MakeStream(XboxConsole console, string token, bool legacyFrameRate, bool playAudio);
 }
 
 /// <summary>Cihaz üstü çeviri modeli: kurulu mu, indir, çevirmen oluştur.</summary>
@@ -496,11 +503,14 @@ public interface IAppServices
     /// Yapay zekâ çevirmeni; <paramref name="fallback"/> hizmete ulaşılamayan satırları çevirir, <paramref name="game"/>
     /// oynanan oyunun adını verir (istem ve önbellek anahtarı; bilinmiyorsa null). Bu derlemede yoksa null.
     /// </summary>
-    ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback, Func<string?>? game) => null;
+    /// <paramref name="instruction"/>: Ayarlardaki "Ek talimat"; boşsa sistem talimatı değişmez.
+    ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback, Func<string?>? game,
+                                      string? instruction = null) => null;
     /// <summary>Yapay zekâ anahtarını örnek bir satırı çevirerek dener.</summary>
     Task<AiTestResult> TestAiKeyAsync(AiProvider provider, string key, string model) => Task.FromResult(new AiTestResult(OnlineKeyState.Unreachable));
     /// <summary>Yerel model (Ollama, LM Studio) çevirmeni; anahtar boş olabilir. Bu derlemede yoksa null.</summary>
-    ITextTranslator? MakeLocalAiTranslator(LocalAiServer server, string key, ITextTranslator? fallback, Func<string?>? game) => null;
+    ITextTranslator? MakeLocalAiTranslator(LocalAiServer server, string key, ITextTranslator? fallback, Func<string?>? game,
+                                           string? instruction = null) => null;
     /// <summary>Yerel model sunucusunu örnek bir satırı çevirerek dener ("Bağlantıyı dene").</summary>
     Task<AiTestResult> TestLocalAiAsync(LocalAiServer server, string key) => Task.FromResult(new AiTestResult(OnlineKeyState.Unreachable));
     /// <summary>Türkçe dublaj modeli; bu derlemede yoksa null.</summary>

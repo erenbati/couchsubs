@@ -13,6 +13,12 @@ fun interface TextTranslator {
 
     /** [translateAll] hepsini tek istekte çevirir (yapay zekâ); öyleyse ekran çevirisi parça parça istek göndermez. */
     val translatesTogether: Boolean get() = false
+
+    /**
+     * Hat satır başındaki konuşan adını ("PRICE: …") ayırıp çevirmene yalnız cümleyi verir; ad buradan öğrenilir ve
+     * sonraki cümlelerin içinde geçince çeviriden korunur (#287).
+     */
+    fun noteSpeaker(name: String) {}
 }
 
 /**
@@ -132,6 +138,8 @@ class SubtitlePipeline(
     @Volatile var packLookup: ((String) -> PackMatch?)? = null
     /** Konuşan adı ("ARTHUR: …") TV'ye giden çeviride gösterilir; kapalıysa yalnız cümle gider (her satırda sorulur). */
     @Volatile var showSpeakerNames: () -> Boolean = { true }
+    /** Hedef dil Türkçe: yüksek güvenle Türkçe olan satır ([TurkishText.isSure]) çevirmene gönderilmez (#289). */
+    @Volatile var skipsTurkish = true
     /** Hiçbir pakette bulunmayan kararlı satır (ortak havuz için). */
     @Volatile var onPackMissed: ((String) -> Unit)? = null
     /** Yeni çeviri gösterilince. */
@@ -187,6 +195,8 @@ class SubtitlePipeline(
                         held = null
                     } else if (Rereads.looksMisread(source) && time - waiting.since < waiting.wait) {
                         // Araya giren bozuk ve ilgisiz okuma bekleyeni bozmaz; yok sayılır.
+                        // Kararlayıcı onu gönderilmiş saymasın: gerçek yeni satırsa bekleme bitince çevrilir.
+                        stabilizer.withdrawSent()
                         action = StabilizerAction.None
                     } else {
                         // Bekleyen temiz bir satırdı, yerine başka satır geldi: önce o çevrilir.
@@ -322,6 +332,10 @@ class SubtitlePipeline(
         lineOnScreen = request.number
         lastSent = Sent(source, Rereads.score(source), now())
         packMatch(request)?.let { return showPacked(request, it) }
+        if (skipsTurkish && TurkishText.isSure(source)) {
+            remember(request.number, source, null)
+            return null
+        }
         val missed = onPackMissed
         val current = inFlight
         if (current == null) {
@@ -439,6 +453,8 @@ class SubtitlePipeline(
     private fun translate(request: Request) {
         val source = request.source
         val input = request.prefix?.body ?: source
+        // Ayrılan ad çevirmene gitmez; cümle içinde geçtiğinde korunsun diye ayrıca bildirilir (#287).
+        request.prefix?.let { translator.noteSpeaker(it.name) }
         val started = now()
         val sentence = try {
             translator.translate(input)

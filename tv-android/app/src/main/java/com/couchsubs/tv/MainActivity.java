@@ -41,6 +41,8 @@ import java.util.List;
 public class MainActivity extends Activity implements TvPage.Host {
     /** Katman servisi uygulamayı kendisi açtı (izin yok ya da bilgisayarda "Uygulama içinde" seçildi). */
     static final String EXTRA_FROM_OVERLAY = "fromOverlay";
+    /** Katman açılamadı; neden DisplayMode.FAILED_* (uygulama yeniden katmana geçmez, nedeni gösterir). */
+    static final String EXTRA_OVERLAY_FAILED = "overlayFailed";
     private static final String EXTRA_DISPLAY_MODE = "displayMode";
     private static final long WATCH_EVERY_MS = 1000;
     private static final long HELP_VISIBLE_MS = 25_000;
@@ -85,13 +87,15 @@ public class MainActivity extends Activity implements TvPage.Host {
             return;
         }
 
-        DisplayMode.Start start = DisplayMode.atLaunch(TvPage.storedDisplayMode(this), overlayAllowed());
+        DisplayMode.Start start = DisplayMode.atLaunch(
+                TvPage.storedDisplayMode(this), overlayAllowed(), intent.getStringExtra(EXTRA_OVERLAY_FAILED));
         if (start == DisplayMode.Start.OVERLAY) {
-            startOverlay();
-            return;
+            if (startOverlay()) return;
+            start = DisplayMode.Start.IN_APP_OVERLAY_FAILED;
         }
         showInApp();
         if (start == DisplayMode.Start.IN_APP_NEEDS_PERMISSION) showPermissionHelp(R.string.overlay_permission_needed);
+        else if (start == DisplayMode.Start.IN_APP_OVERLAY_FAILED) showOverlayFailed();
     }
 
     /** Katman açılabilir mi: bu derlemede var (Play paketinde yok) ve "Diğer uygulamaların üzerinde göster" izni verilmiş. */
@@ -201,18 +205,43 @@ public class MainActivity extends Activity implements TvPage.Host {
 
     // --- Katmana geçiş ---
 
-    private void startOverlay() {
-        OverlayService.start(this, launchParams);
+    /** Katman servisini başlatıp bu ekranı kapatır; servis başlatılamadıysa ekran açık kalır ve false döner. */
+    private boolean startOverlay() {
+        if (!OverlayService.start(this, launchParams)) return false;
         finish();
+        return true;
     }
 
     /** Uygulama içinden katmana: TvView girişi bırakır ki TV kendi ekranında açabilsin. */
     private void switchToOverlay(int message) {
         stopWatching();
+        String previous = tunedInput;
         if (tvView != null) tvView.reset();
         tunedInput = null;
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-        startOverlay();
+        if (!startOverlay()) {
+            // Katman açılamadı: uygulama kapanmaz, nedeni söylenir, bırakılan giriş yeniden açılır.
+            if (previous != null && tvView != null) tune(previous);
+            showOverlayFailed();
+            return;
+        }
+        // CouchSubs ekranı kapanır, katman arka planda sürer. TV girişleri uygulamalara açmıyorsa (#275) TV HDMI'ya
+        // kendiliğinden geçmez: kullanıcı ana ekranda kalır ve uygulama "kapandı" sanılır. Bu yüzden ne yapılacağı söylenir.
+        boolean manualInput = HdmiInputs.list(this).isEmpty();
+        Toast.makeText(this, manualInput ? R.string.overlay_started_manual_input : message, Toast.LENGTH_LONG).show();
+    }
+
+    /** Katman açılamadı (TV pencereye ya da arka plan servisine izin vermedi): uygulama içinde kalınır, neden gösterilir. */
+    private void showOverlayFailed() {
+        if (help == null) return;
+        if (pickerShown) {
+            Toast.makeText(this, R.string.overlay_failed, Toast.LENGTH_LONG).show();
+            return;
+        }
+        help.setText(R.string.overlay_failed);
+        choices.setVisibility(View.GONE);
+        helpBox.setVisibility(View.VISIBLE);
+        handler.removeCallbacks(hideHelpTask);
+        handler.postDelayed(hideHelpTask, HELP_VISIBLE_MS);
     }
 
     /** Görüntü gelmiyor: izleme başlar (yoksa), saat ilk sorunda başlar. */
@@ -390,8 +419,11 @@ public class MainActivity extends Activity implements TvPage.Host {
         String id = HdmiInputs.idForPort(this, port);
         if (tvView == null || id == null) {
             status("sourceError");
-            // TV HDMI girişlerini uygulamalara hiç açmıyor: TvView'da gösterilecek bir şey yok, hemen söylenir.
-            if (tvView != null && !pickerShown && !pickerClosed && HdmiInputs.list(this).isEmpty()) showPicker(false);
+            // TV HDMI girişlerini uygulamalara hiç açmıyor (giriş listesi boş ya da TV giriş servisi yok): TvView'da
+            // gösterilecek bir şey yok, hemen söylenir. Eskiden TV giriş servisi olmayan TV'lerde (#275) yalnız
+            // "kaynak desteklenmiyor" yazıyordu; ne yapılacağı ve Katman söylenmiyordu.
+            boolean noInputs = tvView == null || HdmiInputs.list(this).isEmpty();
+            if (noInputs && !pickerShown && !pickerClosed) showPicker(false);
             return;
         }
         retuneAttempts = 0;
@@ -479,7 +511,8 @@ public class MainActivity extends Activity implements TvPage.Host {
         // TV kendi HDMI oynatıcısını öne çekti (bkz. FallbackWatch.TAKEOVER_MS): altyazı onun üstünde, katmanda çizilir.
         if (!isFinishing() && tvView != null && watch.takenOver(SystemClock.elapsedRealtime(), overlayAllowed())) {
             switchToOverlay(R.string.overlay_fallback);
-            return;
+            // Arka plandan ön plan servisi başlatılamadıysa (Android 12+ kısıtı) ekran açık kalır, normal yoldan devam.
+            if (isFinishing()) return;
         }
         if (page != null) page.background(true);
     }

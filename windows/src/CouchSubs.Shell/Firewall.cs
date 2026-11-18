@@ -16,11 +16,18 @@ public interface IFirewall
 
     /// <summary>Bağlı ağlardan biri "Ortak" profilde mi. Ortak ağda Windows, TV'nin bilgisayarı bulmasını engelleyebilir.</summary>
     bool HasPublicNetwork() => false;
+
+    /// <summary>
+    /// Eski sürümün her profili (Ortak dahil) açan geniş kuralı duruyor mu. Varken ağ Ortak ise izin vermek bu kuralı
+    /// silip TV bağlantısını keseceği için önerilmez; ağı Özel yapmak söylenir.
+    /// </summary>
+    bool HasLegacyRule() => false;
 }
 
 /// <summary>
 /// Güvenlik duvarı kartının durumu. Offer: kural eksik ve bağlantı sorunlu, düğme görünür. Working: Windows'un izin
 /// sorusu bekleniyor. Allowed: kural eklendi (kısa onay). Failed: kural eklenemedi, düğme yeniden görünür.
 /// PublicNetwork: kural var ama yalnız Özel ağda geçerli, bilgisayarın ağı "Ortak"; düğme yok, ağı Özel yapmak önerilir.
+/// Eski geniş kural varken ağ "Ortak" ise de bu gösterilir; eski kural silinmesin diye düğme sunulmaz.
 /// </summary>
 public enum FirewallPrompt { None, Offer, Working, Allowed, Failed, PublicNetwork }

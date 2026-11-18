@@ -122,6 +122,17 @@ public final class Glossary: @unchecked Sendable {
         terms[english.lowercased()] = (english, turkish, exact)
     }
 
+    /// Konuşmacı etiketlerinden öğrenilen adlar `keepExact` olarak eklenmiş sözlük (#287). Yalnız `text` içinde (büyük/küçük
+    /// harfe bakmadan) geçen adlar eklenir: önbellek anahtarındaki iz, oturumda öğrenilen bütün adlara değil, satırdakilere
+    /// bağlı kalır. Sözlükte zaten olan terim değişmez. Eklenecek ad yoksa sözlüğün kendisi döner.
+    public func keepingNames(_ names: Set<String>, in text: String) -> Glossary {
+        let present = SpeakerNames.occurring(names, in: text, exact: false).filter { terms[$0.lowercased()] == nil }
+        guard !present.isEmpty else { return self }
+        var merged = terms
+        for name in present { Self.add(&merged, name, name, exact: true) }
+        return Glossary(terms: merged, phrases: phrases, lines: lines)
+    }
+
     /// Sözlükleri birleştirir; aynı terimde sonraki kazanır.
     public static func merge(_ glossaries: [Glossary]) -> Glossary {
         var terms: [String: Term] = [:]

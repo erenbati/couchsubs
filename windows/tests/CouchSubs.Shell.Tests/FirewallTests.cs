@@ -16,6 +16,8 @@ internal sealed class FakeFirewall : IFirewall
     public bool FailWrite { get; set; }
     /// <summary>Bilgisayarın ağı "Ortak" profilde.</summary>
     public bool Public { get; set; }
+    /// <summary>Beta.44'ün her profili açan geniş kuralı duruyor; dar kural yok.</summary>
+    public bool Legacy { get; set; }
     public int Checks { get; private set; }
     public int Adds { get; private set; }
 
@@ -28,11 +30,17 @@ internal sealed class FakeFirewall : IFirewall
 
     public bool HasPublicNetwork() => Public;
 
+    public bool HasLegacyRule() => Legacy;
+
     public Task<bool> AddRuleAsync()
     {
         Adds++;
         if (FailWrite) throw new InvalidOperationException("Cannot write firewall");
-        if (UserAccepts) Rule = true;
+        if (UserAccepts)
+        {
+            Rule = true;
+            Legacy = false;
+        }
         return Task.FromResult(Rule);
     }
 }
@@ -266,6 +274,64 @@ public class FirewallRunningTests
         var (controller, services, firewall, clock) = await Running(rule: true);
         firewall.Public = true;
         services.Streams[0].Emit(SessionState.Streaming);
+        clock.Advance(61);
+        await controller.CheckConnectionsAsync();
+        Assert.Equal(FirewallPrompt.PublicNetwork, controller.FirewallPrompt);
+        controller.Dispose();
+    }
+
+    /// Eski geniş kural Ortak ağda TV'yi geçiren tek kural. İzin düğmesi onu silerdi; düğme yerine ağı Özel yapmak söylenir.
+    [Fact]
+    public async Task LegacyRuleOnPublicNetworkShowsNetworkHintAndKeepsTheRule()
+    {
+        var (controller, services, firewall, clock) = await Running();
+        firewall.Legacy = true;
+        firewall.Public = true;
+        services.Streams[0].Emit(SessionState.Streaming);
+        clock.Advance(61);
+        await controller.CheckConnectionsAsync();
+        Assert.Equal(FirewallPrompt.PublicNetwork, controller.FirewallPrompt);
+        // Ayarlardaki düğme de eski kuralı silmez.
+        Assert.False(await controller.AllowThroughFirewallAsync());
+        Assert.Equal(0, firewall.Adds);
+        Assert.True(firewall.Legacy);
+        Assert.Equal(FirewallPrompt.PublicNetwork, controller.FirewallPrompt);
+        controller.Dispose();
+    }
+
+    /// Özel ağda eski kural dar kurala taşınır: kart ve düğme eskisi gibi.
+    [Fact]
+    public async Task LegacyRuleOnPrivateNetworkStillOffersMigration()
+    {
+        var (controller, services, firewall, clock) = await Running();
+        firewall.Legacy = true;
+        services.Streams[0].Emit(SessionState.Streaming);
+        clock.Advance(61);
+        await controller.CheckConnectionsAsync();
+        Assert.Equal(FirewallPrompt.Offer, controller.FirewallPrompt);
+        Assert.True(await controller.AllowThroughFirewallAsync());
+        Assert.Equal(1, firewall.Adds);
+        controller.Dispose();
+    }
+
+    /// Eski kuralla TV bağlıysa izin sorunu yoktur; PS5 takılsa da kart çıkmaz. TV düşerse yeniden bakılır.
+    [Fact]
+    public async Task LegacyRuleWithConnectedTvShowsNothing()
+    {
+        var (controller, services, firewall, clock) = await Running();
+        firewall.Legacy = true;
+        firewall.Public = true;
+        var tv = await ConnectTv(controller);
+        services.Streams[0].Emit(SessionState.Disconnected(DisconnectKind.Network));
+        clock.Advance(30);
+        await controller.CheckConnectionsAsync();
+        Assert.Equal(FirewallPrompt.None, controller.FirewallPrompt);
+        clock.Advance(30);
+        await controller.CheckConnectionsAsync();
+        Assert.Equal(FirewallPrompt.None, controller.FirewallPrompt);
+        Assert.Equal(1, firewall.Checks);
+        tv.Dispose();
+        await WaitUntil(() => controller.TvClients == 0);
         clock.Advance(61);
         await controller.CheckConnectionsAsync();
         Assert.Equal(FirewallPrompt.PublicNetwork, controller.FirewallPrompt);

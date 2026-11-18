@@ -62,6 +62,8 @@ public final class RegionWatcher {
 
     /// Oyun paketi: satırın hazır Türkçesi (ana altyazıyla aynı arama).
     public var packLookup: ((String) -> PackMatch?)?
+    /// Hedef dil Türkçe: yüksek güvenle Türkçe olan parça çevrilmez, aslı sayılır (#289).
+    public var skipsTurkish = true
     public var onLog: ((String) -> Void)?
     /// Her okumanın süresi (ms; ölçüm için).
     public var onReadMs: ((Int) -> Void)?
@@ -247,6 +249,10 @@ public final class RegionWatcher {
     private func translate(_ paragraphs: [String], packHits: inout Int) async throws -> [String] {
         var result = paragraphs.map { packLookup?($0)?.text }
         packHits = result.compactMap { $0 }.count
+        // Zaten Türkçe olan parça çevrilmez: aslı kalır, tümü öyleyse kutu gösterilmez.
+        for index in result.indices where result[index] == nil && skipsTurkish && TurkishText.isSure(paragraphs[index]) {
+            result[index] = paragraphs[index]
+        }
         let missing = result.indices.filter { result[$0] == nil }
         if !missing.isEmpty {
             let texts = missing.map { paragraphs[$0] }

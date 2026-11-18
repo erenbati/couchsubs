@@ -15,6 +15,8 @@ private final class FakeAI: URLProtocol {
     nonisolated(unsafe) static var replyText: String?
     /// İstek uçuşta iken oyun değişimini taklit eder; yanıt verilmeden çağrılır.
     nonisolated(unsafe) static var onRequest: (() -> Void)?
+    /// Verilirse eski Ollama gibi düşünmeyi kapatan alanı 400 ile reddeder.
+    nonisolated(unsafe) static var rejectThinking = false
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -38,9 +40,12 @@ private final class FakeAI: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.timedOut))
             return
         }
-        let status = Self.failure?.status ?? 200
+        let rejected = Self.rejectThinking && body["reasoning_effort"] != nil
+        let status = rejected ? 400 : Self.failure?.status ?? 200
         let reply: Data
-        if let failure = Self.failure {
+        if rejected {
+            reply = Data(#"{"error":{"message":"invalid reasoning value: \"none\" (must be \"high\", \"medium\", or \"low\")"}}"#.utf8)
+        } else if let failure = Self.failure {
             reply = Data(failure.body.utf8)
         } else {
             let text = Self.replyText ?? Self.echo(Self.userText(body, url: request.url!))
@@ -108,6 +113,8 @@ final class AITranslationTests: XCTestCase {
         FakeAI.timeout = false
         FakeAI.replyText = nil
         FakeAI.onRequest = nil
+        FakeAI.rejectThinking = false
+        LocalThinking.reset()
     }
 
     /// Her çevirmen kendi dakikalık hakkıyla kurulur; testler uygulamanın ortak hakkını tüketmesin.
@@ -307,6 +314,19 @@ final class AITranslationTests: XCTestCase {
         XCTAssertFalse(user(0).contains("KRATOS"))
     }
 
+    /// #287: konuşan etiketinden öğrenilen ad, sonraki cümlede geçince istemde "çevirme" diye adıyla söylenir; görev
+    /// sözcükleri ("Soldier") ve küçük harfle geçen sözcük ("ghostly") söylenmez.
+    func testLearnedSpeakerNamesAreNamedInThePrompt() async throws {
+        let translator = make(.gemini)
+        _ = try await translator.translate("PRICE: Move.", fallback: local)
+        XCTAssertFalse(user(0).contains("Character names"))
+        _ = try await translator.translate("SOLDIER: Price, get down!", fallback: local)
+        XCTAssertTrue(user(1).contains("Character names (keep them exactly as written, do not translate them): Price\n"))
+        XCTAssertFalse(user(1).contains("Soldier"))
+        _ = try await translator.translate("It looks ghostly, price is high.", fallback: local)
+        XCTAssertFalse(user(2).contains("Character names"))
+    }
+
     /// Model cümleyi çevirmeden geri verirse cümle yerel çeviriyle yeniden denenir ve yanıt önbelleğe yazılmaz (#245:
     /// qwen2.5:3b "You think I'm on the run?" cümlesini olduğu gibi döndürdü, hat onu Türkçe sanıp göstermedi). Yerel
     /// çeviri de aynı kalırsa (ad) modelin yanıtı kalır ve önbelleğe yazılır.
@@ -404,6 +424,23 @@ final class AITranslationTests: XCTestCase {
         XCTAssertEqual(AIProvider.openAI.engineID(model: AIProvider.openAI.defaultModel.id), "openai:gpt-6-luna")
     }
 
+    /// Ayarlar'da (Mac, iPhone) seçilen Gemini modeli isteğe gider; dakikalık hak modelin sınırıdır (flash-lite 15,
+    /// 3.6 flash 10). Kayıt yoksa ilk model kullanılır.
+    func testSelectedGeminiModelGoesToTheRequest() async throws {
+        var settings = UserSettings()
+        XCTAssertEqual(settings.model(for: .gemini), "gemini-3.5-flash-lite")
+        XCTAssertEqual(RequestBudget.shared(provider: .gemini, model: AIProvider.gemini.model(settings.geminiModel))?.perMinute, 15)
+        settings.geminiModel = "gemini-3.6-flash"
+        let chosen = AIProvider.gemini.model(settings.model(for: .gemini))
+        XCTAssertEqual(RequestBudget.shared(provider: .gemini, model: chosen)?.perMinute, 10)
+        let saved = try JSONDecoder().decode(UserSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(saved.geminiModel, "gemini-3.6-flash")
+
+        _ = try await make(.gemini, model: saved.model(for: .gemini)).translate("Run!", fallback: local)
+        XCTAssertEqual(FakeAI.requests[0].request.url?.absoluteString,
+                       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent")
+    }
+
     /// Liste Windows ile ortak dosyadan okunur; her hizmette önerilen hızlı model ilk sıradadır.
     func testCatalogIsTheSharedFile() throws {
         for provider in AIProvider.cloud {
@@ -438,7 +475,7 @@ final class AITranslationTests: XCTestCase {
         let result = try await makeLocal().translate("KRATOS: We go now.", fallback: local)
         XCTAssertEqual(result, "KRATOS: [tr] We go now.")
         let (request, body) = FakeAI.requests[0]
-        XCTAssertEqual(request.url?.absoluteString, "http://localhost:11434/v1/chat/completions")
+        XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:11434/v1/chat/completions")
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
         // Anahtar boşsa Authorization başlığı hiç gitmez.
@@ -447,7 +484,14 @@ final class AITranslationTests: XCTestCase {
         XCTAssertEqual(body["temperature"] as? Double, AIRequest.localTemperature)
         XCTAssertEqual(body["max_tokens"] as? Int, AIRequest.maxOutputTokens)
         XCTAssertEqual(body["stream"] as? Bool, false)
-        XCTAssertEqual(Set(body.keys), ["model", "messages", "temperature", "max_tokens", "stream"])
+        // Ollama'da düşünme kapalı (#295).
+        XCTAssertEqual(body["think"] as? Bool, false)
+        XCTAssertEqual(body["reasoning_effort"] as? String, "none")
+        XCTAssertEqual(Set(body.keys), ["model", "messages", "temperature", "max_tokens", "stream", "think", "reasoning_effort", "keep_alive"])
+        // Model bellekte kalır; uzun sessizlikten sonra ilk satır yükleme beklemez (#306).
+        XCTAssertEqual(body["keep_alive"] as? String, "24h")
+        // Aynı satır her seferinde aynı çevrilsin (#306).
+        XCTAssertEqual(body["temperature"] as? Double, 0)
         let messages = body["messages"] as? [[String: Any]] ?? []
         XCTAssertEqual(messages.map { $0["role"] as? String }, ["system", "user"])
         XCTAssertEqual(messages[0]["content"] as? String, AIRequest.systemPrompt)
@@ -458,9 +502,95 @@ final class AITranslationTests: XCTestCase {
     func testLocalRequestWithKeyAndLMStudio() async throws {
         _ = try await makeLocal(LocalAIServer.lmStudioURL, model: "qwen2.5-7b-instruct", key: " lm-key ").translate("Run!", fallback: local)
         let (request, body) = FakeAI.requests[0]
-        XCTAssertEqual(request.url?.absoluteString, "http://localhost:1234/v1/chat/completions")
+        XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:1234/v1/chat/completions")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer lm-key")
         XCTAssertEqual(body["model"] as? String, "qwen2.5-7b-instruct")
+        // Düşünme alanları ve keep_alive yalnız Ollama'ya gider.
+        XCTAssertNil(body["think"])
+        XCTAssertNil(body["reasoning_effort"])
+        XCTAssertNil(body["keep_alive"])
+        XCTAssertEqual(body["temperature"] as? Double, 0)
+    }
+
+    /// Ek talimat (#306) bütün yapay zekâ hizmetlerinde sistem talimatının sonuna eklenir; boşsa hiçbir şey değişmez.
+    func testInstructionIsAppendedToSystemPrompt() throws {
+        func system(_ provider: AIProvider, _ instruction: String?) throws -> String? {
+            let request = AIRequest.make(provider: provider, key: "k", model: provider.defaultModel, sentences: ["Run!"], context: [],
+                                         instruction: instruction)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBody)) as? [String: Any])
+            switch provider {
+            case .gemini:
+                return (((json["systemInstruction"] as? [String: Any])?["parts"] as? [[String: Any]])?.first?["text"]) as? String
+            case .claude: return json["system"] as? String
+            case .openAI, .local: return (json["messages"] as? [[String: Any]])?.first?["content"] as? String
+            }
+        }
+        for provider in AIProvider.allCases {
+            XCTAssertEqual(try system(provider, nil), AIRequest.systemPrompt)
+            XCTAssertEqual(try system(provider, "  \n "), AIRequest.systemPrompt)
+            XCTAssertEqual(try system(provider, " Translate swear words without softening them.\n"),
+                           AIRequest.systemPrompt + "\n\nTranslate swear words without softening them.")
+        }
+        XCTAssertEqual(AIRequest.instruction(String(repeating: "a", count: 5000))?.count, AIRequest.maxInstructionLength)
+        XCTAssertNil(AIRequest.instructionTag(" "))
+        XCTAssertEqual(AIRequest.instructionTag("Be blunt."), AIRequest.instructionTag(" Be blunt. "))
+        XCTAssertNotEqual(AIRequest.instructionTag("Be blunt."), AIRequest.instructionTag("Be polite."))
+    }
+
+    /// Talimat değişince önbellekteki eski çeviri dönmez; talimat yoksa eski kayıtlar geçerli kalır.
+    func testInstructionSeparatesCache() async throws {
+        let cache = TranslationCache()
+        func make(_ instruction: String?) -> AITranslationCore {
+            AITranslationCore(provider: .openAI, key: secret, session: FakeAI.session(), cache: cache,
+                              budget: RequestBudget(perMinute: 1000), instruction: instruction)
+        }
+        _ = try await make(nil).translate("Run!", fallback: local)
+        _ = try await make("").translate("Run!", fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 1)
+        _ = try await make("Be blunt.").translate("Run!", fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 2)
+        let messages = FakeAI.requests[1].body["messages"] as? [[String: Any]] ?? []
+        XCTAssertTrue((messages.first?["content"] as? String ?? "").hasSuffix("\n\nBe blunt."))
+        _ = try await make("Be blunt.").translate("Run!", fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 2)
+        _ = try await make("Be polite.").translate("Run!", fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 3)
+    }
+
+    /// Ayarlarda elle yazılmış "localhost" istekte 127.0.0.1 olur (Windows'ta IPv6 gecikmesi, #295); başka adrese dokunulmaz.
+    func testLocalhostIsSentAsIPv4() {
+        XCTAssertEqual(LocalAIServer.ollamaURL, "http://127.0.0.1:11434/v1")
+        let cases: [(String, String)] = [
+            ("http://localhost:11434/v1", "http://127.0.0.1:11434/v1/chat/completions"),
+            ("LOCALHOST:11434", "http://127.0.0.1:11434/v1/chat/completions"),
+            ("https://localhost:8443/api/v1", "https://127.0.0.1:8443/api/v1/chat/completions"),
+            ("http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions"),
+            ("http://192.168.1.20:11434/v1", "http://192.168.1.20:11434/v1/chat/completions"),
+            ("http://localhost.example.com:11434/v1", "http://localhost.example.com:11434/v1/chat/completions"),
+            ("http://[::1]:11434/v1", "http://[::1]:11434/v1/chat/completions"),
+        ]
+        for (text, expected) in cases {
+            XCTAssertEqual(LocalAIServer(baseURL: text, model: "m")?.chatURL.absoluteString, expected, text)
+        }
+        // Kullanıcıya gösterilen adres yazdığı gibi kalır.
+        XCTAssertEqual(LocalAIServer(baseURL: "localhost:11434", model: "m")?.address, "http://localhost:11434")
+    }
+
+    /// Eski Ollama düşünmeyi kapatan alanı 400 ile reddederse alansız yeniden denenir; sonraki isteklerde hiç gönderilmez.
+    func testOldOllamaRejectingThinkFieldFallsBack() async throws {
+        FakeAI.rejectThinking = true
+        let core = makeLocal()
+        let first = try await core.translate("Run!", fallback: local)
+        XCTAssertEqual(first, "[tr] Run!")
+        XCTAssertNil(core.lastFailure)
+        XCTAssertEqual(FakeAI.requests.count, 2)
+        XCTAssertEqual(FakeAI.requests[0].body["think"] as? Bool, false)
+        XCTAssertNil(FakeAI.requests[1].body["think"])
+        XCTAssertNil(FakeAI.requests[1].body["reasoning_effort"])
+        // Oturum boyunca hatırlanır: yeni çevirmen de alanı göndermez, tek istek gider.
+        _ = try await makeLocal().translate("Hide!", fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 3)
+        XCTAssertNil(FakeAI.requests[2].body["think"])
     }
 
     /// Kullanıcının yazdığı adres düzeltilir: şema, "/v1", sondaki "/" ve yapıştırılmış "/chat/completions".
@@ -493,8 +623,10 @@ final class AITranslationTests: XCTestCase {
     /// Önbellekteki motor adında sunucu ve model vardır; farklı yerel modellerin çevirileri karışmaz.
     func testLocalEngineIDIncludesServerAndModel() {
         let ollama = LocalAIServer(baseURL: LocalAIServer.ollamaURL, model: "qwen2.5:7b")!
-        XCTAssertEqual(ollama.engineID, "local:localhost:11434/qwen2.5:7b")
-        XCTAssertEqual(LocalAIServer(baseURL: "http://LOCALHOST:11434/v1/", model: "qwen2.5:7b")!.engineID, ollama.engineID)
+        XCTAssertEqual(ollama.engineID, "local:127.0.0.1:11434/qwen2.5:7b")
+        let named = LocalAIServer(baseURL: "http://localhost:11434/v1", model: "qwen2.5:7b")!
+        XCTAssertEqual(named.engineID, "local:localhost:11434/qwen2.5:7b")
+        XCTAssertEqual(LocalAIServer(baseURL: "http://LOCALHOST:11434/v1/", model: "qwen2.5:7b")!.engineID, named.engineID)
         XCTAssertNotEqual(LocalAIServer(baseURL: LocalAIServer.ollamaURL, model: "qwen2.5:14b")!.engineID, ollama.engineID)
         XCTAssertNotEqual(LocalAIServer(baseURL: LocalAIServer.lmStudioURL, model: "qwen2.5:7b")!.engineID, ollama.engineID)
         XCTAssertNotEqual(LocalAIServer(baseURL: "http://192.168.1.20:11434/v1", model: "qwen2.5:7b")!.engineID, ollama.engineID)
@@ -945,21 +1077,17 @@ final class AITranslationTests: XCTestCase {
     }
 
     /// Bildirilen hata (Gemini seçiliyken "Ekranı çevir" hiçbir şey göstermiyordu): parça başına istek gidince 20 satırlık
-    /// ekran dakikada 15 isteklik hakkı bitirir; kalan parçalar yerel çeviriye düşer, o kurulu değilse bütün ekran hata
-    /// verir. Canlı altyazı hakkı zaten bitirdiyse ilk parçada düşer, TV'ye tek çeviri gitmez.
-    func testScreenOneRequestPerParagraphRunsOutOfTheGeminiBudget() async throws {
+    /// ekran dakikada 15 isteklik hakkı bitiriyor, yerel çeviri kurulu değilse bütün ekran hata veriyordu. Yerel çeviri
+    /// yokken hak artık satırı düşürmez; istek yine gönderilir (429 gelirse hizmetin beklemesi uygulanır).
+    func testScreenOneRequestPerParagraphWithoutLocalStillSendsEveryParagraph() async throws {
         let budget = RequestBudget(perMinute: 15)
         let translator = AITranslator(provider: .gemini, key: secret, model: nil, fallback: MissingFree(), session: FakeAI.session(),
                                       budget: budget)
-        var shown = 0
-        do {
-            _ = try await ScreenTranslation.translate(screen(20), using: { try await translator.translate($0) }) { shown = $0.count }
-            XCTFail("hak bitince yerel çeviri olmadan hata beklenir")
-        } catch {
-            XCTAssertEqual(error as? TranslatorError, .needsDownload)
+        for text in Self.screenTexts {
+            let translated = try await translator.translate(text)
+            XCTAssertEqual(translated, "[tr] " + text)
         }
-        XCTAssertEqual(FakeAI.requests.count, 15)
-        XCTAssertEqual(shown, 15)
+        XCTAssertEqual(FakeAI.requests.count, Self.screenTexts.count)
     }
 
     /// Düzeltme: ekranın bütün parçaları tek istekte gider ve hepsi çevrilir; canlı altyazı dakikalık hakkı bitirmiş olsa da.
@@ -1016,6 +1144,42 @@ final class AITranslationTests: XCTestCase {
         FakeAI.replyText = #"["[tr] bir"]"#
         let result = try await make(.openAI).translateAll(["One thing", "Another thing"], fallback: local)
         XCTAssertEqual(result, ["yerel: One thing", "yerel: Another thing"])
+    }
+
+    // --- Yerel çeviri yokken ---
+
+    private struct NoLocal: Error {}
+    private func noLocal(_ text: String) async throws -> String { throw NoLocal() }
+
+    /// Dakikalık hak uygulamanın temkinli tahminidir. Yerel çeviri yokken hak bitince satır denenmeden düşüyordu;
+    /// ara sahnede satırların yarısı hiç çevrilmiyordu. İstek yine gönderilmeli (Windows ve Android ile aynı).
+    func testOverBudgetWithoutLocalStillSendsRequest() async throws {
+        let translator = make(.gemini, budget: RequestBudget(perMinute: 1))
+        let first = try await translator.translate("Run!", fallback: noLocal)
+        let second = try await translator.translate("Hide!", fallback: noLocal)
+        XCTAssertEqual([first, second], ["[tr] Run!", "[tr] Hide!"])
+        XCTAssertEqual(FakeAI.requests.count, 2)
+        XCTAssertFalse(translator.lastLineWasRateLimited)
+    }
+
+    /// Hata sonrası bir dakikalık beklemede yerel çeviri yoksa hizmet yine denenir; satır düşmez.
+    func testErrorPauseWithoutLocalStillTriesService() async throws {
+        let translator = make(.gemini)
+        FakeAI.failure = (503, "{}")
+        do { _ = try await translator.translate("Run!", fallback: noLocal); XCTFail("yerel çeviri yokken hata beklenirdi") } catch {}
+        FakeAI.failure = nil
+        let second = try await translator.translate("Hide!", fallback: noLocal)
+        XCTAssertEqual(second, "[tr] Hide!")
+        XCTAssertEqual(FakeAI.requests.count, 2)
+    }
+
+    /// Hizmetin dakikalık 429'undan sonraki kısa bekleme yerel çeviri olmasa da korunur.
+    func testPerMinuteRateLimitPauseHoldsWithoutLocal() async throws {
+        FakeAI.failure = (429, rateLimitBody(quotaId: "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"))
+        let translator = make(.gemini)
+        do { _ = try await translator.translate("Run!", fallback: noLocal); XCTFail("hata beklenirdi") } catch {}
+        do { _ = try await translator.translate("Hide!", fallback: noLocal); XCTFail("hata beklenirdi") } catch {}
+        XCTAssertEqual(FakeAI.requests.count, 1)
     }
 }
 

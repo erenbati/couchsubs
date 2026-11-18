@@ -128,6 +128,9 @@ public final class FreeLineTranslator: @unchecked Sendable {
         recent = RecentLines(clock: clock)
     }
 
+    /// Hattın ayırdığı konuşan adı (satır başındaki "PRICE: "); cümle içinde korunur.
+    public func noteSpeaker(_ name: String) { names.learn(name: name) }
+
     /// Satırı çevirir; seslendirme cümleleri `spokenLines(for:)` ile alınır.
     public func translate(_ text: String, engine: (String) async throws -> String) async throws -> String {
         // Kısa cümlenin bağlamı: aynı satırdaki önceki cümle, yoksa bu satırdan önce gösterilen satırın son cümlesi.
@@ -158,7 +161,8 @@ public final class FreeLineTranslator: @unchecked Sendable {
     }
 
     private func translateSentence(_ sentence: String, context: String?, engine: (String) async throws -> String) async throws -> String {
-        let glossary = glossaryStore.glossary
+        // Konuşan etiketlerinden öğrenilen adlar cümle içinde de korunur ("Price, get down!"; #287).
+        let glossary = glossaryStore.glossary.keepingNames(names.protected, in: context.map { $0 + "\n" + sentence } ?? sentence)
         let key = FreeTranslation.cacheKey(sentence, context: context, glossary: glossary)
         if let cached = cache.value(for: key) { return cached }
         let known = names.all.union(glossary.capitalWords)

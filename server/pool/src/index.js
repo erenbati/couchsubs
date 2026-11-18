@@ -210,7 +210,8 @@ async function exportLines(url, env) {
 
 async function markExported(req, env) {
   const body = await req.json().catch(() => null);
-  const keys = Array.isArray(body?.keys) ? body.keys.slice(0, 20000) : [];
+  if (!Array.isArray(body?.keys)) return json({ error: "bad_request" }, 400);
+  const keys = body.keys.slice(0, 20000);
   for (let i = 0; i < keys.length; i += 100) {
     await env.DB.batch(keys.slice(i, i + 100).map((k) =>
       env.DB.prepare("UPDATE lines SET exported=1 WHERE key=?").bind(String(k))));
@@ -244,7 +245,10 @@ export default {
       if (req.method === "GET" && url.pathname === "/v1/stats") return await stats(env);
       if (url.pathname === "/v1/export" || url.pathname === "/v1/exported") {
         if (!isAdmin(req, env)) return json({ error: "unauthorized" }, 401);
-        return req.method === "POST" ? await markExported(req, env) : await exportLines(url, env);
+        if (url.pathname === "/v1/export" && req.method === "GET") return await exportLines(url, env);
+        if (url.pathname === "/v1/exported" && req.method === "POST") return await markExported(req, env);
+        return json({ error: "method_not_allowed" }, 405,
+          { allow: url.pathname === "/v1/export" ? "GET" : "POST" });
       }
       if (url.pathname === "/") return new Response("CouchSubs subtitle pool\n");
       return json({ error: "not_found" }, 404);

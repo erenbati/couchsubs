@@ -190,6 +190,19 @@ class Glossary private constructor(
     val fingerprint: String = makeFingerprint(ordered, phrases, lines)
 
     val size: Int get() = terms.size
+
+    /**
+     * Konuşan etiketlerinden öğrenilen adlar `keepExact` olarak eklenmiş sözlük (#287). Yalnız [text] içinde (büyük/küçük
+     * harfe bakmadan) geçen adlar eklenir: önbellek anahtarındaki iz, oturumda öğrenilen bütün adlara değil, satırdakilere
+     * bağlı kalır. Sözlükte zaten olan terim değişmez. Eklenecek ad yoksa sözlüğün kendisi döner.
+     */
+    fun keepingNames(names: Collection<String>, text: String): Glossary {
+        val present = SpeakerNameGuard.occurring(names, text, exact = false).filter { it.lowercase(Locale.ROOT) !in terms }
+        if (present.isEmpty()) return this
+        val merged = terms.toMutableMap()
+        for (name in present) add(merged, name, name, exact = true)
+        return Glossary(merged, phrases, lines)
+    }
     val isEmpty: Boolean get() = terms.isEmpty()
 
     companion object {
@@ -642,13 +655,20 @@ class FreeLineTranslator(
 ) : TextTranslator {
     private val recent = RecentLines(clock)
     private val names = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /** Cümle içinde çeviriden korunan konuşan adları (#287). */
+    private val speakers = SpeakerNameGuard()
+
+    /** Konuşan adını öğrenir ("OLD MAN" → "old", "man"); korunacak adlar ayrıca. */
+    override fun noteSpeaker(name: String) {
+        name.split(' ').filter { it.length >= 2 }.forEach { names.add(it.lowercase(Locale.ROOT)) }
+        speakers.learn(name)
+    }
 
     override fun translate(text: String): String {
         // Kısa cümlenin bağlamı: aynı satırdaki önceki cümle, yoksa bu satırdan önce gösterilen satırın son cümlesi.
         val previousLine = recent.shown(text)
         val pieces = SubtitleSegmenter.split(text)
-        for (name in pieces.mapNotNull(SubtitleSegmenter::labelName))
-            name.split(' ').filter { it.length >= 2 }.forEach { names.add(it.lowercase(Locale.ROOT)) }
+        for (name in pieces.mapNotNull(SubtitleSegmenter::labelName)) noteSpeaker(name)
         var previous = previousLine?.let { line -> SubtitleSegmenter.split(line).lastOrNull { it.translate }?.text }
         val translations = pieces.map { piece ->
             if (!piece.translate) null
@@ -663,10 +683,12 @@ class FreeLineTranslator(
     }
 
     private fun translateSentence(sentence: String, context: String?): String {
-        val key = FreeTranslation.cacheKey(sentence, context, glossary)
+        // Konuşan etiketlerinden öğrenilen adlar cümle içinde de korunur ("Price, get down!"; #287).
+        val terms = glossary.keepingNames(speakers.protected, if (context == null) sentence else context + "\n" + sentence)
+        val key = FreeTranslation.cacheKey(sentence, context, terms)
         cache.get(key)?.let { return it }
-        val known = names.toSet() + glossary.capitalWords
-        val result = FreeTranslation.translate(sentence, context, glossary, { SubtitleSegmenter.normalizeCase(it, known) }, engine)
+        val known = names.toSet() + terms.capitalWords
+        val result = FreeTranslation.translate(sentence, context, terms, { SubtitleSegmenter.normalizeCase(it, known) }, engine)
         cache.store(key, result)
         return result
     }

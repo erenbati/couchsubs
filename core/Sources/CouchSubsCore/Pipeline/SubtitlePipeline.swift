@@ -137,6 +137,9 @@ public final class SubtitlePipeline {
     public var packLookup: ((String) -> PackMatch?)?
     /// Konuşan adı ("ARTHUR: …") TV'ye giden çeviride gösterilir; kapalıysa yalnız cümle gider.
     public var showSpeakerNames = true
+    /// Hedef dil Türkçe: yüksek güvenle Türkçe olan satır (`TurkishText.isSure`) çevirmene gönderilmez (#289). Uygulama
+    /// hedef dil Türkçe değilse kapatır.
+    public var skipsTurkish = true
     /// Hiçbir pakette bulunmayan kararlı satır (ortak havuz için).
     public var onPackMiss: ((String) -> Void)?
     /// Son gösterilen çevirinin nereden geldiği: "paket" ya da "motor" (günlük ve sayım için).
@@ -266,6 +269,8 @@ public final class SubtitlePipeline {
                     log("bozuk okuma atıldı: \(SubtitleLog.excerpt(waiting.source)) yerine başka satır geldi")
                 } else if Rereads.looksMisread(source), time - waiting.since < waiting.wait {
                     // Araya giren bozuk ve ilgisiz okuma bekleyeni bozmaz; yok sayılır.
+                    // Kararlayıcı onu gönderilmiş saymasın: gerçek yeni satırsa bekleme bitince çevrilir.
+                    stabilizer.withdrawSent()
                     action = .none
                 } else {
                     // Bekleyen temiz bir satırdı, yerine başka satır geldi: önce o çevrilir.
@@ -405,6 +410,11 @@ public final class SubtitlePipeline {
         lastSent = (source, Rereads.score(source), now())
         if let packed = packMatch(request) {
             showPacked(request, packed)
+            return
+        }
+        if skipsTurkish, TurkishText.isSure(source) {
+            remember(request.number, source, nil)
+            log(request, "\(SubtitleLog.excerpt(source)) → zaten Türkçe, çevrilmedi")
             return
         }
         onPackMiss?(source)
@@ -557,6 +567,8 @@ public final class SubtitlePipeline {
         do {
             let translator = self.translator
             let input = request.prefix?.body ?? source
+            // Ayrılan ad çevirmene gitmez; cümle içinde geçtiğinde korunsun diye ayrıca bildirilir (#287).
+            if let name = request.prefix?.name { translator.noteSpeaker(name) }
             let work = Task { try await TranslationProbe.$current.withValue(probe) { try await translator.translate(input) } }
             self.work = work
             defer { self.work = nil }

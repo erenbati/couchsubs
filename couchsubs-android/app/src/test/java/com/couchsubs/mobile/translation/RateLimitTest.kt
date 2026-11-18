@@ -187,4 +187,83 @@ class RateLimitTest {
         assertEquals(3, RequestBudget.shared(AiProvider.GEMINI, limited)?.perMinute)
         assertNull(RequestBudget.shared(AiProvider.GEMINI, model))
     }
+
+    // --- Yerel çeviri yokken (Windows: AiTranslatorTests, DeepLTranslatorTests; Mac/iPhone: AITranslationTests) ---
+
+    private fun failsWithoutLocal(block: () -> Unit) {
+        try { block(); throw AssertionError("yerel çeviri yokken hata beklenirdi") } catch (_: java.io.IOException) {}
+    }
+
+    /**
+     * Dakikalık hak uygulamanın temkinli tahminidir. Yerel çeviri yokken hak bitince satır denenmeden düşüyordu; ara
+     * sahnede satırların yarısı hiç çevrilmiyordu. İstek yine gönderilmeli.
+     */
+    @Test
+    fun overBudgetWithoutLocalStillSendsRequest() {
+        val clock = Clock()
+        val http = ScriptedHttp(ok)
+        val translator = AiTranslator(AiProvider.GEMINI, "key", model, null, http, clock = clock::read,
+            budget = RequestBudget(1, clock::read))
+        assertEquals("Koş!", translator.translate("Run!"))
+        assertEquals("Koş!", translator.translate("Go!"))
+        assertEquals(2, http.count)
+    }
+
+    /** Yerel çeviri hata verirse de (motor açılamadı) hak bitince istek gönderilir. */
+    @Test
+    fun overBudgetWithFailingLocalStillSendsRequest() {
+        val clock = Clock()
+        val http = ScriptedHttp(ok)
+        val translator = AiTranslator(AiProvider.GEMINI, "key", model, { throw IllegalStateException("model yok") }, http,
+            clock = clock::read, budget = RequestBudget(1, clock::read))
+        assertEquals("Koş!", translator.translate("Run!"))
+        assertEquals("Koş!", translator.translate("Go!"))
+        assertEquals(2, http.count)
+    }
+
+    /** Hata sonrası bir dakikalık beklemede yerel çeviri yoksa hizmet yine denenir; satır düşmez. */
+    @Test
+    fun errorPauseWithoutLocalStillTriesService() {
+        val clock = Clock()
+        val http = ScriptedHttp(503 to "{}", ok)
+        val translator = AiTranslator(AiProvider.GEMINI, "key", model, null, http, clock = clock::read,
+            budget = RequestBudget(1000, clock::read))
+        failsWithoutLocal { translator.translate("Run!") }
+        assertEquals("Koş!", translator.translate("Go!"))
+        assertEquals(2, http.count)
+    }
+
+    /** Hizmetin dakikalık 429'undan sonraki kısa bekleme yerel çeviri olmasa da korunur. */
+    @Test
+    fun perMinutePauseHoldsWithoutLocal() {
+        val clock = Clock()
+        val http = ScriptedHttp(perMinute, ok)
+        val translator = AiTranslator(AiProvider.GEMINI, "key", model, null, http, clock = clock::read,
+            budget = RequestBudget(1000, clock::read))
+        failsWithoutLocal { translator.translate("Run!") }
+        failsWithoutLocal { translator.translate("Go!") }
+        assertEquals(1, http.count)
+    }
+
+    private val deepLOk = 200 to """{"translations":[{"text":"Koş!"}]}"""
+
+    /** DeepL'de de hata sonrası beklemede yerel çeviri yoksa DeepL yine denenir. */
+    @Test
+    fun deepLErrorPauseWithoutLocalStillTriesDeepL() {
+        val http = ScriptedHttp(503 to "{}", deepLOk)
+        val translator = DeepLTranslator("abc:fx", null, http)
+        failsWithoutLocal { translator.translate("Run!") }
+        assertEquals("Koş!", translator.translate("Go!"))
+        assertEquals(2, http.count)
+    }
+
+    /** DeepL 429 (çok sık istek) sonrası bekleme yerel çeviri olmasa da korunur. */
+    @Test
+    fun deepLTooManyRequestsPauseHoldsWithoutLocal() {
+        val http = ScriptedHttp(429 to "{}", deepLOk)
+        val translator = DeepLTranslator("abc:fx", null, http)
+        failsWithoutLocal { translator.translate("Run!") }
+        failsWithoutLocal { translator.translate("Go!") }
+        assertEquals(1, http.count)
+    }
 }

@@ -1,6 +1,38 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GENERAL, parseReply, runAutopack } from "../src/autopack.js";
+import { GENERAL, GENERAL_TITLE, jobPackId, packBody, parseReply, runAutopack } from "../src/autopack.js";
+
+test("malformed current-night state is rebuilt instead of stopping the scheduler", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  for (const invalid of [
+    { night: "2026-11-20", translated: 0, done: [] },
+    { night: "2026-11-20", queue: {}, translated: 0, done: [] },
+    { night: "2026-11-20", queue: [], translated: -1, done: [] },
+  ]) {
+    const stored = new Map([
+      ["auto/state.json", JSON.stringify(invalid)],
+      ["index.json", JSON.stringify({ packs: [] })],
+    ]);
+    const env = {
+      AI: {},
+      PACKS: {
+        get: async (name) => stored.has(name) ? { text: async () => stored.get(name) } : null,
+        put: async (name, value) => { stored.set(name, value); },
+      },
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            all: async () => ({ results: [] }),
+            first: async () => ({ lines: 0 }),
+          }),
+        }),
+      },
+    };
+    const result = await runAutopack(env, now);
+    assert.equal(result.phase, "plan");
+    assert.deepEqual(JSON.parse(stored.get("auto/state.json")).queue, []);
+  }
+});
 
 test("general pool scans past separated game rows before applying the row limit", async () => {
   const now = new Date("2026-11-20T04:00:00Z");
@@ -9,7 +41,7 @@ test("general pool scans past separated game rows before applying the row limit"
     queue: [{ titleId: GENERAL, game: null, lines: 350 }],
     namedGames: ["GTA 6"],
     translated: 0,
-    done: [],
+    done: [{ titleId: null, gameKey: "gta 6", game: "GTA 6", games: ["GTA 6"], built: true }],
   };
   const stored = new Map([
     ["auto/state.json", JSON.stringify(state)],
@@ -103,7 +135,14 @@ test("autopack never replaces an absent or unreadable pack index", async () => {
     })),
     skip: {}, fail: {},
   };
-  for (const rawIndex of [null, "{broken json", JSON.stringify({ packs: null })]) {
+  for (const rawIndex of [
+    null, "{broken json", JSON.stringify({ packs: null }),
+    JSON.stringify({ packs: [
+      { id: "pool-genel", version: 1 },
+      { id: "pool-genel", version: 2 },
+    ] }),
+    JSON.stringify({ packs: [null] }),
+  ]) {
     const state = { night: "2026-11-20", queue: [job], translated: 0, done: [] };
     const stored = new Map([
       ["auto/state.json", JSON.stringify(state)],
@@ -137,7 +176,11 @@ test("autopack must not publish an empty pack when an existing translation cache
     queue: [{ titleId: GENERAL, game: null, lines: 350 }],
     translated: 0, done: [],
   };
-  for (const cacheRaw of ["{broken", JSON.stringify({ lines: [], skip: {} }), JSON.stringify({ lines: null, skip: {} })]) {
+  for (const cacheRaw of [
+    "{broken", JSON.stringify({ lines: [], skip: {} }), JSON.stringify({ lines: null, skip: {} }),
+    JSON.stringify({ lines: { "1111111111111111": null }, skip: {} }),
+    JSON.stringify({ lines: { "1111111111111111": { k: "not-a-hash", en: "We must leave now.", tr: "?imdi gitmeliyiz." } }, skip: {} }),
+  ]) {
     const stored = new Map([
       ["auto/state.json", JSON.stringify(state)],
       ["index.json", JSON.stringify({ packs: [{ id: "pool-genel", version: 1 }] })],
@@ -219,4 +262,187 @@ test("autopack preserves published translations when their R2 cache is missing",
   assert.deepEqual(writes, [], "neither the existing pack nor its index may be overwritten");
   assert.deepEqual(JSON.parse(stored.get("index.json")), index);
   assert.deepEqual(JSON.parse(stored.get("auto/state.json")), state);
+});
+
+test("general fallback is scheduled while a voted game has not published its first pack", async () => {
+  const stored = new Map([["index.json", JSON.stringify({ packs: [] })]]);
+  const env = {
+    PACKS: {
+      get: async (path) => stored.has(path) ? { text: async () => stored.get(path) } : null,
+      put: async (path, value) => { stored.set(path, value); },
+    },
+    AI: {},
+    DB: {
+      prepare: (sql) => ({
+        bind: () => ({
+          all: async () => ({
+            results: sql.includes("FROM game_votes")
+              ? [{ game_key: "named game", installs: 2 }]
+              : sql.includes("GROUP BY game")
+                ? [{ game: "Named Game", lines: 350 }]
+                : [],
+          }),
+          first: async () => ({ lines: 350 }),
+        }),
+      }),
+    },
+  };
+  const plan = await runAutopack(env, new Date("2026-11-20T03:07:00Z"));
+  assert.equal(plan.phase, "plan");
+  const state = JSON.parse(stored.get("auto/state.json"));
+  assert.deepEqual(state.queue.map((job) => job.titleId ?? job.gameKey),
+    ["named game", GENERAL], "the general job must remain queued until named publication succeeds");
+});
+
+test("general fallback includes named-game subtitles if that game's pack did not publish", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const named = "Named Game";
+  const stored = new Map([
+    ["index.json", JSON.stringify({ packs: [] })],
+    ["auto/state.json", JSON.stringify({
+      night: "2026-11-20", queue: [{ titleId: GENERAL, game: null, lines: 350 }],
+      namedGames: [named],
+      done: [{ titleId: null, gameKey: "named game", game: named, games: [named], built: false, entries: 100 }],
+      translated: 0,
+    })],
+  ]);
+  const rows = [
+    { key: "1111111111111111", text: "We must leave the tower before dawn.", game: named },
+    { key: "2222222222222222", text: "We should finish the mission tonight.", game: null },
+  ];
+  let query;
+  const env = {
+    PACKS: {
+      get: async (name) => name === "auto/known-keys.bin"
+        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        : stored.has(name) ? { text: async () => stored.get(name) } : null,
+      put: async (name, value) => { stored.set(name, value); },
+    },
+    AI: {
+      run: async (_model, { messages }) => ({
+        response: JSON.stringify({
+          items: messages[1].content.split("\n").filter(Boolean)
+            .map((_, index) => ({ id: String(index), tr: "Bu ak?am g?revimizi bitirmeliyiz." })),
+        }),
+      }),
+    },
+    DB: {
+      prepare: (sql) => ({
+        bind: (...args) => ({
+          all: async () => {
+            query = { sql, args };
+            const excluded = sql.includes("json_each(?)") ? JSON.parse(args[1]) : [];
+            return { results: rows.filter((row) => !excluded.includes(row.game)) };
+          },
+        }),
+      }),
+    },
+  };
+  const result = await runAutopack(env, now);
+  assert.equal(result.phase, "translate");
+  assert.equal(result.translated, 2, "named lines should fall back when their own pack was not built");
+  const cache = JSON.parse(stored.get("auto/tr/GENEL.json"));
+  assert.deepEqual(Object.keys(cache.lines).sort(), rows.map((row) => row.key).sort());
+});
+
+test("long ASCII game names keep separate translation caches when their pack IDs differ", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const shared = "the exceptionally long game title that shares a lengthy prefix ";
+  const games = [shared + "alpha", shared + "beta"];
+  const jobs = games.map((gameKey) => ({
+    titleId: null, gameKey, game: gameKey, games: [gameKey], lines: 301,
+  }));
+  assert.notEqual(jobPackId(jobs[0]), jobPackId(jobs[1]));
+
+  const stored = new Map([["index.json", JSON.stringify({ packs: [] })]]);
+  const env = {
+    PACKS: {
+      get: async (name) => name === "auto/known-keys.bin"
+        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        : stored.has(name) ? { text: async () => stored.get(name) } : null,
+      put: async (name, value) => { stored.set(name, value); },
+    },
+    AI: {
+      run: async () => ({ response: JSON.stringify({ items: [{ id: "0", tr: "Hemen kap?ya ilerlemeliyiz." }] }) }),
+    },
+    DB: {
+      prepare: () => ({
+        bind: (...args) => ({
+          all: async () => ({ results: [{
+            key: args[0] === games[0] ? "1111111111111111" : "2222222222222222",
+            text: "We must get to the gate right now.",
+          }] }),
+        }),
+      }),
+    },
+  };
+  for (const job of jobs) {
+    stored.set("auto/state.json", JSON.stringify({
+      night: "2026-11-20", queue: [job], namedGames: [job.game],
+      translated: 0, done: [],
+    }));
+    const result = await runAutopack(env, now);
+    assert.equal(result.phase, "translate");
+    assert.equal(result.translated, 1);
+  }
+  const cacheFiles = [...stored.keys()].filter((name) => name.startsWith("auto/tr/name-"));
+  assert.equal(cacheFiles.length, 2, "distinct published pack IDs must not share a translation cache");
+  const cachedKeys = cacheFiles.map((name) => Object.keys(JSON.parse(stored.get(name)).lines));
+  assert.deepEqual(cachedKeys.map((keys) => keys.length), [1, 1]);
+});
+
+test("unchanged cache re-publishes a pack whose R2 object disappeared", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const k = "1111111111111111";
+  const cache = { lines: { [k]: { k, en: "We need to leave right now.", tr: "Hemen gitmemiz gerekiyor." } }, skip: {}, fail: {} };
+  const content = packBody("pool-genel", GENERAL_TITLE, cache, new BigUint64Array(), null).body;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
+  cache.contentSha = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const stored = new Map([
+    ["auto/state.json", JSON.stringify({ night: "2026-11-20", queue: [{ titleId: GENERAL, game: null, lines: 350 }], translated: 0, done: [] })],
+    ["auto/tr/GENEL.json", JSON.stringify(cache)],
+    ["index.json", JSON.stringify({ packs: [{ id: "pool-genel", title: GENERAL_TITLE, version: 4 }] })],
+  ]);
+  const written = [];
+  const env = {
+    AI: {},
+    PACKS: {
+      get: async (name) => name === "auto/known-keys.bin"
+        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        : stored.has(name) ? { text: async () => stored.get(name) } : null,
+      head: async (name) => stored.has(name) ? { key: name } : null,
+      put: async (name, data) => { written.push(name); stored.set(name, data); },
+    },
+    DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) }) },
+  };
+  const outcome = await runAutopack(env, now);
+  assert.equal(outcome.phase, "build");
+  assert.equal(outcome.built, true, "pack must be re-published even when its input hash has not changed");
+  assert.equal(outcome.version, 5);
+  assert.ok(written.includes("packs/pool-genel.json.gz"));
+  assert.equal(JSON.parse(stored.get("index.json")).packs[0].version, 5);
+
+  // A later run with a real pack object and the same cache must remain unchanged.
+  stored.set("auto/state.json", JSON.stringify({
+    night: "2026-11-20", queue: [{ titleId: GENERAL, game: null, lines: 350 }],
+    translated: 0, done: [],
+  }));
+  written.length = 0;
+  const again = await runAutopack(env, now);
+  assert.equal(again.unchanged, true, "existing package must retain normal no-op behavior");
+  assert.equal(again.built, false);
+  assert.equal(written.includes("packs/pool-genel.json.gz"), false);
+  assert.equal(JSON.parse(stored.get("index.json")).packs[0].version, 5);
+});
+
+test("duplicate AI item IDs cannot overwrite a subtitle with an ambiguous translation", () => {
+  const items = [{ en: "The gates are closing now." }, { en: "We have to leave immediately." }];
+  const reply = { response: JSON.stringify({ items: [
+    { id: "0", tr: "Kap?lar ?imdi kapan?yor." },
+    { id: 0, tr: "Hemen gitmeliyiz." },
+    { id: "1", tr: "Derhal ayr?lmam?z gerekiyor." },
+  ] }) };
+  assert.deepEqual([...parseReply(reply, items)],
+    [[1, "Derhal ayr?lmam?z gerekiyor."]],
+    "duplicated IDs must be discarded, leaving the independent translation untouched");
 });

@@ -12,6 +12,7 @@ import com.couchsubs.mobile.core.SubtitleStyle
 import com.couchsubs.mobile.core.SubtitleTextColor
 import com.couchsubs.mobile.remoteplay.LoginPasscode
 import com.couchsubs.mobile.remoteplay.RegisteredConsole
+import com.couchsubs.mobile.translation.AiProvider
 import com.couchsubs.mobile.tv.InstalledTv
 import com.couchsubs.mobile.tv.LgSessionRenewalPolicy
 import com.couchsubs.mobile.tv.TvBrand
@@ -108,10 +109,26 @@ class AppSettings(context: Context) {
         get() = enumOr(prefs.getString("engine", null), EngineChoice.FREE)
         set(value) = prefs.edit().putString("engine", value.name).apply()
 
-    /** Seçilen yapay zekâ modeli (listede yoksa varsayılan kullanılır). */
-    var aiModel: String?
-        get() = prefs.getString("aiModel", null)
-        set(value) = prefs.edit().putString("aiModel", value).apply()
+    /**
+     * Hizmetin seçili yapay zekâ modeli (ai-models.json'daki kimlik); kayıt yoksa ya da listede yoksa listenin ilki
+     * (varsayılan) kullanılır. Adlar Mac/iPhone UserSettings ile aynı: geminiModel, openAIModel, claudeModel.
+     */
+    fun aiModel(provider: AiProvider): String? = prefs.getString(modelKey(provider), null)
+    fun setAiModel(provider: AiProvider, id: String) = prefs.edit().putString(modelKey(provider), id).apply()
+
+    /**
+     * Ayarlardaki "Ek talimat" (#306): yapay zekâ çevirmeninin sistem talimatının sonuna eklenir; boşsa hiçbir şey
+     * değişmez. Ad iPhone UserSettings ile aynı: aiInstruction.
+     */
+    var aiInstruction: String
+        get() = prefs.getString("aiInstruction", null).orEmpty()
+        set(value) = prefs.edit().putString("aiInstruction", value.trim()).apply()
+
+    private fun modelKey(provider: AiProvider) = when (provider) {
+        AiProvider.GEMINI -> "geminiModel"
+        AiProvider.OPENAI -> "openAIModel"
+        AiProvider.CLAUDE -> "claudeModel"
+    }
 
     var packsEnabled: Boolean
         get() = prefs.getBoolean("packsEnabled", true)

@@ -94,6 +94,7 @@ public partial class SettingsWindow : Window
         AppearanceChoice.SelectedItem = AppearanceChoice.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == settings.Appearance.ToString());
         FrameSourceChoice.SelectedItem = FrameSourceChoice.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == settings.FrameSource.ToString());
         RemotePlayAppChoice.SelectedItem = RemotePlayAppChoice.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == settings.RemotePlayApp.ToString());
+        XboxAudioOnComputer.IsChecked = settings.XboxAudioOnComputer;
         XboxLegacyFrameRate.IsChecked = settings.XboxLegacyFrameRate;
         PlayStationPictureSourceCard.Visibility = controller.IsXbox ? Visibility.Collapsed : Visibility.Visible;
         XboxPictureSourceCard.Visibility = controller.IsXbox ? Visibility.Visible : Visibility.Collapsed;
@@ -170,6 +171,9 @@ public partial class SettingsWindow : Window
 
     private void OnXboxLegacyFrameRate(object sender, RoutedEventArgs e) =>
         Update(s => s with { XboxLegacyFrameRate = XboxLegacyFrameRate.IsChecked == true });
+
+    private void OnXboxAudioOnComputer(object sender, RoutedEventArgs e) =>
+        Update(s => s with { XboxAudioOnComputer = XboxAudioOnComputer.IsChecked == true });
 
     private void OnRemotePlayApp(object sender, SelectionChangedEventArgs e)
     {
@@ -397,6 +401,9 @@ public partial class SettingsWindow : Window
             : provider is { } named ? text.Format("Get a %@ API key", named.DisplayName()) : text["Get a free DeepL API key"];
         ModelPanel.Visibility = provider is null || isLocal ? Visibility.Collapsed : Visibility.Visible;
         LocalPanel.Visibility = isLocal ? Visibility.Visible : Visibility.Collapsed;
+        // Ek talimat yalnız yapay zekâ motorlarında (Gemini, OpenAI, Claude, yerel model); DeepL'de yoktur.
+        InstructionPanel.Visibility = provider is null ? Visibility.Collapsed : Visibility.Visible;
+        if (!Instruction.IsKeyboardFocusWithin) Instruction.Text = controller.Settings.AiInstruction;
         LocalKeyLabel.Visibility = saved ? Visibility.Collapsed : Visibility.Visible;
         // Yerel modelde geçersiz adres düğmeleri kapatır; başka motora geçince yeniden açılır.
         KeySave.IsEnabled = true;
@@ -440,6 +447,16 @@ public partial class SettingsWindow : Window
     }
 
     private void OnLocalChanged(object sender, RoutedEventArgs e) => CommitLocal();
+
+    /// <summary>Ek talimat alandan çıkınca kaydedilir; her tuşta çeviri hattı yeniden kurulmaz.</summary>
+    private void OnInstructionChanged(object sender, RoutedEventArgs e)
+    {
+        var instruction = Instruction.Text.Trim();
+        if (instruction != controller.Settings.AiInstruction) Update(s => s with { AiInstruction = instruction });
+    }
+
+    private void OnInstructionTyped(object sender, System.Windows.Controls.TextChangedEventArgs e) =>
+        InstructionPlaceholder.Visibility = Instruction.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
 
     private void OnLocalKey(object sender, System.Windows.Input.KeyEventArgs e)
     {

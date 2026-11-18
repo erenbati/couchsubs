@@ -217,6 +217,20 @@
                                 </DockPanel>
                                 <TextBlock x:Name="KeyStatus" Style="{StaticResource HintText}" Margin="0,8,0,0" TextWrapping="Wrap" Visibility="Collapsed" />
                                 <TextBlock x:Name="KeyError" Style="{StaticResource ErrorText}" Margin="0,8,0,0" TextWrapping="Wrap" Visibility="Collapsed" />
+                                <!-- Ek talimat (#306): yapay zekâ çevirmeninin talimatının sonuna eklenir; alandan çıkınca kaydedilir (Mac ile aynı). -->
+                                <StackPanel x:Name="InstructionPanel" Margin="0,16,0,0" Visibility="Collapsed">
+                                    <TextBlock Text="{t:T 'Extra instruction'}" Margin="0,0,0,8" />
+                                    <Grid>
+                                        <TextBox x:Name="Instruction" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="60" MaxHeight="160"
+                                                 VerticalScrollBarVisibility="Auto" MaxLength="1000"
+                                                 LostFocus="OnInstructionChanged" TextChanged="OnInstructionTyped" />
+                                        <TextBlock x:Name="InstructionPlaceholder" Style="{StaticResource HintText}" IsHitTestVisible="False"
+                                                   Margin="6,4,6,0" TextWrapping="Wrap"
+                                                   Text="{t:T 'Example: Translate swear words without softening them.'}" />
+                                    </Grid>
+                                    <TextBlock Style="{StaticResource HintText}" Margin="0,8,0,0" TextWrapping="Wrap"
+                                               Text="{t:T 'Added to the end of the AI translator\'s instructions (up to 1000 characters). Leave it empty if you don\'t need it.'}" />
+                                </StackPanel>
                             </StackPanel>
                         </StackPanel>
                     </c:Card>
@@ -551,6 +565,10 @@
                     </c:Card>
                     <c:Card x:Name="XboxPictureSourceCard" Visibility="Collapsed">
                         <StackPanel>
+                            <CheckBox x:Name="XboxAudioOnComputer" Content="{t:T 'Play Xbox sound on this computer'}"
+                                      Checked="OnXboxAudioOnComputer" Unchecked="OnXboxAudioOnComputer" />
+                            <TextBlock Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,6,0,16"
+                                       Text="{t:T 'Xbox Remote Play can silence the TV while a stream is active. When on, game sound plays on this computer.'}" />
                             <CheckBox x:Name="XboxLegacyFrameRate" Content="{t:T 'Restore the old Xbox frame rate'}"
                                       Checked="OnXboxLegacyFrameRate" Unchecked="OnXboxLegacyFrameRate" />
                             <TextBlock Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,6,0,0"

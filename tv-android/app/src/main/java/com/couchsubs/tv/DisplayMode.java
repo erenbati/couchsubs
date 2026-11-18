@@ -22,8 +22,15 @@ final class DisplayMode {
         IN_APP,
         OVERLAY,
         /** Katman isteniyor ama izin yok: uygulama içinde açılır ve iznin nasıl verileceği gösterilir. */
-        IN_APP_NEEDS_PERMISSION
+        IN_APP_NEEDS_PERMISSION,
+        /** Katman az önce açılamadı (TV pencereye ya da ön plan servisine izin vermedi): uygulama içinde, nedeniyle. */
+        IN_APP_OVERLAY_FAILED
     }
+
+    /** Katman servisinin uygulamayı geri açarken bildirdiği neden (bkz. OverlayService). */
+    static final String FAILED_PERMISSION = "permission";
+    static final String FAILED_WINDOW = "window";
+    static final String FAILED_FOREGROUND = "foreground";
 
     private DisplayMode() {}
 
@@ -37,6 +44,17 @@ final class DisplayMode {
     }
 
     static Start atLaunch(String preference, boolean canDrawOverlays) {
+        return atLaunch(preference, canDrawOverlays, null);
+    }
+
+    /**
+     * overlayFailure: katman servisi uygulamayı "açılamadım" diye geri açtıysa nedeni (FAILED_*), yoksa null. O zaman
+     * yeniden katmana geçilmez; yoksa kayıtlı tercih katmansa uygulama ile servis birbirini sonsuza dek açıp kapatırdı ve
+     * kullanıcı yalnız uygulamanın kapandığını görürdü (#275).
+     */
+    static Start atLaunch(String preference, boolean canDrawOverlays, String overlayFailure) {
+        if (FAILED_PERMISSION.equals(overlayFailure)) return Start.IN_APP_NEEDS_PERMISSION;
+        if (overlayFailure != null) return Start.IN_APP_OVERLAY_FAILED;
         if (!OVERLAY.equals(normalize(preference))) return Start.IN_APP;
         return canDrawOverlays ? Start.OVERLAY : Start.IN_APP_NEEDS_PERMISSION;
     }

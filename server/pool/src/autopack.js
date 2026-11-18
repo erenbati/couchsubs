@@ -41,7 +41,12 @@ const MAX_VARIANTS = 20;
 
 const STATE = "auto/state.json";
 const KNOWN = "auto/known-keys.bin";
-const cacheFile = (job) => (job.titleId ? `auto/tr/${job.titleId}.json` : `auto/tr/name-${gameSlug(job.gameKey)}.json`);
+const cacheFile = (job) => {
+  if (job.titleId) return `auto/tr/${job.titleId}.json`;
+  // Long ASCII names can have the same truncated slug while their pack IDs differ.
+  // Keep short ASCII cache paths compatible, but hash long and non-Latin identities.
+  return `auto/tr/name-${jobPackId(job).slice(PACK_PREFIX.length)}.json`;
+};
 
 // poolpack.py ile aynı: konuşmacı etiketi, Türkçe harf, yazı tanıma çöpü.
 const LABEL = /^[-•\s]*([A-Z][A-Za-z .'’-]{1,28}?)\s*[•:]\s+(?=\S)/;
@@ -82,7 +87,16 @@ export function packId(titleId) {
 
 /** İşin paket kimliği: oyun kimliği varsa ondan, yoksa adın anahtarından ("gta 6" → "pool-gta-6"). */
 export function jobPackId(job) {
-  return job.titleId ? packId(job.titleId) : prefixedPackId(gameSlug(job.gameKey), String(job.gameKey));
+  if (job.titleId) return packId(job.titleId);
+  const identity = String(job.gameKey);
+  const slug = gameSlug(identity);
+  if (/^[a-z0-9 ]+$/.test(identity)) return prefixedPackId(slug, identity);
+
+  // Non-Latin characters disappear from the ASCII slug, so hash the full key to avoid collisions.
+  const hash = hashPackSuffix(identity);
+  const maxSlug = MAX_PACK_ID_LENGTH - PACK_PREFIX.length - hash.length - 1;
+  const safeSlug = (slug || "game").slice(0, maxSlug).replace(/-+$/, "");
+  return `${PACK_PREFIX}${safeSlug}-${hash}`;
 }
 
 /** Kimliksiz satırların oyun adları ("game" sütunu, yazımına göre sayılmış) anahtara göre birleşir; en az MIN_VOTERS
@@ -91,7 +105,7 @@ export function nameJobs(rows, votes) {
   const groups = new Map();
   for (const r of rows) {
     const k = gameKey(r.game);
-    if (!k || !gameSlug(k) || gameSlug(k) === "genel") continue;
+    if (!k || gameSlug(k) === "genel") continue;
     const g = groups.get(k) ?? { titleId: null, gameKey: k, game: r.game, best: 0, lines: 0, games: [] };
     g.lines += r.lines;
     if (g.games.length < MAX_VARIANTS) g.games.push(r.game);
@@ -176,6 +190,7 @@ export function parseReply(reply, items) {
   }
   const out = new Map();
   if (!Array.isArray(parsed?.items)) return out;
+  const duplicates = new Set();
   for (const it of parsed.items) {
     const id = it?.id;
     if (typeof id !== "number" && !(typeof id === "string" && /^\d+$/.test(id))) continue;
@@ -184,6 +199,13 @@ export function parseReply(reply, items) {
     if (!Number.isSafeInteger(i) || !items[i] || !tr) continue;
     // Açıklama ya da birden çok satır yazmış, çok uzun ya da Türkçe değil: alınmaz.
     if (/[{}]/.test(tr) || tr.length > items[i].en.length * 3 + 40) continue;
+    // Ambiguous AI IDs must not silently overwrite an earlier, different subtitle.
+    if (duplicates.has(i)) continue;
+    if (out.has(i)) {
+      out.delete(i);
+      duplicates.add(i);
+      continue;
+    }
     out.set(i, tr);
   }
   return out;
@@ -209,6 +231,13 @@ async function loadCache(env, job) {
     const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
     if (!record(cache) || !record(cache.lines) || !record(cache.skip)
       || (cache.fail != null && !record(cache.fail))) return null;
+    // A parseable cache with a null line or malformed hash otherwise throws in
+    // packBody/isKnown and stops the remaining nightly scheduler calls.
+    if (!Object.entries(cache.lines).every(([pool, line]) =>
+      /^[0-9a-f]{16}$/.test(pool) && record(line)
+      && typeof line.k === "string" && /^[0-9a-f]{16}$/.test(line.k)
+      && typeof line.en === "string" && line.en.trim().length > 0
+      && typeof line.tr === "string" && line.tr.trim().length > 0)) return null;
     return cache;
   } catch { return null; }
 }
@@ -262,6 +291,16 @@ async function readIndex(env) {
   const index = await getJson(env, "index.json");
   // Eksik/bozuk indeks, boş bir indeks değildir: aksi halde sonraki paket mevcut listeyi siler.
   if (!Array.isArray(index?.packs)) throw new Error("autopack index unavailable or invalid");
+  // An ambiguous or malformed index makes every client's pack list unavailable.
+  // Never rewrite it or drop entries while trying to publish another pack.
+  const ids = new Set();
+  for (const pack of index.packs) {
+    if (!pack || typeof pack !== "object" || typeof pack.id !== "string"
+      || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(pack.id) || ids.has(pack.id)) {
+      throw new Error("autopack index invalid or duplicate pack ID");
+    }
+    ids.add(pack.id);
+  }
   return index.packs;
 }
 
@@ -273,7 +312,15 @@ async function buildPack(env, job, cache, known) {
   const previous = packs.find((p) => p.id === id);
   if (!previous && count < MIN_LINES) return { id, built: false, entries: count };
   const contentSha = await sha256Hex(new TextEncoder().encode(body));
-  if (previous && cache.contentSha === contentSha) return { id, built: false, unchanged: true, entries: count };
+  if (previous && cache.contentSha === contentSha) {
+    // The index may outlive an R2 object removed independently.
+    // An unchanged source hash is only enough when the published file exists.
+    const packKey = `packs/${id}.json.gz`;
+    const published = env.PACKS.head
+      ? await env.PACKS.head(packKey)
+      : await env.PACKS.get(packKey);
+    if (published) return { id, built: false, unchanged: true, entries: count };
+  }
   const data = await gzip(body);
   const sha256 = await sha256Hex(data);
   // Önce dosya, sonra liste: liste hiçbir zaman olmayan dosyayı göstermez.
@@ -297,7 +344,16 @@ export async function runAutopack(env, now = new Date()) {
   if (!env.PACKS || !env.AI) return { phase: "disabled" };
   const night = now.toISOString().slice(0, 10);
   let state = await getJson(env, STATE);
-  if (state?.night !== night) {
+  // A parseable but incomplete R2 state must not stall every remaining run of this night.
+  // Replanning is safe: per-game translation caches are persisted separately.
+  const validJob = (job) => job && typeof job === "object" && !Array.isArray(job)
+    && ((typeof job.titleId === "string" && job.titleId.length > 0)
+      || (job.titleId == null && typeof job.gameKey === "string" && job.gameKey.length > 0));
+  const validState = state && Array.isArray(state.queue) && state.queue.every(validJob)
+    && Array.isArray(state.done) && Number.isSafeInteger(state.translated) && state.translated >= 0
+    && (state.namedGames == null || (Array.isArray(state.namedGames)
+      && state.namedGames.every((game) => typeof game === "string")));
+  if (state?.night !== night || !validState) {
     const { results } = await env.DB.prepare(
       "SELECT title_id, MAX(game) AS game, COUNT(*) AS lines FROM lines WHERE title_id IS NOT NULL AND installs>=? " +
       "GROUP BY title_id ORDER BY lines DESC LIMIT 50"
@@ -316,8 +372,9 @@ export async function runAutopack(env, now = new Date()) {
     titles.push(...named);
     const general = await env.DB.prepare("SELECT COUNT(*) AS lines FROM lines WHERE title_id IS NULL AND installs>=?")
       .bind(MIN_INSTALLS).first();
-    const namedLines = named.reduce((sum, g) => sum + g.lines, 0);
-    titles.push({ titleId: GENERAL, game: null, lines: Math.max(0, (general?.lines ?? 0) - namedLines) });
+    // Named jobs may fail to reach the cleaned MIN_LINES threshold. Keep a general job
+    // scheduled until they have actually published; only then can their rows be excluded.
+    titles.push({ titleId: GENERAL, game: null, lines: general?.lines ?? 0 });
     // Ham satır sayısı temizlikten önce: eşiğin altındaki oyun beklemeye kalır (paketi zaten varsa güncellenir).
     const queue = titles.filter((t) => t.lines >= MIN_LINES || packs.some((p) => p.id === jobPackId(t)));
     // Ortak paket, kendi paketi hazırlanan adların satırlarını almaz.
@@ -334,7 +391,12 @@ export async function runAutopack(env, now = new Date()) {
   const cache = await loadCache(env, job);
   if (!cache) return { phase: "waiting", reason: "auto/translation cache invalid" };
   cache.fail ??= {};
-  const separate = new Set(state.namedGames ?? []);
+  // Exclude named rows only when their individual pack was actually published or
+  // confirmed unchanged. An unbuilt named pack must fall back into the general pool.
+  const published = new Set(state.done
+    .filter((finished) => finished?.gameKey && (finished.built || finished.unchanged))
+    .flatMap((finished) => finished.games?.length ? finished.games : [finished.game]));
+  const separate = new Set((state.namedGames ?? []).filter((name) => published.has(name)));
   let rows;
   if (job.titleId === GENERAL) {
     if (separate.size) {

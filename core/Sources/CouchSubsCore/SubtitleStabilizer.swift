@@ -203,6 +203,15 @@ public struct SubtitleStabilizer {
         !TextMatch.isSimilar(TextMatch.normalize(source), TextMatch.normalize(translation), threshold: 0.90)
     }
 
+    /// Az önce çevrilmek üzere verilen satırı hat yok saydı (bekleyen satırın arasına giren bozuk okuma): satır gönderilmemiş
+    /// sayılır, ekranda kaldıkça sonraki okumada yeniden verilir. Yoksa gerçek bir yeni satır "gönderildi" sayılıp hiç
+    /// çevrilmiyordu (Windows: WithdrawSent, Android: withdrawSent).
+    public mutating func withdrawSent() {
+        sent = ""
+        sentRaw = ""
+        lastSeen = nil
+    }
+
     /// Son gönderilen satırı unutur (ör. çevirisi başarısız oldu); satır ekranda kaldıkça yeniden kararlı sayılıp çevrilir,
     /// ama en erken `retryAfterMs` sonra: kalıcı hatada (dil paketi eksik) her karede çevirmene gidilmez.
     public mutating func forgetSent() {

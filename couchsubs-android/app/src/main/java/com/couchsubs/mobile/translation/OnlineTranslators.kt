@@ -11,12 +11,14 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.security.MessageDigest
 import java.util.Locale
 
 /** Çevrimiçi anahtarın durumu (ayarlardaki "Dene" ve ana ekrandaki uyarı için). */
 enum class OnlineKeyState { VALID, INVALID, QUOTA_EXCEEDED, MODEL_REJECTED, UNREACHABLE }
 
-class OnlineException(val state: OnlineKeyState) : IOException("online translation failed: $state")
+/** [rateLimited]: hizmet 429 döndü (DeepL: çok sık istek); bekleme süresince istek gönderilmez. */
+class OnlineException(val state: OnlineKeyState, val rateLimited: Boolean = false) : IOException("online translation failed: $state")
 
 /**
  * Hizmetin bildirdiği dakikalık istek sınırı aşımı (429; Windows: AiRateLimit). [retryAfterMs]: hizmetin önerdiği
@@ -51,6 +53,9 @@ data class AiModel(
     val requestsPerMinute: Int? = null,
 ) {
     companion object {
+        /** Kayıtlı kimlikteki model; kayıt yoksa ya da listede yoksa listenin ilki (varsayılan; Mac ve iPhone ile aynı). */
+        fun selected(models: List<AiModel>, id: String?): AiModel? = models.firstOrNull { it.id == id } ?: models.firstOrNull()
+
         /** Uygulamayla gelen ai-models.json; okunamazsa boş. */
         fun load(context: android.content.Context): Map<String, List<AiModel>> = try {
             parse(context.assets.open("ai-models.json").use { String(it.readBytes(), Charsets.UTF_8) })
@@ -175,7 +180,11 @@ abstract class SentenceTranslator<C>(
     }
 
     private val names = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /** Cümle içinde çeviriden korunan konuşan adları (#287); yapay zekâya istemde adıyla söylenir. */
+    private val speakers = SpeakerNameGuard()
     private var pausedUntil = 0L
+    /** Bekleme hizmetin 429 yanıtından mı; öyleyse yerel çeviri olmasa da istek gönderilmez. */
+    private var pauseRateLimited = false
 
     @Volatile var lastError: OnlineKeyState? = null
         private set
@@ -183,7 +192,7 @@ abstract class SentenceTranslator<C>(
 
     /** [sentences] cümlelerini aynı sırada çevirir ([game]: oynanan oyun, yapay zekâya bağlam); hata durumunda
      *  [OnlineException] ya da [IOException]. */
-    protected abstract fun request(sentences: List<String>, context: C, game: String?): List<String>
+    protected abstract fun request(sentences: List<String>, context: C, game: String?, names: List<String>): List<String>
 
     /** Bu satırdan önce gösterilenler (bağlam); satırı da sonrakilerin bağlamına ekler. */
     protected abstract fun context(text: String, game: String?): C
@@ -199,41 +208,56 @@ abstract class SentenceTranslator<C>(
     /** Büyük harfle kalacak ek sözcükler (sözlükteki adlar). */
     protected open val extraNames: Set<String> get() = emptySet()
 
+    /** Konuşan adını öğrenir ("OLD MAN" → "old", "man"); korunacak adlar ayrıca. */
+    override fun noteSpeaker(name: String) {
+        name.split(' ').filter { it.length >= 2 }.forEach { names.add(it.lowercase(Locale.ROOT)) }
+        speakers.learn(name)
+        local?.noteSpeaker(name)
+    }
+
     override fun translate(text: String): String {
         // Arama, istek ve kayıt aynı oyunla yapılır; oyun işlem sırasında değişse de sonuç başka oyuna yazılmaz.
         val game = game()
         val context = context(text, game)
         cache.get(cacheKey(text, game))?.let { return it.also { remember(text, it, game) } }
         val pieces = SubtitleSegmenter.split(text)
-        for (name in pieces.mapNotNull(SubtitleSegmenter::labelName))
-            name.split(' ').filter { it.length >= 2 }.forEach { names.add(it.lowercase(Locale.ROOT)) }
+        for (name in pieces.mapNotNull(SubtitleSegmenter::labelName)) noteSpeaker(name)
         val known = names.toSet() + extraNames
         val translations = pieces.map { if (it.translate) cache.get(cacheKey(it.text, game)) else null }.toMutableList()
         val missing = pieces.indices.filter { pieces[it].translate && translations[it] == null }
         val sources = missing.map { SubtitleSegmenter.normalizeCase(pieces[it].text, known) }
-        // Hizmetin beklemesi yalnız eksik çeviriler içindir; önbellekteki parçalar yerel motor istemez.
-        if (sources.isNotEmpty() && clock() < pausedUntil) return fallback(text, game)
-        // Dakikalık hak bittiyse istek gönderilmez; satır sessizce yerel çeviriyle çevrilir (hata değildir).
-        if (sources.isNotEmpty() && budget?.take() == false) return fallback(text, game)
+        // Hizmetin beklemesi yalnız eksik çeviriler içindir; önbellekteki parçalar yerel motor istemez. Hata sonrası
+        // beklemede yerel çeviri yoksa (indirilmemiş, açılamadı) satır düşmesin: hizmet yine denenir. 429 beklemesi kalır.
+        if (sources.isNotEmpty() && clock() < pausedUntil) {
+            if (pauseRateLimited) return fallback(text, game)
+            tryLocal(text)?.let { remember(text, it, game); return it }
+        }
+        // Dakikalık hak bittiyse satır sessizce yerel çeviriyle çevrilir (hata değildir). Hak uygulamanın temkinli
+        // tahminidir; yerel çeviri yoksa satır denenmeden düşmesin, istek yine gönderilir.
+        if (sources.isNotEmpty() && budget?.take() == false) tryLocal(text)?.let { remember(text, it, game); return it }
         val translated = try {
-            if (sources.isEmpty()) emptyList() else request(sources, context, game).also { report(null) }
+            if (sources.isEmpty()) emptyList()
+            else request(sources, context, game, SpeakerNameGuard.occurring(speakers.protected, sources.joinToString("\n"), exact = true))
+                .also { report(null) }
         } catch (error: AiRateLimitedException) {
             rateLimited(error.limit)
             return fallback(text, game)
         } catch (error: IOException) {
             report((error as? OnlineException)?.state ?: OnlineKeyState.UNREACHABLE)
             pausedUntil = clock() + RETRY_AFTER_MS
+            pauseRateLimited = (error as? OnlineException)?.rateLimited == true
             return fallback(text, game)
         } catch (error: JSONException) {
             report(OnlineKeyState.UNREACHABLE)
             pausedUntil = clock() + RETRY_AFTER_MS
+            pauseRateLimited = false
             return fallback(text, game)
         }
         var local = false
         for ((i, index) in missing.withIndex()) {
             val piece = pieces[index].text
             if (retriesEcho && isEcho(piece, translated[i])) {
-                val retried = retryEcho(piece)
+                val retried = tryLocal(piece)
                 if (retried != null && !isEcho(piece, retried)) {
                     // Yerel çeviri bu motorun önbelleğine yazılmaz.
                     translations[index] = retried
@@ -265,10 +289,11 @@ abstract class SentenceTranslator<C>(
         TextMatch.isSimilar(TextMatch.normalize(source), TextMatch.normalize(translation), 0.90)
 
     /**
-     * Geri verilen cümle cihaz üstü çeviriyle bir kez daha denenir; o da aynı kalırsa (ad, konsolun Türkçe menüsü)
-     * çevrilecek bir şey yoktur ve modelin yanıtı önbelleğe yazılır. Yerel çeviri yoksa ya da hata verirse null.
+     * Cümle cihaz üstü çeviriyle denenir; yerel çeviri yoksa ya da hata verirse null. Geri verilen cümlede o da aynı
+     * kalırsa (ad, konsolun Türkçe menüsü) çevrilecek bir şey yoktur ve modelin yanıtı önbelleğe yazılır; hizmet
+     * beklerken null dönerse istek yine gönderilir.
      */
-    private fun retryEcho(text: String): String? =
+    private fun tryLocal(text: String): String? =
         try {
             local?.translate(text)
         } catch (error: InterruptedException) {
@@ -296,6 +321,7 @@ abstract class SentenceTranslator<C>(
         if (error is AiRateLimitedException) return rateLimited(error.limit)
         report((error as? OnlineException)?.state ?: OnlineKeyState.UNREACHABLE)
         pausedUntil = clock() + RETRY_AFTER_MS
+        pauseRateLimited = (error as? OnlineException)?.rateLimited == true
     }
 
     /**
@@ -305,6 +331,7 @@ abstract class SentenceTranslator<C>(
     private fun rateLimited(limit: AiRateLimit) {
         limit.requestsPerMinute?.let { budget?.lower(it) }
         pausedUntil = clock() + (limit.retryAfterMs ?: RATE_LIMIT_PAUSE_MS).coerceIn(1_000L, RATE_LIMIT_PAUSE_MS)
+        pauseRateLimited = true
     }
 
     /** Hizmet yanıt vermeyen parçalar yerel motorla çevrilir; yerel motor yoksa hata yukarı çıkar. */
@@ -380,7 +407,7 @@ class DeepLTranslator(
         context
     }
 
-    override fun request(sentences: List<String>, context: String, game: String?): List<String> {
+    override fun request(sentences: List<String>, context: String, game: String?, names: List<String>): List<String> {
         // Sözlükteki adlar etiketle korunur; etiket varsa istek XML olarak gider, diğer cümleler de kaçırılır.
         val wrapped = sentences.map { DeepLMarkup.wrap(it, glossary) }
         val tagged = wrapped.any { it != null }
@@ -389,7 +416,7 @@ class DeepLTranslator(
             "POST", baseUrl(key) + "translate",
             mapOf("Authorization" to "DeepL-Auth-Key $key", "Content-Type" to "application/json"), body(sources, context, tagged), 4000,
         )
-        if (status !in 200..299) throw OnlineException(failure(status))
+        if (status !in 200..299) throw OnlineException(failure(status), rateLimited = status == 429)
         val list = JSONObject(response).optJSONArray("translations") ?: throw OnlineException(OnlineKeyState.UNREACHABLE)
         if (list.length() != sentences.size) throw OnlineException(OnlineKeyState.UNREACHABLE)
         val reply = (0 until list.length()).map { list.getJSONObject(it).getString("text") }
@@ -412,12 +439,40 @@ object AiRequest {
             "Keep line breaks. Keep the meaning and tone; do not add or leave out anything. " +
             "Reply with only the translation, no explanations, notes or quotes."
 
+    /** Kullanıcının ek talimatında en çok bu kadar karakter gider (fazlası kesilir). */
+    const val MAX_INSTRUCTION_LENGTH = 1000
+
+    /** Ayarlardaki "Ek talimat": baştaki/sondaki boşluk atılır, sınırdan uzunsa kesilir; boşsa null. */
+    fun instruction(text: String?): String? {
+        var trimmed = text?.trim().orEmpty()
+        if (trimmed.length > MAX_INSTRUCTION_LENGTH) trimmed = trimmed.take(MAX_INSTRUCTION_LENGTH).trimEnd()
+        return trimmed.ifEmpty { null }
+    }
+
+    /** Sistem talimatı: kullanıcının ek talimatı varsa sona eklenir (#306); boşsa [SYSTEM_PROMPT] olduğu gibi gider. */
+    fun systemPrompt(instruction: String?): String =
+        AiRequest.instruction(instruction)?.let { "$SYSTEM_PROMPT\n\n$it" } ?: SYSTEM_PROMPT
+
+    /**
+     * Ek talimatın önbellek etiketi: talimat değişince eski çeviriler dönmesin diye anahtarın başına girer. Talimat yoksa
+     * null; o zaman anahtar eskisi gibidir ve önceki çeviriler geçerli kalır (iPhone, Mac ve Windows ile aynı).
+     */
+    fun instructionTag(instruction: String?): String? = AiRequest.instruction(instruction)?.let { extra ->
+        MessageDigest.getInstance("SHA-256").digest(extra.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }.take(16)
+    }
+
     /** Bağlam satırı: daha önce gösterilmiş İngilizce ve (biliniyorsa) Türkçesi. */
     data class ContextLine(val source: String, val translation: String? = null)
 
-    fun userMessage(sentences: List<String>, context: List<ContextLine>, game: String? = null): String {
+    /**
+     * Kullanıcı iletisi: önceki satırlar (yalnız bağlam) ve çevrilecek cümleler. [names]: konuşan etiketlerinden öğrenilip
+     * cümlelerde geçen adlar; model "Price"ı "Fiyat" diye çevirmesin diye adıyla söylenir (#287).
+     */
+    fun userMessage(sentences: List<String>, context: List<ContextLine>, game: String? = null, names: List<String> = emptyList()): String {
         val parts = mutableListOf<String>()
         if (!game.isNullOrEmpty()) parts.add("Game: $game")
+        if (names.isNotEmpty()) parts.add("Character names (keep them exactly as written, do not translate them): ${names.joinToString(", ")}")
         if (context.isNotEmpty()) {
             val lines = mutableListOf("Previous subtitles, for context only (do not translate them again):")
             for (line in context) {
@@ -434,16 +489,19 @@ object AiRequest {
 
     fun build(
         provider: AiProvider, key: String, model: AiModel, sentences: List<String>, context: List<ContextLine>,
-        maxOutputTokens: Int = MAX_OUTPUT_TOKENS, game: String? = null,
+        maxOutputTokens: Int = MAX_OUTPUT_TOKENS, game: String? = null, names: List<String> = emptyList(),
+        // Ayarlardaki "Ek talimat"; sistem talimatının sonuna eklenir, boşsa hiçbir şey değişmez.
+        instruction: String? = null,
     ): AiHttpRequest {
         val trimmed = key.trim()
-        val user = userMessage(sentences, context, game)
+        val user = userMessage(sentences, context, game, names)
+        val system = systemPrompt(instruction)
         return when (provider) {
             AiProvider.GEMINI -> {
                 val config = JSONObject().put("maxOutputTokens", maxOutputTokens)
                 model.thinking?.let { config.put("thinkingConfig", JSONObject().put("thinkingLevel", it)) }
                 val body = JSONObject()
-                    .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", SYSTEM_PROMPT))))
+                    .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
                     .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", user)))))
                     .put("generationConfig", config)
                 AiHttpRequest(
@@ -455,7 +513,7 @@ object AiRequest {
                 val body = JSONObject()
                     .put("model", model.id)
                     .put("messages", JSONArray()
-                        .put(JSONObject().put("role", "developer").put("content", SYSTEM_PROMPT))
+                        .put(JSONObject().put("role", "developer").put("content", system))
                         .put(JSONObject().put("role", "user").put("content", user)))
                     .put("max_completion_tokens", maxOutputTokens)
                 model.effort?.let { body.put("reasoning_effort", it) }
@@ -466,7 +524,7 @@ object AiRequest {
                 val body = JSONObject()
                     .put("model", model.id)
                     .put("max_tokens", maxOutputTokens)
-                    .put("system", SYSTEM_PROMPT)
+                    .put("system", system)
                     .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", user)))
                 model.effort?.let { body.put("output_config", JSONObject().put("effort", it)) }
                 model.thinking?.let { body.put("thinking", JSONObject().put("type", it)) }
@@ -640,6 +698,9 @@ class AiTranslator(
     // Dakikalık istek hakkı; null ise modelin uygulama genelindeki ortak hakkı (Google sınırı proje ve model başına
     // sayar; çeviri hattı yeniden kurulsa da hak sıfırlanmaz). Modelin sınırı yoksa hak da yoktur.
     budget: RequestBudget? = null,
+    // Ayarlardaki "Ek talimat" (#306): sistem talimatının sonuna eklenir; boşsa hiçbir şey değişmez. Her istekte
+    // sorulur: Ayarlar'da değişince çalışan çeviri hattı yeni talimatı hemen kullanır (iPhone ile aynı).
+    private val instruction: (() -> String?)? = null,
 ) : SentenceTranslator<List<AiRequest.ContextLine>>(fallback, cache, clock, budget ?: RequestBudget.shared(provider, model)) {
     companion object {
         /** Kalıcı önbellek dosyasındaki motor adı (iPhone ile aynı: "gemini:<model>"). */
@@ -671,7 +732,8 @@ class AiTranslator(
             val sentences = chunk.map { texts[it] }
             countRequest()
             try {
-                val request = AiRequest.build(provider, key, model, sentences, emptyList(), AiRequest.SCREEN_OUTPUT_TOKENS, game)
+                val request = AiRequest.build(provider, key, model, sentences, emptyList(), AiRequest.SCREEN_OUTPUT_TOKENS, game,
+                    instruction = scope.instruction)
                 val (status, body) = http.send("POST", request.url, request.headers, request.body, SCREEN_TIMEOUT_MS)
                 if (status !in 200..299) throw AiRequest.error(status, body)
                 val translated = AiRequest.translations(AiRequest.text(provider, body), sentences.size)
@@ -692,6 +754,17 @@ class AiTranslator(
     }
 
     private val key = key.trim()
+
+    /** Geçerli ek talimat ve önbellek etiketi; etiket yalnız talimat değişince yeniden hesaplanır. */
+    private class InstructionScope(val instruction: String?, val tag: String?)
+    @Volatile private var lastScope = InstructionScope(null, null)
+    private val scope: InstructionScope
+        get() {
+            val current = AiRequest.instruction(instruction?.invoke())
+            val last = lastScope
+            if (last.instruction == current) return last
+            return InstructionScope(current, AiRequest.instructionTag(current)).also { lastScope = it }
+        }
     private val recent = ArrayDeque<AiRequest.ContextLine>()
     private var recentGame: String? = null
 
@@ -719,11 +792,17 @@ class AiTranslator(
 
     override fun game(): String? = playedGame?.invoke()?.trim()
 
-    /** Oyun bilinmiyorsa eski kayıtlar geçerlidir; biliniyorsa yalnız o oyunun sonucu kullanılır (Windows ve Mac ile aynı). */
-    override fun cacheKey(text: String, game: String?): String = if (game.isNullOrEmpty()) text else "$game\u001f$text"
+    /**
+     * Oyun bilinmiyorsa eski kayıtlar geçerlidir; biliniyorsa yalnız o oyunun sonucu kullanılır (Windows ve Mac ile aynı).
+     * Ek talimat varsa anahtar onun etiketiyle başlar: talimat değişince eski çeviriler dönmez.
+     */
+    override fun cacheKey(text: String, game: String?): String {
+        val key = if (game.isNullOrEmpty()) text else "$game\u001f$text"
+        return scope.tag?.let { "i:$it\u001f$key" } ?: key
+    }
 
-    override fun request(sentences: List<String>, context: List<AiRequest.ContextLine>, game: String?): List<String> {
-        val request = AiRequest.build(provider, key, model, sentences, context, game = game)
+    override fun request(sentences: List<String>, context: List<AiRequest.ContextLine>, game: String?, names: List<String>): List<String> {
+        val request = AiRequest.build(provider, key, model, sentences, context, game = game, names = names, instruction = scope.instruction)
         val (status, body) = http.send("POST", request.url, request.headers, request.body, 5000)
         if (status !in 200..299) throw AiRequest.error(status, body)
         return AiRequest.translations(AiRequest.text(provider, body), sentences.size)

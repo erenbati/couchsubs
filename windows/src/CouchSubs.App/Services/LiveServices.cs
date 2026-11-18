@@ -26,16 +26,19 @@ public sealed class LiveServices : IAppServices
     public Task<OnlineKeyCheck> CheckOnlineKeyAsync(string key) => DeepLTranslator.CheckAsync(key);
 
     // Her model kendi önbelleğini kullanır ("gemini:gemini-3.5-flash-lite"); model değişince eski çeviriler karışmaz.
-    public ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback, Func<string?>? game) =>
+    // Ek talimat aynı önbellekte kalır; anahtar talimatın etiketiyle ayrılır (bkz. AiTranslator.CacheKey).
+    public ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback, Func<string?>? game,
+                                             string? instruction = null) =>
         new AiTranslator(provider, key, model, fallback, cache: TranslationCache.Shared(AppPaths.Translations, provider.EngineId(model), "en", "tr"),
-                         game: game);
+                         game: game, instruction: instruction);
 
     public Task<AiTestResult> TestAiKeyAsync(AiProvider provider, string key, string model) => AiTranslator.TestAsync(provider, key, model);
 
     // Yerel model: önbellekte sunucu ve model ayrı tutulur ("local:localhost:11434/qwen2.5:7b").
-    public ITextTranslator? MakeLocalAiTranslator(LocalAiServer server, string key, ITextTranslator? fallback, Func<string?>? game) =>
+    public ITextTranslator? MakeLocalAiTranslator(LocalAiServer server, string key, ITextTranslator? fallback, Func<string?>? game,
+                                                  string? instruction = null) =>
         new AiTranslator(AiProvider.Local, key, server.Model, fallback, cache: TranslationCache.Shared(AppPaths.Translations, server.EngineId, "en", "tr"),
-                         server: server, game: game);
+                         server: server, game: game, instruction: instruction);
 
     public Task<AiTestResult> TestLocalAiAsync(LocalAiServer server, string key) =>
         AiTranslator.TestAsync(AiProvider.Local, key, server.Model, server: server);

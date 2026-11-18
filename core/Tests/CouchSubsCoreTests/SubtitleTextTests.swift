@@ -95,5 +95,11 @@ final class SubtitleSegmenterTests: XCTestCase {
         let names = SpeakerNames()
         names.learn(from: SubtitleSegmenter.split("OLD MAN: Hello.\nFreya: Hi."))
         XCTAssertEqual(names.all, ["OLD", "MAN", "Freya"])
+        // Görev ve tür sözcükleri korunmaz; tümü büyük harfli ad cümle düzeninde beklenir (#287).
+        XCTAssertEqual(names.protected, ["Freya"])
+        names.learn(from: SubtitleSegmenter.split("CAPTAIN PRICE: Go.\nGhost: Yes.\nRADIO: Copy."))
+        XCTAssertEqual(names.protected, ["Freya", "Price", "Ghost"])
+        XCTAssertEqual(SpeakerNames.occurring(names.protected, in: "Ghost, ghostly ghost. Price!", exact: true), ["Ghost", "Price"])
+        XCTAssertEqual(SpeakerNames.occurring(["Ghost"], in: "a ghostly ghost", exact: true), [])
     }
 }

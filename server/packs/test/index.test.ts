@@ -123,6 +123,16 @@ describe("GET /v1/packs/:id", () => {
   });
 });
 
+it("only charges successful pack downloads against the hourly limit", async () => {
+  const rate = new RateLimiter(1, 60_000);
+  const now = 1_000_000;
+  expect((await handle(get("/v1/packs/missing"), env(), rate, now)).status).toBe(404);
+  expect((await handle(get("/v1/packs/gta-v", { "if-none-match": '"etag-1"' }), env(), rate, now)).status).toBe(304);
+  expect((await handle(get("/v1/packs/gta-v"), env(), rate, now)).status).toBe(200);
+  expect((await handle(get("/v1/packs/gta-v", { "if-none-match": '"etag-1"' }), env(), rate, now)).status).toBe(304);
+  expect((await handle(get("/v1/packs/gta-v"), env(), rate, now)).status).toBe(429);
+});
+
 describe("RateLimiter", () => {
   it("defaults to a generous hourly limit", () => {
     const rate = new RateLimiter();

@@ -59,6 +59,8 @@ public sealed class RegionWatcher
 
     /// <summary>Oyun paketi: satırın hazır Türkçesi (ana altyazıyla aynı arama).</summary>
     public Func<string, PackMatch?>? PackLookup { get; set; }
+    /// <summary>Hedef dil Türkçe: yüksek güvenle Türkçe olan parça çevrilmez, aslı sayılır (#289).</summary>
+    public bool SkipsTurkish { get; set; } = true;
     public Action<string>? Log { get; set; }
     /// <summary>Her okumanın süresi (ms; ölçüm için).</summary>
     public Action<long>? ReadMeasured { get; set; }
@@ -212,6 +214,9 @@ public sealed class RegionWatcher
         }
         string?[] result = [.. candidate.Paragraphs.Select(paragraph => PackLookup?.Invoke(paragraph)?.Text)];
         var fromPack = result.Count(text => text is not null);
+        // Zaten Türkçe olan parça çevrilmez: aslı kalır, tümü öyleyse kutu gösterilmez.
+        for (var i = 0; i < result.Length; i++)
+            if (result[i] is null && SkipsTurkish && TurkishText.IsSure(candidate.Paragraphs[i])) result[i] = candidate.Paragraphs[i];
         try
         {
             var missing = Enumerable.Range(0, result.Length).Where(i => result[i] is null).ToList();

@@ -15,6 +15,9 @@ public class AiTranslatorTests
 {
     private const string Secret = "sk-SECRET-123";
 
+    // Eski Ollama'nın reddettiği düşünme alanı oturum boyunca hatırlanır; her test temiz başlar.
+    public AiTranslatorTests() => AiTranslator.ResetThinkingRejected();
+
     private static AiTranslator WithGame(FakeAi fake, TranslationCache cache, Func<string?> game) =>
         new(AiProvider.OpenAi, Secret, null, new FakeLocal(), new HttpClient(fake), cache,
             new RequestBudget(1000), game: game);
@@ -313,6 +316,24 @@ public class AiTranslatorTests
 
     // --- İstek ---
 
+    /// <summary>
+    /// #287: konuşan etiketinden öğrenilen ad, sonraki cümlede geçince istemde "çevirme" diye adıyla söylenir; görev
+    /// sözcükleri ("Soldier") ve küçük harfle geçen sözcük ("ghostly", "price") söylenmez.
+    /// </summary>
+    [Fact]
+    public async Task LearnedSpeakerNamesAreNamedInThePrompt()
+    {
+        var fake = new FakeAi();
+        var translator = Make(AiProvider.Gemini, fake);
+        await translator.TranslateAsync("PRICE: Move.");
+        Assert.DoesNotContain("Character names", User(fake, 0));
+        await translator.TranslateAsync("SOLDIER: Price, get down!");
+        Assert.Contains("Character names (keep them exactly as written, do not translate them): Price\n", User(fake, 1));
+        Assert.DoesNotContain("Soldier", User(fake, 1));
+        await translator.TranslateAsync("It looks ghostly, price is high.");
+        Assert.DoesNotContain("Character names", User(fake, 2));
+    }
+
     [Fact]
     public async Task GeminiRequest()
     {
@@ -447,13 +468,20 @@ public class AiTranslatorTests
         var fake = new FakeAi();
         Assert.Equal("KRATOS: [tr] We go now.", await MakeLocal(fake).TranslateAsync("KRATOS: We go now."));
         var (request, body) = fake.Requests[0];
-        Assert.Equal("http://localhost:11434/v1/chat/completions", request.RequestUri!.AbsoluteUri);
+        Assert.Equal("http://127.0.0.1:11434/v1/chat/completions", request.RequestUri!.AbsoluteUri);
         Assert.Equal(HttpMethod.Post, request.Method);
         Assert.Equal("application/json", request.Content!.Headers.ContentType!.MediaType);
         // Anahtar boşsa Authorization başlığı hiç gitmez.
         Assert.Null(request.Headers.Authorization);
         var json = JsonNode.Parse(body)!.AsObject();
-        Assert.Equal(["max_tokens", "messages", "model", "stream", "temperature"], json.Select(p => p.Key).Order());
+        // Ollama'da düşünme kapalı (#295).
+        Assert.False(json["think"]!.GetValue<bool>());
+        Assert.Equal("none", json["reasoning_effort"]!.GetValue<string>());
+        Assert.Equal(["keep_alive", "max_tokens", "messages", "model", "reasoning_effort", "stream", "temperature", "think"], json.Select(p => p.Key).Order());
+        // Model bellekte kalır; uzun sessizlikten sonra ilk satır yükleme beklemez (#306).
+        Assert.Equal("24h", json["keep_alive"]!.GetValue<string>());
+        // Aynı satır her seferinde aynı çevrilsin (#306).
+        Assert.Equal(0, json["temperature"]!.GetValue<double>());
         Assert.Equal("qwen2.5:7b", json["model"]!.GetValue<string>());
         Assert.Equal(AiRequest.LocalTemperature, json["temperature"]!.GetValue<double>());
         Assert.Equal(AiRequest.MaxOutputTokens, json["max_tokens"]!.GetValue<int>());
@@ -471,9 +499,115 @@ public class AiTranslatorTests
         var fake = new FakeAi();
         await MakeLocal(fake, LocalAiServer.LmStudioUrl, "qwen2.5-7b-instruct", " lm-key ").TranslateAsync("Run!");
         var (request, body) = fake.Requests[0];
-        Assert.Equal("http://localhost:1234/v1/chat/completions", request.RequestUri!.AbsoluteUri);
+        Assert.Equal("http://127.0.0.1:1234/v1/chat/completions", request.RequestUri!.AbsoluteUri);
         Assert.Equal("Bearer lm-key", Assert.Single(request.Headers.GetValues("Authorization")));
-        Assert.Equal("qwen2.5-7b-instruct", JsonNode.Parse(body)!["model"]!.GetValue<string>());
+        var json = JsonNode.Parse(body)!.AsObject();
+        Assert.Equal("qwen2.5-7b-instruct", json["model"]!.GetValue<string>());
+        // Düşünme alanları ve keep_alive yalnız Ollama'ya gider.
+        Assert.False(json.ContainsKey("think"));
+        Assert.False(json.ContainsKey("reasoning_effort"));
+        Assert.False(json.ContainsKey("keep_alive"));
+        Assert.Equal(0, json["temperature"]!.GetValue<double>());
+    }
+
+    /// <summary>Ek talimat (#306) bütün yapay zekâ hizmetlerinde sistem talimatının sonuna eklenir; boşsa hiçbir şey değişmez.</summary>
+    [Theory]
+    [InlineData(AiProvider.Gemini)]
+    [InlineData(AiProvider.OpenAi)]
+    [InlineData(AiProvider.Claude)]
+    [InlineData(AiProvider.Local)]
+    public void InstructionIsAppendedToSystemPrompt(AiProvider provider)
+    {
+        static string System(AiProvider provider, string? instruction)
+        {
+            var request = AiRequest.Build(provider, "k", provider.DefaultModel(), ["Run!"], [], instruction: instruction);
+            var json = JsonNode.Parse(request.Content!.ReadAsStringAsync().Result)!;
+            return provider switch
+            {
+                AiProvider.Gemini => json["systemInstruction"]!["parts"]![0]!["text"]!.GetValue<string>(),
+                AiProvider.Claude => json["system"]!.GetValue<string>(),
+                _ => json["messages"]![0]!["content"]!.GetValue<string>(),
+            };
+        }
+        Assert.Equal(AiRequest.SystemPrompt, System(provider, null));
+        Assert.Equal(AiRequest.SystemPrompt, System(provider, "   \n "));
+        Assert.Equal(AiRequest.SystemPrompt + "\n\nTranslate swear words without softening them.",
+                     System(provider, "  Translate swear words without softening them.\n"));
+    }
+
+    [Fact]
+    public void InstructionIsLimited()
+    {
+        Assert.Null(AiRequest.Instruction(null));
+        Assert.Null(AiRequest.Instruction("  "));
+        Assert.Equal(AiRequest.MaxInstructionLength, AiRequest.Instruction(new string('a', 5000))!.Length);
+        Assert.Null(AiRequest.InstructionTag(""));
+        Assert.Equal(AiRequest.InstructionTag("Be blunt."), AiRequest.InstructionTag(" Be blunt. "));
+        Assert.NotEqual(AiRequest.InstructionTag("Be blunt."), AiRequest.InstructionTag("Be polite."));
+    }
+
+    /// <summary>Talimat değişince önbellekteki eski çeviri dönmez; talimat yoksa eski kayıtlar geçerli kalır.</summary>
+    [Fact]
+    public async Task InstructionSeparatesCache()
+    {
+        var cache = new TranslationCache();
+        var fake = new FakeAi();
+        AiTranslator Make(string? instruction) => new(AiProvider.OpenAi, Secret, null, new FakeLocal(), new HttpClient(fake), cache,
+                                                      new RequestBudget(1000), instruction: instruction);
+        await Make(null).TranslateAsync("Run!");
+        Assert.Single(fake.Requests);
+        await Make("").TranslateAsync("Run!");
+        Assert.Single(fake.Requests);
+        await Make("Be blunt.").TranslateAsync("Run!");
+        Assert.Equal(2, fake.Requests.Count);
+        Assert.EndsWith("\n\nBe blunt.", JsonNode.Parse(fake.Requests[1].Body)!["messages"]![0]!["content"]!.GetValue<string>());
+        await Make("Be blunt.").TranslateAsync("Run!");
+        Assert.Equal(2, fake.Requests.Count);
+        await Make("Be polite.").TranslateAsync("Run!");
+        Assert.Equal(3, fake.Requests.Count);
+    }
+
+    /// <summary>Ayarlarda elle yazılmış "localhost" istekte 127.0.0.1 olur (Windows'ta IPv6 gecikmesi, #295); başka adrese dokunulmaz.</summary>
+    [Theory]
+    [InlineData("http://localhost:11434/v1", "http://127.0.0.1:11434/v1/chat/completions")]
+    [InlineData("LOCALHOST:11434", "http://127.0.0.1:11434/v1/chat/completions")]
+    [InlineData("https://localhost:8443/api/v1", "https://127.0.0.1:8443/api/v1/chat/completions")]
+    [InlineData("http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions")]
+    [InlineData("http://192.168.1.20:11434/v1", "http://192.168.1.20:11434/v1/chat/completions")]
+    [InlineData("http://localhost.example.com:11434/v1", "http://localhost.example.com:11434/v1/chat/completions")]
+    [InlineData("http://[::1]:11434/v1", "http://[::1]:11434/v1/chat/completions")]
+    public void LocalhostIsSentAsIPv4(string text, string expected) =>
+        Assert.Equal(expected, LocalAiServer.Create(text, "m")!.ChatUrl.AbsoluteUri);
+
+    [Fact]
+    public void LocalhostDefaultAndShownAddress()
+    {
+        Assert.Equal("http://127.0.0.1:11434/v1", LocalAiServer.OllamaUrl);
+        // Kullanıcıya gösterilen adres yazdığı gibi kalır.
+        Assert.Equal("http://localhost:11434", LocalAiServer.Create("localhost:11434", "m")!.Address);
+    }
+
+    /// <summary>Eski Ollama düşünmeyi kapatan alanı 400 ile reddederse alansız yeniden denenir; sonraki isteklerde hiç gönderilmez.</summary>
+    [Fact]
+    public async Task OldOllamaRejectingThinkFieldFallsBack()
+    {
+        var fake = new FakeAi((request, body) => body.Contains("\"reasoning_effort\"", StringComparison.Ordinal)
+            ? new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent("""{"error":{"message":"invalid reasoning value: \"none\" (must be \"high\", \"medium\", or \"low\")"}}"""),
+            }
+            : Echo(request, body));
+        var translator = MakeLocal(fake);
+        Assert.Equal("[tr] Run!", await translator.TranslateAsync("Run!"));
+        Assert.Null(translator.LastError);
+        Assert.Equal(2, fake.Requests.Count);
+        Assert.False(JsonNode.Parse(fake.Requests[0].Body)!["think"]!.GetValue<bool>());
+        Assert.False(JsonNode.Parse(fake.Requests[1].Body)!.AsObject().ContainsKey("think"));
+        Assert.False(JsonNode.Parse(fake.Requests[1].Body)!.AsObject().ContainsKey("reasoning_effort"));
+        // Oturum boyunca hatırlanır: yeni çevirmen de alanı göndermez, tek istek gider.
+        await MakeLocal(fake).TranslateAsync("Hide!");
+        Assert.Equal(3, fake.Requests.Count);
+        Assert.False(JsonNode.Parse(fake.Requests[2].Body)!.AsObject().ContainsKey("think"));
     }
 
     /// <summary>Kullanıcının yazdığı adres düzeltilir: şema, "/v1", sondaki "/" ve yapıştırılmış "/chat/completions".</summary>
@@ -512,8 +646,10 @@ public class AiTranslatorTests
     public void LocalEngineIdIncludesServerAndModel()
     {
         var ollama = LocalAiServer.Create(LocalAiServer.OllamaUrl, "qwen2.5:7b")!;
-        Assert.Equal("local:localhost:11434/qwen2.5:7b", ollama.EngineId);
-        Assert.Equal(ollama.EngineId, LocalAiServer.Create("http://LOCALHOST:11434/v1/", "qwen2.5:7b")!.EngineId);
+        Assert.Equal("local:127.0.0.1:11434/qwen2.5:7b", ollama.EngineId);
+        var named = LocalAiServer.Create("http://localhost:11434/v1", "qwen2.5:7b")!;
+        Assert.Equal("local:localhost:11434/qwen2.5:7b", named.EngineId);
+        Assert.Equal(named.EngineId, LocalAiServer.Create("http://LOCALHOST:11434/v1/", "qwen2.5:7b")!.EngineId);
         Assert.NotEqual(ollama.EngineId, LocalAiServer.Create(LocalAiServer.OllamaUrl, "qwen2.5:14b")!.EngineId);
         Assert.NotEqual(ollama.EngineId, LocalAiServer.Create(LocalAiServer.LmStudioUrl, "qwen2.5:7b")!.EngineId);
         Assert.NotEqual(ollama.EngineId, LocalAiServer.Create("http://192.168.1.20:11434/v1", "qwen2.5:7b")!.EngineId);
@@ -1066,26 +1202,16 @@ public class AiTranslatorTests
 
     /// <summary>
     /// Bildirilen hata (Gemini seçiliyken "Ekranı çevir" hiçbir şey göstermiyordu): parça başına istek gidince 20 satırlık
-    /// ekran dakikada 15 isteklik hakkı bitirir; kalan parçalar yerel çeviriye düşer, o kurulu değilse bütün ekran hata
-    /// verir. Canlı altyazı hakkı zaten bitirdiyse ilk parçada düşer, TV'ye tek çeviri gitmez.
+    /// ekran dakikada 15 isteklik hakkı bitiriyor, yerel çeviri kurulu değilse bütün ekran hata veriyordu. Yerel çeviri
+    /// yokken hak artık satırı düşürmez; istek yine gönderilir (429 gelirse hizmetin beklemesi uygulanır).
     /// </summary>
     [Fact]
-    public async Task ScreenOneRequestPerParagraphRunsOutOfTheGeminiBudget()
+    public async Task ScreenOneRequestPerParagraphWithoutLocalStillSendsEveryParagraph()
     {
         var fake = new FakeAi();
         var translator = MakeWithoutFallback(AiProvider.Gemini, fake, new RequestBudget(15));
-        var shown = 0;
-        var error = await Assert.ThrowsAsync<TranslatorException>(async () =>
-        {
-            foreach (var text in ScreenTexts)
-            {
-                await translator.TranslateAsync(text);
-                shown++;
-            }
-        });
-        Assert.Equal(TranslatorStatus.NeedsDownload, error.Status);
-        Assert.Equal(15, fake.Requests.Count);
-        Assert.Equal(15, shown);
+        foreach (var text in ScreenTexts) Assert.Equal("[tr] " + text, await translator.TranslateAsync(text));
+        Assert.Equal(ScreenTexts.Length, fake.Requests.Count);
     }
 
     /// <summary>Düzeltme: ekranın bütün parçaları tek istekte gider ve hepsi çevrilir; canlı altyazı dakikalık hakkı bitirmiş olsa da.</summary>
@@ -1142,5 +1268,65 @@ public class AiTranslatorTests
     {
         var fake = new FakeAi((request, _) => Wrap(request, """["[tr] bir"]"""));
         Assert.Equal(new[] { "yerel: One thing", "yerel: Another thing" }, await Make(AiProvider.OpenAi, fake).TranslateAllAsync(["One thing", "Another thing"]));
+    }
+
+    // --- Yerel çeviri yokken ---
+
+    private static AiTranslator WithoutLocal(FakeAi fake, RequestBudget budget) =>
+        new(AiProvider.Gemini, Secret, null, null, new HttpClient(fake), budget: budget);
+
+    /// <summary>
+    /// Dakikalık hak uygulamanın temkinli tahminidir. Yerel çeviri yokken (inmemiş) hak bitince satır denenmeden düşüyordu;
+    /// ara sahnede satırların yarısı hiç çevrilmiyordu. İstek yine gönderilmeli.
+    /// </summary>
+    [Fact]
+    public async Task OverBudgetWithoutLocalStillSendsRequest()
+    {
+        var fake = new FakeAi();
+        var translator = WithoutLocal(fake, new RequestBudget(1));
+        Assert.Equal("[tr] Run!", await translator.TranslateAsync("Run!"));
+        Assert.Equal("[tr] Hide!", await translator.TranslateAsync("Hide!"));
+        Assert.Equal(2, fake.Requests.Count);
+        Assert.False(translator.LastLineWasRateLimited);
+    }
+
+    /// <summary>Yerel çeviri hata verirse de (motor açılamadı) hak bitince istek gönderilir.</summary>
+    [Fact]
+    public async Task OverBudgetWithFailingLocalStillSendsRequest()
+    {
+        var fake = new FakeAi();
+        var translator = new AiTranslator(AiProvider.Gemini, Secret, null, new FailingLocal(), new HttpClient(fake), budget: new RequestBudget(1));
+        Assert.Equal("[tr] Run!", await translator.TranslateAsync("Run!"));
+        Assert.Equal("[tr] Hide!", await translator.TranslateAsync("Hide!"));
+        Assert.Equal(2, fake.Requests.Count);
+    }
+
+    /// <summary>Hata sonrası bir dakikalık beklemede yerel çeviri yoksa hizmet yine denenir; satır düşmez.</summary>
+    [Fact]
+    public async Task ErrorPauseWithoutLocalStillTriesService()
+    {
+        var calls = 0;
+        var fake = new FakeAi((request, body) => ++calls == 1 ? throw new HttpRequestException("down") : Echo(request, body));
+        var translator = WithoutLocal(fake, new RequestBudget(1000));
+        await Assert.ThrowsAsync<TranslatorException>(() => translator.TranslateAsync("Run!"));
+        Assert.Equal("[tr] Hide!", await translator.TranslateAsync("Hide!"));
+        Assert.Equal(2, fake.Requests.Count);
+    }
+
+    /// <summary>Hizmetin dakikalık 429'undan sonraki kısa bekleme yerel çeviri olmasa da korunur.</summary>
+    [Fact]
+    public async Task PerMinuteRateLimitPauseHoldsWithoutLocal()
+    {
+        var fake = new FakeAi((_, _) => Json(RateLimitBody(PerMinute), HttpStatusCode.TooManyRequests));
+        var translator = WithoutLocal(fake, new RequestBudget(1000));
+        await Assert.ThrowsAsync<TranslatorException>(() => translator.TranslateAsync("Run!"));
+        await Assert.ThrowsAsync<TranslatorException>(() => translator.TranslateAsync("Hide!"));
+        Assert.Single(fake.Requests);
+    }
+
+    private sealed class FailingLocal : ITextTranslator
+    {
+        public Task<string> TranslateAsync(string text, CancellationToken cancellationToken = default) =>
+            throw new TranslatorException(TranslatorStatus.EngineFailed);
     }
 }

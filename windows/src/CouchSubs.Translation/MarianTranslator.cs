@@ -28,6 +28,8 @@ public sealed class MarianTranslator : ITextTranslator, IDisposable
     private readonly RecentLines _recent;
     /// <summary>Konuşmacı etiketlerinden öğrenilen adlar (küçük harfle); cümle içinde de büyük harfle kalırlar.</summary>
     private readonly ConcurrentDictionary<string, byte> _names = new(StringComparer.Ordinal);
+    /// <summary>Cümle içinde çeviriden korunan konuşan adları (#287).</summary>
+    private readonly SpeakerNameGuard _speakers = new();
     /// <summary>Altyazı → seslendirilecek cümleler (dublaj).</summary>
     private readonly ConcurrentDictionary<string, IReadOnlyList<SpokenLine>> _speech = new(StringComparer.Ordinal);
     // Model tek seferde bir cümle çevirir: paralel çalıştırmak çekirdekleri paylaştırıp her satırı yavaşlatır.
@@ -89,6 +91,14 @@ public sealed class MarianTranslator : ITextTranslator, IDisposable
         }
     }
 
+    /// <summary>Konuşan adını öğrenir ("OLD MAN" → "old", "man"); korunacak adlar ayrıca (#287).</summary>
+    public void NoteSpeaker(string name)
+    {
+        foreach (var word in name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(w => w.Length >= 2))
+            _names[word.ToLowerInvariant()] = 0;
+        _speakers.Learn(name);
+    }
+
     public async Task<string> TranslateAsync(string text, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(text);
@@ -96,9 +106,7 @@ public sealed class MarianTranslator : ITextTranslator, IDisposable
         var previousLine = _recent.Shown(text);
         var pieces = SubtitleSegmenter.Split(text);
         // "OLD MAN: " → "old", "man": çok sözcüklü adın her sözcüğü ayrıca tanınır.
-        foreach (var name in pieces.Select(SubtitleSegmenter.LabelName).OfType<string>())
-            foreach (var word in name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(w => w.Length >= 2))
-                _names[word.ToLowerInvariant()] = 0;
+        foreach (var name in pieces.Select(SubtitleSegmenter.LabelName).OfType<string>()) NoteSpeaker(name);
         var previous = previousLine is null ? null : LastSentence(previousLine);
         var translations = new List<string?>(pieces.Count);
         foreach (var piece in pieces)
@@ -134,7 +142,8 @@ public sealed class MarianTranslator : ITextTranslator, IDisposable
 
     private async Task<string> TranslateSentenceAsync(string sentence, string? context, CancellationToken cancellationToken)
     {
-        var glossary = _glossary.Current;
+        // Konuşan etiketlerinden öğrenilen adlar cümle içinde de korunur ("Price, get down!"; #287).
+        var glossary = _glossary.Current.KeepingNames(_speakers.Protected, context is null ? sentence : context + "\n" + sentence);
         var key = FreeTranslation.CacheKey(sentence, context, glossary);
         if (_cache.TryGet(key, out var known)) return known;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);

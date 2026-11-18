@@ -52,7 +52,7 @@ object PoolFilter {
     private val turkishShared = setOf('ü', 'Ü', 'ö', 'Ö', 'ç', 'Ç')
 
     /** PS5'in Türkçe arayüzünde sık geçen, İngilizcede olmayan sözcükler ("ile" yok: katlanınca İngilizce "lie" olur). */
-    private val turkishWords = listOf(
+    internal val turkishWords = listOf(
         "icin", "lutfen", "bekleyin", "oyunu", "oyun", "oyunlar", "kapat", "ekran", "ekranda", "ekrani", "sistemini",
         "yeniden", "baslat", "ayarlar", "ayarlari", "kupalar", "kupa", "oturum", "acti", "kapatti", "secenekleri",
         "sifirlama", "tut", "kesfet", "ilgili", "takip", "edin", "ilerlemenizi", "cikanlar", "goruntusu", "kaydedildi",

@@ -432,6 +432,37 @@ final class FreeLineTranslatorTests: XCTestCase {
         XCTAssertEqual(engine.calls, ["Zarmon, throw the Velkor!"])
     }
 
+    /// #287: "PRICE:" etiketinden öğrenilen ad sonraki cümlelerin içinde de çeviriden korunur ("Fiyat" olmasın); küçük
+    /// harfle geçen ya da sözcüğün parçası olan "price"/"Pricey" korunmaz, görev etiketleri ("SOLDIER:") ad sayılmaz.
+    func testLearnedSpeakerNameIsKeptInsideSentences() async throws {
+        let engine = Engine {
+            switch $0 {
+            case "Move.": "Hareket et."
+            case "Zarmon, get down right now!": "Zarmon, hemen yere yat!"
+            case "The price is Pricey.": "Fiyat pahalı."
+            case "Soldier, get down right now!": "Asker, hemen yere yat!"
+            default: "?"
+            }
+        }
+        let translator = FreeLineTranslator()
+        _ = try await translator.translate("PRICE: Move.") { engine.run($0) }
+        let result = try await translator.translate("Price, get down right now!") { engine.run($0) }
+        XCTAssertEqual(result, "Price, hemen yere yat!")
+        let common = try await translator.translate("The price is Pricey.") { engine.run($0) }
+        XCTAssertEqual(common, "Fiyat pahalı.")
+        _ = try await translator.translate("SOLDIER: Move.") { engine.run($0) }
+        let role = try await translator.translate("Soldier, get down right now!") { engine.run($0) }
+        XCTAssertEqual(role, "Asker, hemen yere yat!")
+        XCTAssertEqual(engine.calls, ["Move.", "Zarmon, get down right now!", "The price is Pricey.",
+            "The price is Pricey. *** Move.", "Move.", "Soldier, get down right now!"])
+
+        // Hat satır başındaki adı ayırıp yalnız cümleyi verir ("Price: Get down right now!"); ad ayrıca bildirilir.
+        let separated = FreeLineTranslator()
+        separated.noteSpeaker("Price")
+        let noted = try await separated.translate("Price, get down right now!") { engine.run($0) }
+        XCTAssertEqual(noted, "Price, hemen yere yat!")
+    }
+
     func testInformalLineGetsInformalImperatives() async throws {
         let engine = Engine {
             switch $0 {

@@ -115,8 +115,9 @@ public class MarianTranslatorTests
         var (translator, engine) = Create();
 
         await translator.TranslateAsync("ATREUS: Father, look!");
-        await translator.TranslateAsync("THE GATE WILL NOT HOLD, ATREUS.");
-        Assert.Equal("The gate will not hold, Atreus.", engine.Calls[^1]);
+        // Ad cümle düzeninde büyük harfle kalır ve çeviriden korunur: modele yer tutucuyla gider, çeviride geri konur (#287).
+        Assert.EndsWith("Atreus.", await translator.TranslateAsync("THE GATE WILL NOT HOLD, ATREUS."));
+        Assert.Equal("The gate will not hold, Zarmon.", engine.Calls[^1]);
     }
 
     /// <summary>Önceki oturumda çevrilen satır model çalışmadan döner; seslendirme cümleleri de konuşmacısıyla kurulur.</summary>
@@ -157,6 +158,40 @@ public class MarianTranslatorTests
         var (translator, engine) = Create();
         Assert.Equal(expected, await translator.TranslateAsync(source));
         Assert.Equal([sent], engine.Calls);
+    }
+
+    /// <summary>
+    /// #287 (Mac: FreeLineTranslatorTests.testLearnedSpeakerNameIsKeptInsideSentences): "PRICE:" etiketinden öğrenilen ad
+    /// sonraki cümlelerin içinde de çeviriden korunur ("Fiyat" olmasın); küçük harfle geçen ya da sözcüğün parçası olan
+    /// "price"/"Pricey" korunmaz, görev etiketleri ("SOLDIER:") ad sayılmaz.
+    /// </summary>
+    [Fact]
+    public async Task LearnedSpeakerNameIsKeptInsideSentences()
+    {
+        var engine = new FakeEngine
+        {
+            Map = input => input switch
+            {
+                "Move." => "Hareket et.",
+                "Zarmon, get down right now!" => "Zarmon, hemen yere yat!",
+                "The price is Pricey." => "Fiyat pahalı.",
+                "Soldier, get down right now!" => "Asker, hemen yere yat!",
+                _ => "?",
+            },
+        };
+        using var translator = new MarianTranslator(() => engine, () => true);
+        await translator.TranslateAsync("PRICE: Move.");
+        Assert.Equal("Price, hemen yere yat!", await translator.TranslateAsync("Price, get down right now!"));
+        Assert.Equal("Fiyat pahalı.", await translator.TranslateAsync("The price is Pricey."));
+        await translator.TranslateAsync("SOLDIER: Move.");
+        Assert.Equal("Asker, hemen yere yat!", await translator.TranslateAsync("Soldier, get down right now!"));
+        Assert.Equal(["Move.", "Zarmon, get down right now!", "The price is Pricey.",
+            "The price is Pricey. *** Move.", "Move.", "Soldier, get down right now!"], engine.Calls);
+
+        // Hat satır başındaki adı ayırıp yalnız cümleyi verir ("Price: Get down right now!"); ad ayrıca bildirilir.
+        using var separated = new MarianTranslator(() => engine, () => true);
+        separated.NoteSpeaker("Price");
+        Assert.Equal("Price, hemen yere yat!", await separated.TranslateAsync("Price, get down right now!"));
     }
 
     [Fact]

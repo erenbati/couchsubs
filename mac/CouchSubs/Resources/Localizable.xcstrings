@@ -1,6 +1,9 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Extra instruction": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Extra instruction"}},"tr":{"stringUnit":{"state":"translated","value":"Ek talimat"}}}},
+    "Example: Translate swear words without softening them.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Example: Translate swear words without softening them."}},"tr":{"stringUnit":{"state":"translated","value":"Örn: Küfürleri yumuşatmadan çevir."}}}},
+    "Added to the end of the AI translator's instructions (up to 1000 characters). Leave it empty if you don't need it.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Added to the end of the AI translator's instructions (up to 1000 characters). Leave it empty if you don't need it."}},"tr":{"stringUnit":{"state":"translated","value":"Yapay zekâ çevirmeninin talimatının sonuna eklenir (en çok 1000 karakter). Gerekmiyorsa boş bırakın."}}}},
     "%@ or %@": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"%@ or %@"}},"tr":{"stringUnit":{"state":"translated","value":"%@ ya da %@"}}}},
     "no shortcut": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"no shortcut"}},"tr":{"stringUnit":{"state":"translated","value":"kısayol yok"}}}},
     "Translate the screen (%@)": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Translate the screen (%@)"}},"tr":{"stringUnit":{"state":"translated","value":"Ekranı çevir (%@)"}}}},
@@ -32,6 +35,7 @@
     "Ctrl+Alt is AltGr on many keyboards and would block characters like # and {. Use Ctrl+Shift instead.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Ctrl+Alt is AltGr on many keyboards and would block characters like # and {. Use Ctrl+Shift instead."}},"tr":{"stringUnit":{"state":"translated","value":"Ctrl+Alt birçok klavyede AltGr'dir; # ve { gibi karakterleri engeller. Bunun yerine Ctrl+Shift kullanın."}}}},
     "Windows already uses this shortcut.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Windows already uses this shortcut."}},"tr":{"stringUnit":{"state":"translated","value":"Bu kısayolu Windows kullanıyor."}}}},
     "This key can't be a shortcut.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"This key can't be a shortcut."}},"tr":{"stringUnit":{"state":"translated","value":"Bu tuş kısayol olamaz."}}}},
+    "When you turn on the controller to play, choose your MAIN account on the PS5. Don't play with the second account CouchSubs signs in with, or the controller won't work in the game.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "When you turn on the controller to play, choose your MAIN account on the PS5. Don't play with the second account CouchSubs signs in with, or the controller won't work in the game."}}, "tr": {"stringUnit": {"state": "translated", "value": "Oynarken kolu açınca PS5'te ANA hesabınızı seçin. CouchSubs'ın giriş yaptığı ikinci hesapla oynamayın, yoksa kol oyunda çalışmaz."}}}},
     "Tap the button to get a code. The Microsoft sign-in page doesn't open inside the app: you enter the code at microsoft.com/link in your browser.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Tap the button to get a code. The Microsoft sign-in page doesn't open inside the app: you enter the code at microsoft.com/link in your browser."}}, "tr": {"stringUnit": {"state": "translated", "value": "Düğmeye basınca bir kod alırsınız. Microsoft giriş sayfası uygulamada açılmaz: kodu tarayıcıda microsoft.com/link sayfasına yazarsınız."}}}},
     "Your code (tap to copy):": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Your code (tap to copy):"}}, "tr": {"stringUnit": {"state": "translated", "value": "Kodunuz (dokunursanız kopyalanır):"}}}},
     "Copy the code": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Copy the code"}}, "tr": {"stringUnit": {"state": "translated", "value": "Kodu kopyala"}}}},
@@ -61,6 +65,8 @@
     "When the subtitle area looks unchanged, read it again after 2 frames instead of 20. Uses more CPU.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "When the subtitle area looks unchanged, read it again after 2 frames instead of 20. Uses more CPU."}}, "tr": {"stringUnit": {"state": "translated", "value": "Altyazı alanı değişmemiş görünüyorsa 20 yerine 2 kare sonra yeniden oku. Daha fazla CPU kullanır."}}}},
     "Restore the old Xbox frame rate": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Restore the old Xbox frame rate"}}, "tr": {"stringUnit": {"state": "translated", "value": "Xbox kare hızlandırmasını eskiye döndür"}}}},
     "On: read an Xbox frame every 200 ms to use less CPU. Off (default): every 66 ms for faster subtitles.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "On: read an Xbox frame every 200 ms to use less CPU. Off (default): every 66 ms for faster subtitles."}}, "tr": {"stringUnit": {"state": "translated", "value": "Açık: Xbox karesini 200 ms'de bir okuyarak CPU kullanımını azaltır. Kapalı (varsayılan): daha hızlı altyazı için 66 ms'de bir okur."}}}},
+    "Play Xbox sound on this computer": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Play Xbox sound on this computer"}}, "tr": {"stringUnit": {"state": "translated", "value": "Xbox sesini bu bilgisayarda çal"}}}},
+    "Xbox Remote Play can silence the TV while a stream is active. When on, game sound plays on this computer.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Xbox Remote Play can silence the TV while a stream is active. When on, game sound plays on this computer."}}, "tr": {"stringUnit": {"state": "translated", "value": "Xbox Uzaktan Oynatma sırasında TV'nin sesi kapanabilir. Açıkken oyun sesi bu bilgisayarda çalınır."}}}},
     "CPU works on every computer. GPU needs a compatible NVIDIA card; the first time you choose it, CouchSubs downloads about 565 MB of CUDA files from NVIDIA (about 790 MB on disk). If unavailable, CouchSubs uses CPU.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "CPU works on every computer. GPU needs a compatible NVIDIA card; the first time you choose it, CouchSubs downloads about 565 MB of CUDA files from NVIDIA (about 790 MB on disk). If unavailable, CouchSubs uses CPU."}}, "tr": {"stringUnit": {"state": "translated", "value": "CPU her bilgisayarda çalışır. GPU için uyumlu bir NVIDIA kartı gerekir; ilk seçimde NVIDIA'dan yaklaşık 565 MB CUDA dosyası indirilir (diskte yaklaşık 790 MB). Kullanılamazsa CPU'ya geçilir."}}}},
     "GPU could not be used; free translation is running on CPU.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "GPU could not be used; free translation is running on CPU."}}, "tr": {"stringUnit": {"state": "translated", "value": "GPU kullanılamadı; ücretsiz çeviri CPU'da çalışıyor."}}}},
     "Your console": {
@@ -6907,6 +6913,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "Daha kaliteli, biraz daha yavaş"
+          }
+        }
+      }
+    },
+    "Fast (recommended)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fast (recommended)"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hızlı (önerilen)"
+          }
+        }
+      }
+    },
+    "Better quality, slower": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Better quality, slower"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daha kaliteli, daha yavaş"
           }
         }
       }

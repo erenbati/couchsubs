@@ -13,6 +13,9 @@ public protocol TextTranslator {
     func translateAll(_ texts: [String]) async throws -> [String]
     /// `translateAll` hepsini tek istekte çevirir (yapay zekâ); öyleyse ekran çevirisi parça parça istek göndermez.
     var translatesTogether: Bool { get }
+    /// Hat satır başındaki konuşan adını ("PRICE: …") ayırıp çevirmene yalnız cümleyi verir; ad buradan öğrenilir ve
+    /// sonraki cümlelerin içinde geçince çeviriden korunur (#287).
+    func noteSpeaker(_ name: String)
 }
 
 extension TextTranslator {
@@ -28,6 +31,8 @@ extension TextTranslator {
     }
 
     public var translatesTogether: Bool { false }
+
+    public func noteSpeaker(_ name: String) {}
 }
 
 public enum TranslatorError: Error, Equatable {
@@ -83,6 +88,11 @@ public final class Translator: TextTranslator {
         case .supported: .needsDownload
         default: .unsupported
         }
+    }
+
+    public func noteSpeaker(_ name: String) {
+        names.learn(name: name)
+        freeLine?.noteSpeaker(name)
     }
 
     public func translate(_ text: String) async throws -> String {
