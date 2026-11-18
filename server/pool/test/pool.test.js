@@ -404,3 +404,25 @@ test("admin export endpoints reject methods outside their documented routes", as
   assert.equal((await invoke("/v1/export", "GET")).status, 200);
   assert.equal((await invoke("/v1/exported", "POST", { keys: [] })).status, 200);
 });
+
+test("exported endpoint rejects malformed JSON and missing keys rather than reporting success", async () => {
+  const DB = fakeDB();
+  const env = { DB, ADMIN_TOKEN: "t" };
+  for (const body of ["{broken", "null", "{}", '{"keys":null}', '{"keys":"abc"}']) {
+    const writes = DB.writes;
+    const request = new Request("https://pool.test/v1/exported", {
+      method: "POST",
+      headers: { authorization: "Bearer t" },
+      body,
+    });
+    const reply = await worker.fetch(request, env);
+    assert.equal(reply.status, 400, "invalid export payload: " + body);
+    assert.equal(DB.writes, writes, "invalid export must not run an update");
+  }
+  const valid = await worker.fetch(new Request("https://pool.test/v1/exported", {
+    method: "POST", headers: { authorization: "Bearer t" },
+    body: JSON.stringify({ keys: [] }),
+  }), env);
+  assert.equal(valid.status, 200);
+  assert.deepEqual(await valid.json(), { marked: 0 });
+});
