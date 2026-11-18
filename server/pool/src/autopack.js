@@ -223,6 +223,13 @@ async function loadCache(env, job) {
     const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
     if (!record(cache) || !record(cache.lines) || !record(cache.skip)
       || (cache.fail != null && !record(cache.fail))) return null;
+    // A parseable cache with a null line or malformed hash otherwise throws in
+    // packBody/isKnown and stops the remaining nightly scheduler calls.
+    if (!Object.entries(cache.lines).every(([pool, line]) =>
+      /^[0-9a-f]{16}$/.test(pool) && record(line)
+      && typeof line.k === "string" && /^[0-9a-f]{16}$/.test(line.k)
+      && typeof line.en === "string" && line.en.trim().length > 0
+      && typeof line.tr === "string" && line.tr.trim().length > 0)) return null;
     return cache;
   } catch { return null; }
 }

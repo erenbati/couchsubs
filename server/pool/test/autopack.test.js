@@ -169,7 +169,11 @@ test("autopack must not publish an empty pack when an existing translation cache
     queue: [{ titleId: GENERAL, game: null, lines: 350 }],
     translated: 0, done: [],
   };
-  for (const cacheRaw of ["{broken", JSON.stringify({ lines: [], skip: {} }), JSON.stringify({ lines: null, skip: {} })]) {
+  for (const cacheRaw of [
+    "{broken", JSON.stringify({ lines: [], skip: {} }), JSON.stringify({ lines: null, skip: {} }),
+    JSON.stringify({ lines: { "1111111111111111": null }, skip: {} }),
+    JSON.stringify({ lines: { "1111111111111111": { k: "not-a-hash", en: "We must leave now.", tr: "?imdi gitmeliyiz." } }, skip: {} }),
+  ]) {
     const stored = new Map([
       ["auto/state.json", JSON.stringify(state)],
       ["index.json", JSON.stringify({ packs: [{ id: "pool-genel", version: 1 }] })],
