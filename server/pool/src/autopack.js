@@ -276,6 +276,16 @@ async function readIndex(env) {
   const index = await getJson(env, "index.json");
   // Eksik/bozuk indeks, boş bir indeks değildir: aksi halde sonraki paket mevcut listeyi siler.
   if (!Array.isArray(index?.packs)) throw new Error("autopack index unavailable or invalid");
+  // An ambiguous or malformed index makes every client's pack list unavailable.
+  // Never rewrite it or drop entries while trying to publish another pack.
+  const ids = new Set();
+  for (const pack of index.packs) {
+    if (!pack || typeof pack !== "object" || typeof pack.id !== "string"
+      || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(pack.id) || ids.has(pack.id)) {
+      throw new Error("autopack index invalid or duplicate pack ID");
+    }
+    ids.add(pack.id);
+  }
   return index.packs;
 }
 

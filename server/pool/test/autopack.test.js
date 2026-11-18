@@ -135,7 +135,14 @@ test("autopack never replaces an absent or unreadable pack index", async () => {
     })),
     skip: {}, fail: {},
   };
-  for (const rawIndex of [null, "{broken json", JSON.stringify({ packs: null })]) {
+  for (const rawIndex of [
+    null, "{broken json", JSON.stringify({ packs: null }),
+    JSON.stringify({ packs: [
+      { id: "pool-genel", version: 1 },
+      { id: "pool-genel", version: 2 },
+    ] }),
+    JSON.stringify({ packs: [null] }),
+  ]) {
     const state = { night: "2026-11-20", queue: [job], translated: 0, done: [] };
     const stored = new Map([
       ["auto/state.json", JSON.stringify(state)],
