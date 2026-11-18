@@ -6,6 +6,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
 import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
@@ -16,6 +17,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.provider.Settings;
+import android.util.Log;
 import android.view.WindowManager;
 import android.widget.Toast;
 
@@ -30,6 +32,7 @@ import android.widget.Toast;
  * Kapatmak için CouchSubs yeniden açılır.
  */
 public class OverlayService extends Service implements TvPage.Host {
+    private static final String TAG = "CouchSubsOverlay";
     private static final String EXTRA_PARAMS = "params";
     private static final String CHANNEL = "overlay";
     private static final int NOTIFICATION_ID = 1;
@@ -47,10 +50,23 @@ public class OverlayService extends Service implements TvPage.Host {
     private int pendingPort;
     private final Runnable switchInput = () -> switchInput(pendingPort);
 
-    static void start(Context context, String params) {
+    /**
+     * Servisi başlatır; başlatılamadıysa false döner ve çağıran uygulama içinde kalır. Android 12+ arka plandan ön plan
+     * servisi başlatmayı kısıtlar (ForegroundServiceStartNotAllowedException), bazı TV'ler SecurityException atar;
+     * eskiden bu istisna uygulamayı kapatırdı.
+     */
+    static boolean start(Context context, String params) {
         Intent intent = new Intent(context, OverlayService.class).putExtra(EXTRA_PARAMS, params == null ? "" : params);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent);
-        else context.startService(intent);
+        try {
+            ComponentName started = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? context.startForegroundService(intent)
+                    : context.startService(intent);
+            // Servis bu derlemede yoksa (Play paketi) null döner.
+            return started != null;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "overlay service could not start", e);
+            return false;
+        }
     }
 
     static void stop(Context context) {
@@ -59,13 +75,24 @@ public class OverlayService extends Service implements TvPage.Host {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        goForeground();
+        if (!goForeground()) {
+            // TV ön plan servisine izin vermedi: katman açılamaz, uygulama içi moda dönülür ve nedeni söylenir.
+            stopSelf();
+            if (page == null) openApp(DisplayMode.FAILED_FOREGROUND);
+            return START_NOT_STICKY;
+        }
         String params = intent == null ? null : intent.getStringExtra(EXTRA_PARAMS);
         if (page == null) {
-            if (!Settings.canDrawOverlays(this) || !showWindow(params == null ? "" : params)) {
-                // İzin geri alınmış ya da pencere açılamadı: uygulama içi moda dönülür.
+            if (!Settings.canDrawOverlays(this)) {
+                // İzin geri alınmış: uygulama içi moda dönülür, iznin nasıl verileceği gösterilir.
                 stopSelf();
-                openApp();
+                openApp(DisplayMode.FAILED_PERMISSION);
+                return START_NOT_STICKY;
+            }
+            if (!showWindow(params == null ? "" : params)) {
+                // İzin var ama TV katman penceresini açtırmadı (BadTokenException ya da benzeri).
+                stopSelf();
+                openApp(DisplayMode.FAILED_WINDOW);
                 return START_NOT_STICKY;
             }
             running = true;
@@ -102,6 +129,7 @@ public class OverlayService extends Service implements TvPage.Host {
         try {
             windows.addView(page.webView, layout);
         } catch (RuntimeException e) {
+            Log.w(TAG, "overlay window could not be added", e);
             page.destroy();
             page = null;
             return false;
@@ -127,7 +155,11 @@ public class OverlayService extends Service implements TvPage.Host {
         if (page == null) return;
         String id = HdmiInputs.idForPort(this, port);
         if (id == null) {
+            // TV girişlerini uygulamalara açmıyor (#275): girişe biz geçemiyoruz, kullanıcı kumandadan geçer; altyazı
+            // yine görüntünün üstünde çıkar. Eskiden yalnız "kaynak desteklenmiyor" yazıyordu.
+            tunedPort = port;
             page.status("sourceError");
+            Toast.makeText(this, getString(R.string.overlay_choose_input, port), Toast.LENGTH_LONG).show();
             return;
         }
         Intent view = new Intent(Intent.ACTION_VIEW, TvContract.buildChannelUriForPassthroughInput(id))
@@ -152,13 +184,15 @@ public class OverlayService extends Service implements TvPage.Host {
     public void displayModeChanged(String mode) {
         if (!DisplayMode.IN_APP.equals(mode)) return;
         stopSelf();
-        openApp();
+        openApp(null);
     }
 
-    private void openApp() {
+    /** CouchSubs'ı öne getirir; failure doluysa katman açılamamıştır: ekran nedenini söyler, yeniden katmana geçmez. */
+    private void openApp(String failure) {
         Intent open = new Intent(this, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 .putExtra(MainActivity.EXTRA_FROM_OVERLAY, true);
+        if (failure != null) open.putExtra(MainActivity.EXTRA_OVERLAY_FAILED, failure);
         try {
             startActivity(open);
         } catch (RuntimeException ignored) {
@@ -166,7 +200,8 @@ public class OverlayService extends Service implements TvPage.Host {
         }
     }
 
-    private void goForeground() {
+    /** Ön plan servisine geçer (Android 14'te tür zorunlu: specialUse). TV izin vermezse false döner, uygulama kapanmaz. */
+    private boolean goForeground() {
         NotificationManager notifications = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         Notification.Builder builder;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -182,10 +217,16 @@ public class OverlayService extends Service implements TvPage.Host {
                 .setContentText(getString(R.string.overlay_running))
                 .setOngoing(true)
                 .build();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-        } else {
-            startForeground(NOTIFICATION_ID, notification);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            } else {
+                startForeground(NOTIFICATION_ID, notification);
+            }
+            return true;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "overlay service could not go foreground", e);
+            return false;
         }
     }
 

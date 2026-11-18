@@ -16,6 +16,7 @@ import com.couchsubs.mobile.translation.AiTranslator
 import com.couchsubs.mobile.translation.DeepLTranslator
 import com.couchsubs.mobile.translation.Http
 import com.couchsubs.mobile.translation.OnlineKeyState
+import com.couchsubs.mobile.translation.RequestBudget
 import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -203,6 +204,26 @@ class OnlineTranslationTest {
         val models = AiModel.parse(file.readText())
         assertTrue(models.keys.containsAll(listOf("gemini", "openai", "claude")))
         assertTrue(models.getValue("gemini").first().freeTier)
+    }
+
+    /** Ayarlar'da seçilen Gemini modeli isteğe gider; dakikalık hak modelin sınırıdır; kayıt yoksa ilk model (Mac ile aynı). */
+    @Test
+    fun selectedGeminiModelGoesToTheRequest() {
+        val file = File(System.getProperty("couchsubs.packs") ?: return, "../ai-models.json")
+        val gemini = AiModel.parse(file.readText()).getValue("gemini")
+        assertEquals("gemini-3.5-flash-lite", AiModel.selected(gemini, null)?.id)
+        assertEquals("gemini-3.5-flash-lite", AiModel.selected(gemini, "gemini-eski")?.id)
+        val chosen = AiModel.selected(gemini, "gemini-3.6-flash")!!
+        assertEquals("gemini-3.6-flash", chosen.id)
+        assertEquals(10, RequestBudget.shared(AiProvider.GEMINI, chosen)?.perMinute)
+        assertEquals(15, RequestBudget.shared(AiProvider.GEMINI, AiModel.selected(gemini, null)!!)?.perMinute)
+
+        val http = FakeHttp(200, "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"[\\\"Koş!\\\"]\"}]}}]}")
+        val translator = AiTranslator(AiProvider.GEMINI, "key", chosen, null, http, budget = RequestBudget(1000))
+        assertEquals("Koş!", translator.translate("Run!"))
+        val (url, _, body) = http.requests.single()
+        assertEquals("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent", url)
+        assertEquals("LOW", JSONObject(body!!).getJSONObject("generationConfig").getJSONObject("thinkingConfig").getString("thinkingLevel"))
     }
 }
 

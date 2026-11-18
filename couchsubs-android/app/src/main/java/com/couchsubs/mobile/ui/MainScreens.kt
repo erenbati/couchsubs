@@ -221,8 +221,10 @@ private fun RunningScreen(status: LiveStatus, topBar: @Composable () -> Unit, on
         }
         Text(status.phase, style = Tokens.Type.caption, color = Tokens.Color.secondary)
         status.error?.let { NoteTile(it) }
-        GameSection(status)
         val current = status.recent.firstOrNull()
+        // İlk altyazı gelene kadar: kolu açınca PS5'te ana hesap seçilmeli (GitHub #231).
+        if (current == null && !Services.settings.xbox) NoteTile(stringResource(R.string.psn_main_account), Tokens.Color.secondary)
+        GameSection(status)
         Tile(Modifier.fillMaxWidth()) {
             TileLabel(stringResource(R.string.running_now))
             // Son çeviri altyazı sarısında (içerik), altında özgün metin.

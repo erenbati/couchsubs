@@ -265,6 +265,18 @@ public sealed class SubtitleStabilizer(double similarity = 0.85, int stableFrame
         garbledPending = "";
     }
 
+    /// <summary>
+    /// Az önce çevrilmek üzere verilen satırı hat yok saydı (bekleyen satırın arasına giren bozuk okuma): satır gönderilmemiş
+    /// sayılır, ekranda kaldıkça sonraki okumada yeniden verilir. Yoksa gerçek bir yeni satır "gönderildi" sayılıp hiç
+    /// çevrilmiyordu.
+    /// </summary>
+    public void WithdrawSent()
+    {
+        sent = "";
+        sentRaw = "";
+        lastSeen = null;
+    }
+
     public StabilizerAction Reset()
     {
         candidate = "";

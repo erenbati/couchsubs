@@ -543,8 +543,8 @@ class TranslationService : Service() {
                     EngineChoice.OPENAI -> AiProvider.OPENAI
                     else -> AiProvider.CLAUDE
                 }
-                val models = aiModels()[provider.id].orEmpty()
-                val model = models.firstOrNull { it.id == settings.aiModel } ?: models.firstOrNull() ?: return null
+                // Seçilen model (Ayarlar); dakikalık hakkı da modelin kendi sınırıdır (RequestBudget.shared).
+                val model = AiModel.selected(aiModels()[provider.id].orEmpty(), settings.aiModel(provider)) ?: return null
                 AiTranslator(provider, key, model, free, cache = cache(AiTranslator.engineId(provider, model)),
                     // Kararlı oyun (GameSense.current), son eşleşen paket değil: tek satır adı başka oyuna geçirmez (#27).
                     playedGame = { PlayedGame.sense.current?.name })

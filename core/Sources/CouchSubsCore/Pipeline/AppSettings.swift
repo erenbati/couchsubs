@@ -123,7 +123,7 @@ public struct UserSettings: Codable, Equatable {
     public var geminiModel = AIProvider.gemini.defaultModel.id
     public var openAIModel = AIProvider.openAI.defaultModel.id
     public var claudeModel = AIProvider.claude.defaultModel.id
-    /// Yerel model sunucusunun adresi (Ollama: http://localhost:11434/v1, LM Studio: http://localhost:1234/v1) ve
+    /// Yerel model sunucusunun adresi (Ollama: http://127.0.0.1:11434/v1, LM Studio: http://localhost:1234/v1) ve
     /// kullanıcının yazdığı model adı.
     public var localAIBaseURL = LocalAIServer.ollamaURL
     public var localAIModel = LocalAIServer.defaultModel

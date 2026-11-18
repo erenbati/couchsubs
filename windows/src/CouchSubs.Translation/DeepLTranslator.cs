@@ -40,6 +40,8 @@ public sealed class DeepLTranslator : ITextTranslator, IOnlineTranslator
     /// <summary>Çevrilmeyecek adlar ve terimler (ücretsiz çeviriyle aynı sözlük); DeepL'e etiketle korunarak gider.</summary>
     private readonly GlossaryStore _glossary;
     private DateTimeOffset _pausedUntil = DateTimeOffset.MinValue;
+    /// <summary>Bekleme DeepL'in 429 yanıtından mı; öyleyse yerel yedek olmasa da istek gönderilmez.</summary>
+    private bool _pauseRateLimited;
 
     /// <param name="cache">Kalıcı önbellek; verilmezse yalnız bellekte tutulur.</param>
     /// <param name="glossary">Verilmezse kullanıcının sözlük klasörü (ücretsiz çeviriyle aynı).</param>
@@ -77,7 +79,12 @@ public sealed class DeepLTranslator : ITextTranslator, IOnlineTranslator
         Shown(text);
         var glossary = _glossary.Current;
         if (_cache.TryGet(DeepLMarkup.CacheKey(text, glossary), out var cached)) return cached;
-        if (DateTimeOffset.UtcNow < _pausedUntil) return await FallbackAsync(text, cancellationToken).ConfigureAwait(false);
+        // Hata sonrası beklemede yerel çeviri yoksa (inmemiş, açılamadı) satır düşmesin: DeepL yine denenir. 429 beklemesi kalır.
+        if (DateTimeOffset.UtcNow < _pausedUntil)
+        {
+            if (_pauseRateLimited) return await FallbackAsync(text, cancellationToken).ConfigureAwait(false);
+            if (await TryFallbackAsync(text, cancellationToken).ConfigureAwait(false) is { } local) return local;
+        }
 
         var pieces = SubtitleSegmenter.Split(text);
         foreach (var name in pieces.Select(SubtitleSegmenter.LabelName).OfType<string>())
@@ -106,6 +113,7 @@ public sealed class DeepLTranslator : ITextTranslator, IOnlineTranslator
         {
             Report(error is DeepLException deepL ? deepL.State : OnlineKeyState.Unreachable);
             _pausedUntil = DateTimeOffset.UtcNow + RetryAfter;
+            _pauseRateLimited = error is DeepLException { RateLimited: true };
             return await FallbackAsync(text, cancellationToken).ConfigureAwait(false);
         }
         for (var i = 0; i < missing.Count; i++)
@@ -144,6 +152,14 @@ public sealed class DeepLTranslator : ITextTranslator, IOnlineTranslator
         _speech.TryGetValue(text, out var lines) ? lines
         : SpeechScript.FromCache(text, _cache) is { Count: > 0 } cached ? cached
         : _fallback?.SpokenLines(text) ?? [];
+
+    /// <summary>Cihaz üstü çeviri; yoksa ya da hata verirse null.</summary>
+    private async Task<string?> TryFallbackAsync(string text, CancellationToken cancellationToken)
+    {
+        if (_fallback is null) return null;
+        try { return await _fallback.TranslateAsync(text, cancellationToken).ConfigureAwait(false); }
+        catch (Exception error) when (error is not OperationCanceledException) { return null; }
+    }
 
     private async Task<string> FallbackAsync(string text, CancellationToken cancellationToken) =>
         _fallback is null ? throw new TranslatorException(TranslatorStatus.NeedsDownload)
@@ -197,13 +213,15 @@ public sealed class DeepLTranslator : ITextTranslator, IOnlineTranslator
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => OnlineKeyState.Invalid,
             (HttpStatusCode)456 => OnlineKeyState.QuotaExceeded,
             _ => OnlineKeyState.Unreachable,
-        });
+        }) { RateLimited = response.StatusCode == HttpStatusCode.TooManyRequests };
     }
 }
 
 internal sealed class DeepLException(OnlineKeyState state) : Exception($"DeepL: {state}")
 {
     public OnlineKeyState State { get; } = state;
+    /// <summary>DeepL 429 döndü (çok sık istek): bekleme süresince istek gönderilmez.</summary>
+    public bool RateLimited { get; init; }
 }
 
 internal sealed record TranslateRequest(

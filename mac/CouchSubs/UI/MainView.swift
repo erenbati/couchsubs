@@ -277,6 +277,10 @@ private struct LiveSubtitlesTile: View {
             }
             if model.lastTranslation.isEmpty {
                 HintText(text: "Subtitles will appear here while you play.")
+                // Çeviri PS5'ten (ikinci hesap) okunurken: kolu açınca ana hesap seçilmeli (GitHub #231).
+                if model.isRunning && model.settings.frameSource == .ps5 {
+                    HintText(text: "When you turn on the controller to play, choose your MAIN account on the PS5. Don't play with the second account CouchSubs signs in with, or the controller won't work in the game.")
+                }
             } else {
                 CurrentLine(translation: model.lastTranslation, source: model.lastSource)
                 if let metrics = model.lastMetrics { MetricsRow(metrics: metrics) }

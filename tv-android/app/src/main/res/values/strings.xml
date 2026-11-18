@@ -21,4 +21,6 @@
     <string name="picker_close">Close</string>
     <string name="overlay_offer">Or switch to overlay: the TV shows the PS5 on its own HDMI input and the subtitles appear on top.</string>
     <string name="overlay_switch">Switch to overlay</string>
+    <string name="overlay_started_manual_input">Overlay is on and CouchSubs keeps running in the background. This TV does not let apps change its input: switch the TV to the PS5\'s HDMI input with the remote, and subtitles appear on top. Open CouchSubs again to turn the overlay off.</string>
+    <string name="overlay_failed">Overlay could not start: this TV did not let CouchSubs show subtitles over other apps. CouchSubs stays open; you can read the subtitles on your phone.</string>
 </resources>

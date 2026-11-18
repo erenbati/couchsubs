@@ -84,4 +84,30 @@ public class PackedRereadTests
         Assert.Equal("Yeni replik", sender.Sent.Last());
         Assert.DoesNotContain(next, translator.Requested);
     }
+
+    /// <summary>
+    /// Temiz ama yarım görünen satır bekletilirken gelen bozuk okumalı yeni satır yok sayılıyordu; kararlayıcı onu
+    /// gönderilmiş saydığı için ekranda kaldığı sürece bir daha hiç çevrilmiyordu. Bekleme bitince o da çevrilmeli.
+    /// </summary>
+    [Fact]
+    public async Task MisreadLineArrivingDuringCleanHoldIsTranslatedLater()
+    {
+        const string held = "I told you to stay close", next = "Where is the bóat?";
+        long clock = 0;
+        var translator = new FakeTranslator();
+        var sender = new FakeSender();
+        var frames = Enumerable.Repeat(held, 2).Concat(Enumerable.Repeat(next, 20)).ToArray();
+        var pipeline = new SubtitlePipeline(new FakeReader(frames), translator, sender, clock: () => clock)
+        {
+            PackLookup = _ => null, LooksMisread = text => text.Contains('ó'), ReadingScore = text => text.Length,
+        };
+        foreach (var _ in frames)
+        {
+            await pipeline.ProcessAsync(Image, new CropRegion());
+            await pipeline.WaitForTranslationsAsync();
+            clock += 100;
+        }
+        Assert.Equal([held, next], translator.Requested);
+        Assert.Equal("TR: " + next, sender.Sent.Last());
+    }
 }

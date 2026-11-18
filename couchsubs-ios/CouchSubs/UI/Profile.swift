@@ -155,6 +155,7 @@ struct SettingsScreen: View {
                                                      set: { model.settings.translationEngine = $0 }))
                 }
                 let engine = model.settings.translationEngine
+                if engine == .gemini { GeminiModelChoice() }
                 if engine != .free {
                     HStack(spacing: Mobile.Space.inline) {
                         if model.hasKey(engine) {
@@ -339,6 +340,30 @@ struct SettingsScreen: View {
         keyResult = accepted ? nil : String(localized: "The key did not work. Check it and try again.")
         if accepted { key = "" }
         checking = false
+    }
+}
+
+/// Gemini modeli (Mac ve Windows'taki Model seçimi, Android ile aynı): seçenekler ortak `ai-models.json`'dan gelir, ilki
+/// varsayılandır. Kayıt `UserSettings.geminiModel`; dakikalık istek hakkı seçilen modelin sınırıdır (`RequestBudget.shared`).
+private struct GeminiModelChoice: View {
+    @EnvironmentObject private var model: PhoneModel
+
+    var body: some View {
+        let provider = AIProvider.gemini
+        let selected = provider.model(model.settings.geminiModel).id
+        Text("Model").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+        SegmentedTabs(options: provider.models.map { (key: $0.id, value: Self.label($0)) },
+                      selection: Binding(get: { selected }, set: { model.settings.geminiModel = $0 }))
+        Text(verbatim: selected).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+    }
+
+    /// Modelin kısa açıklaması; listedeki açıklama (label) tanınmazsa olduğu gibi çevrilir.
+    private static func label(_ option: AIModel) -> LocalizedStringKey {
+        switch option.label {
+        case "Fast and cheap (recommended)": "Fast (recommended)"
+        case "Better quality, a little slower": "Better quality, slower"
+        default: LocalizedStringKey(option.label)
+        }
     }
 }
 

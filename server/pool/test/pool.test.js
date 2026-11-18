@@ -378,3 +378,29 @@ test("a failed line write does not silently lose its sighting on retry", async (
   assert.equal(DB.lines.size, 1, "retry must still publish a line seen by two distinct installs");
   assert.equal([...DB.lines.values()][0].installs, 2);
 });
+
+test("admin export endpoints reject methods outside their documented routes", async () => {
+  const DB = fakeDB();
+  const env = { DB, ADMIN_TOKEN: "t" };
+  const invoke = (path, method, body) => worker.fetch(new Request("https://pool.test" + path, {
+    method,
+    headers: { authorization: "Bearer t" },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  }), env);
+
+  for (const [path, method, body, allow] of [
+    ["/v1/export", "POST", { keys: ["1234567890abcdef"] }, "GET"],
+    ["/v1/exported", "GET", null, "POST"],
+    ["/v1/export", "PATCH", { keys: [] }, "GET"],
+  ]) {
+    DB.last = null;
+    const writes = DB.writes;
+    const response = await invoke(path, method, body);
+    assert.equal(response.status, 405, method + " " + path);
+    assert.equal(response.headers.get("allow"), allow);
+    assert.equal(DB.last, null, "wrong methods must not run a DB read");
+    assert.equal(DB.writes, writes, "wrong methods must not mutate DB");
+  }
+  assert.equal((await invoke("/v1/export", "GET")).status, 200);
+  assert.equal((await invoke("/v1/exported", "POST", { keys: [] })).status, 200);
+});

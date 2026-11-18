@@ -87,5 +87,23 @@ final class PackedRereadTests: XCTestCase {
             XCTAssertFalse(translator.requested.contains(next), next)
         }
     }
+
+    /// Temiz ama yarım görünen satır bekletilirken gelen bozuk okumalı yeni satır yok sayılıyordu; kararlayıcı onu
+    /// gönderilmiş saydığı için ekranda kaldığı sürece bir daha hiç çevrilmiyordu. Bekleme bitince o da çevrilmeli.
+    func testMisreadLineArrivingDuringCleanHoldIsTranslatedLater() async {
+        let held = "I told you to stay close", next = "Where is the bóat?"
+        var time = 0
+        let translator = PackedTranslator(), sender = PackedSender()
+        translator.release()
+        let frames = Array(repeating: held, count: 2) + Array(repeating: next, count: 20)
+        let pipeline = SubtitlePipeline(reader: PackedReader(frames), translator: translator, server: sender, clock: { time })
+        pipeline.packLookup = { _ in nil }
+        for _ in frames {
+            await pipeline.process(image, region: CropRegion()); await pipeline.waitForTranslations()
+            time += 100
+        }
+        XCTAssertEqual(translator.requested, [held, next])
+        XCTAssertEqual(sender.sent.last, "TR: " + next)
+    }
 }
 #endif

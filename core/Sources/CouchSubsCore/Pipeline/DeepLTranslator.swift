@@ -52,6 +52,8 @@ public final class DeepLTranslator: TextTranslator, OnlineTranslating {
     /// Son gösterilen satırlar, eskiden yeniye.
     private var recent: [String] = []
     private var pausedUntil = Date.distantPast
+    /// Bekleme DeepL'in 429 yanıtından mı; öyleyse yerel çeviri olmasa da istek gönderilmez.
+    private var pauseRateLimited = false
     private var failure: OnlineKeyState?
     public var onFailureChanged: ((OnlineKeyState?) -> Void)?
 
@@ -84,7 +86,12 @@ public final class DeepLTranslator: TextTranslator, OnlineTranslating {
         shown(text)
         let glossary = glossaryStore.glossary
         if let cached = cache.value(for: DeepLMarkup.cacheKey(text, glossary: glossary)) { return cached }
-        guard Date() >= pausedUntil else { return try await fallback.translate(text) }
+        // Hata sonrası beklemede yerel çeviri yoksa (indirilmemiş, açılamadı) satır düşmesin: DeepL yine denenir.
+        // 429 beklemesi kalır.
+        if Date() < pausedUntil {
+            if pauseRateLimited { return try await fallback.translate(text) }
+            if let local = try await tryFallback(text) { return local }
+        }
         let pieces = SubtitleSegmenter.split(text)
         names.learn(from: pieces)
         // Önbellekte duran cümleler yeniden gönderilmez; kota yalnız yeni cümlelere gider.
@@ -107,6 +114,7 @@ public final class DeepLTranslator: TextTranslator, OnlineTranslating {
         } catch {
             report((error as? DeepLError)?.state ?? .unreachable)
             pausedUntil = Date().addingTimeInterval(Self.retryAfter)
+            pauseRateLimited = (error as? DeepLError)?.rateLimited == true
             return try await fallback.translate(text)
         }
         for (index, sentence) in zip(missing, translated) {
@@ -188,13 +196,29 @@ public final class DeepLTranslator: TextTranslator, OnlineTranslating {
         }
     }
 
-    private struct DeepLError: Error { let state: OnlineKeyState }
+    private struct DeepLError: Error {
+        let state: OnlineKeyState
+        /// DeepL 429 döndü (çok sık istek): bekleme süresince istek gönderilmez.
+        var rateLimited = false
+    }
+
+    /// Cihaz üstü çeviri; hata verirse nil.
+    private func tryFallback(_ text: String) async throws -> String? {
+        do {
+            return try await fallback.translate(text)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return nil
+        }
+    }
 
     private static func check(_ response: URLResponse) throws {
         guard let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) else { return }
         switch http.statusCode {
         case 401, 403: throw DeepLError(state: .invalid)
         case 456: throw DeepLError(state: .quotaExceeded)
+        case 429: throw DeepLError(state: .unreachable, rateLimited: true)
         default: throw DeepLError(state: .unreachable)
         }
     }

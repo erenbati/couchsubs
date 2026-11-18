@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GENERAL, parseReply, runAutopack } from "../src/autopack.js";
+import { GENERAL, jobPackId, parseReply, runAutopack } from "../src/autopack.js";
 
 test("malformed current-night state is rebuilt instead of stopping the scheduler", async () => {
   const now = new Date("2026-11-20T04:00:00Z");
@@ -332,4 +332,50 @@ test("general fallback includes named-game subtitles if that game's pack did not
   assert.equal(result.translated, 2, "named lines should fall back when their own pack was not built");
   const cache = JSON.parse(stored.get("auto/tr/GENEL.json"));
   assert.deepEqual(Object.keys(cache.lines).sort(), rows.map((row) => row.key).sort());
+});
+
+test("long ASCII game names keep separate translation caches when their pack IDs differ", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const shared = "the exceptionally long game title that shares a lengthy prefix ";
+  const games = [shared + "alpha", shared + "beta"];
+  const jobs = games.map((gameKey) => ({
+    titleId: null, gameKey, game: gameKey, games: [gameKey], lines: 301,
+  }));
+  assert.notEqual(jobPackId(jobs[0]), jobPackId(jobs[1]));
+
+  const stored = new Map([["index.json", JSON.stringify({ packs: [] })]]);
+  const env = {
+    PACKS: {
+      get: async (name) => name === "auto/known-keys.bin"
+        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        : stored.has(name) ? { text: async () => stored.get(name) } : null,
+      put: async (name, value) => { stored.set(name, value); },
+    },
+    AI: {
+      run: async () => ({ response: JSON.stringify({ items: [{ id: "0", tr: "Hemen kap?ya ilerlemeliyiz." }] }) }),
+    },
+    DB: {
+      prepare: () => ({
+        bind: (...args) => ({
+          all: async () => ({ results: [{
+            key: args[0] === games[0] ? "1111111111111111" : "2222222222222222",
+            text: "We must get to the gate right now.",
+          }] }),
+        }),
+      }),
+    },
+  };
+  for (const job of jobs) {
+    stored.set("auto/state.json", JSON.stringify({
+      night: "2026-11-20", queue: [job], namedGames: [job.game],
+      translated: 0, done: [],
+    }));
+    const result = await runAutopack(env, now);
+    assert.equal(result.phase, "translate");
+    assert.equal(result.translated, 1);
+  }
+  const cacheFiles = [...stored.keys()].filter((name) => name.startsWith("auto/tr/name-"));
+  assert.equal(cacheFiles.length, 2, "distinct published pack IDs must not share a translation cache");
+  const cachedKeys = cacheFiles.map((name) => Object.keys(JSON.parse(stored.get(name)).lines));
+  assert.deepEqual(cachedKeys.map((keys) => keys.length), [1, 1]);
 });

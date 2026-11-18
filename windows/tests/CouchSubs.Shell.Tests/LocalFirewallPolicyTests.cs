@@ -49,6 +49,27 @@ public class LocalFirewallPolicyTests
         Assert.True(LocalFirewallPolicy.HasRules(store.Read(), Exe));
     }
 
+    /// Ortak ağda dar kural işe yaramaz; eski geniş kural silinirse TV bağlantısı kesilir. Hiçbir şey değişmez.
+    [Fact]
+    public void KeepsLegacyRuleOnPublicNetwork()
+    {
+        var store = new Store(Legacy);
+        Assert.True(LocalFirewallPolicy.HasLegacyRule(store.Read(), Exe));
+        Assert.False(LocalFirewallPolicy.Apply(store, Exe, publicNetwork: true));
+        Assert.Empty(store.Removed);
+        Assert.Equal(0, store.Puts);
+        Assert.Equal(new[] { Legacy }, store.Rules);
+    }
+
+    [Fact]
+    public void PublicNetworkWithoutLegacyRuleStillWritesPrivateRules()
+    {
+        var store = new Store();
+        Assert.False(LocalFirewallPolicy.HasLegacyRule(store.Read(), Exe));
+        Assert.True(LocalFirewallPolicy.Apply(store, Exe, publicNetwork: true));
+        Assert.Equal(2, store.Rules.Count);
+    }
+
     [Fact]
     public void MigratesOnlyLegacyRuleAndDoesNotDuplicateOnRetry()
     {

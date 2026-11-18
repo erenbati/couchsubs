@@ -244,7 +244,10 @@ export default {
       if (req.method === "GET" && url.pathname === "/v1/stats") return await stats(env);
       if (url.pathname === "/v1/export" || url.pathname === "/v1/exported") {
         if (!isAdmin(req, env)) return json({ error: "unauthorized" }, 401);
-        return req.method === "POST" ? await markExported(req, env) : await exportLines(url, env);
+        if (url.pathname === "/v1/export" && req.method === "GET") return await exportLines(url, env);
+        if (url.pathname === "/v1/exported" && req.method === "POST") return await markExported(req, env);
+        return json({ error: "method_not_allowed" }, 405,
+          { allow: url.pathname === "/v1/export" ? "GET" : "POST" });
       }
       if (url.pathname === "/") return new Response("CouchSubs subtitle pool\n");
       return json({ error: "not_found" }, 404);

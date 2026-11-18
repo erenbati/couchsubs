@@ -244,7 +244,7 @@ public sealed record UserSettings
     public string OpenAiModel { get; init; } = AiProvider.OpenAi.DefaultModel().Id;
     public string ClaudeModel { get; init; } = AiProvider.Claude.DefaultModel().Id;
     /// <summary>
-    /// Yerel model sunucusunun adresi (Ollama: http://localhost:11434/v1, LM Studio: http://localhost:1234/v1) ve
+    /// Yerel model sunucusunun adresi (Ollama: http://127.0.0.1:11434/v1, LM Studio: http://localhost:1234/v1) ve
     /// kullanıcının yazdığı model adı.
     /// </summary>
     public string LocalAiBaseUrl { get; init; } = LocalAiServer.OllamaUrl;

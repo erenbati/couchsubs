@@ -52,7 +52,7 @@ internal sealed class WindowsFirewall : IFirewall
     internal static int ConfigureCurrentProcess()
     {
         if (Environment.ProcessPath is not { } exe) return 1;
-        try { return LocalFirewallPolicy.Apply(new ComRuleStore(), exe) ? 0 : 1; }
+        try { return LocalFirewallPolicy.Apply(new ComRuleStore(), exe, PublicNetworkConnected()) ? 0 : 1; }
         catch (Exception) { return 1; }
     }
 
@@ -64,8 +64,13 @@ internal sealed class WindowsFirewall : IFirewall
         catch (Exception) { } // Kaldırma işlemini yönetici izni yok diye durdurmayız.
     }
 
+    public bool HasLegacyRule() =>
+        Environment.ProcessPath is { } exe && LocalFirewallPolicy.HasLegacyRule(new ComRuleStore().Read(), exe);
+
+    public bool HasPublicNetwork() => PublicNetworkConnected();
+
     /// <summary>Ağ listesi COM'u: kategori 0 = Ortak. Ağın kategorisi otomatik değiştirilmez.</summary>
-    public bool HasPublicNetwork()
+    private static bool PublicNetworkConnected()
     {
         try
         {

@@ -172,6 +172,17 @@ class SubtitleStabilizer(
     fun shouldSend(source: String, translation: String) =
         !TextMatch.isSimilar(TextMatch.normalize(source), TextMatch.normalize(translation), 0.90)
 
+    /**
+     * Az önce çevrilmek üzere verilen satırı hat yok saydı (bekleyen satırın arasına giren bozuk okuma): satır gönderilmemiş
+     * sayılır, ekranda kaldıkça sonraki okumada yeniden verilir. Yoksa gerçek bir yeni satır "gönderildi" sayılıp hiç
+     * çevrilmiyordu (Windows: WithdrawSent, Mac/iPhone: withdrawSent).
+     */
+    fun withdrawSent() {
+        sent = ""
+        sentRaw = ""
+        lastSeen = null
+    }
+
     /** Son gönderilen satırı unutur (çevirisi başarısız oldu); ekranda kaldıkça en erken [RETRY_AFTER_MS] sonra yeniden çevrilir. */
     fun forgetSent() {
         if (sent.isNotEmpty()) forgotten = sent

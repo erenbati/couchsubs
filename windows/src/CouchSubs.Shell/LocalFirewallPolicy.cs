@@ -62,6 +62,9 @@ public static class LocalFirewallPolicy
     private static bool IsManaged(FirewallRule r, string exe) => (SameName(r.Name, TcpName) || SameName(r.Name, UdpName))
         && SameName(r.Grouping, Group) && SameProgram(r.Program, exe) && r.Direction == Inbound && r.Action == Allow;
 
+    /// <summary>Beta.44'ün her profili açan geniş kuralı duruyor mu. Ortak ağda TV yalnız bu kuralla bağlanabilir.</summary>
+    public static bool HasLegacyRule(IReadOnlyList<FirewallRule> rules, string exe) => rules.Any(r => IsLegacy(r, exe));
+
     /// <summary>İzin Özel ağ içindir; Ortak/Etki alanı profillerinin açık olması aranmaz.</summary>
     public static bool HasRules(IReadOnlyList<FirewallRule> rules, string exe, bool privateFirewallEnabled = true) =>
         !rules.Any(r => IsLegacy(r, exe)) && (!privateFirewallEnabled || CoversLocalTraffic(rules, exe));
@@ -88,10 +91,13 @@ public static class LocalFirewallPolicy
     /// exe'yi Özel profilde hedefleyen yerel engellerdir (ör. Windows'un ilk açılış sorusu kapatılınca yazdığı kural); kullanıcı
     /// "izin ver" dediği için kaldırılır. Genel, başka programın, servisin ya da gruplu kuralların engelleri korunur.
     /// Aynı adlı yabancı kural varsa adla yapılan COM silmesi ona da dokunabileceği için o ad hiç silinmez.
+    /// Ağ "Ortak" iken eski geniş kural varsa hiçbir şey değişmez: dar kural Ortak ağda işe yaramaz, eski kuralı silmek
+    /// çalışan TV bağlantısını keser. Kullanıcı önce ağı Özel yapmalıdır.
     /// </summary>
-    public static bool Apply(IFirewallRuleStore store, string exe)
+    public static bool Apply(IFirewallRuleStore store, string exe, bool publicNetwork = false)
     {
         var before = store.Read();
+        if (publicNetwork && HasLegacyRule(before, exe)) return false;
         if (before.Any(r => (SameName(r.Name, TcpName) || SameName(r.Name, UdpName)) && !IsManaged(r, exe))) return false;
         var groups = before.GroupBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
         if (groups.Any(g => g.Any(r => IsLegacy(r, exe)) && !g.All(r => SameProgram(r.Program, exe)))) return false;

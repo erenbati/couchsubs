@@ -607,7 +607,7 @@ final class AppModelTests: XCTestCase {
         model.settings.localAIModel = " qwen2.5-7b-instruct "
         let result = await model.testLocalAI()
         XCTAssertEqual(result, .success("KRATOS: Gidiyoruz."))
-        XCTAssertEqual(services.localTests.first?.server.chatURL.absoluteString, "http://localhost:1234/v1/chat/completions")
+        XCTAssertEqual(services.localTests.first?.server.chatURL.absoluteString, "http://127.0.0.1:1234/v1/chat/completions")
         XCTAssertEqual(services.localTests.first?.server.model, "qwen2.5-7b-instruct")
         XCTAssertEqual(services.localTests.first?.key, "")
         XCTAssertNil(store.load(String.self, for: StoreKey.localAIKey))

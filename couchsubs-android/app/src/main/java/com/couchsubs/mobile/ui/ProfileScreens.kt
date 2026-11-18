@@ -51,6 +51,7 @@ import com.couchsubs.mobile.settings.AppSettings
 import com.couchsubs.mobile.settings.EngineChoice
 import com.couchsubs.mobile.settings.SubtitleTarget
 import com.couchsubs.mobile.translation.AiModel
+import com.couchsubs.mobile.translation.AiProvider
 import com.couchsubs.mobile.translation.KeyCheck
 import com.couchsubs.mobile.translation.OnlineKeyState
 import com.couchsubs.mobile.translation.aiProvider
@@ -171,6 +172,7 @@ fun SettingsScreen(onBack: () -> Unit, onPacks: () -> Unit, onTarget: () -> Unit
             if (segment == 3) Segmented(listOf("OpenAI", "Claude"), if (engine == EngineChoice.CLAUDE) 1 else 0) {
                 choose(if (it == 1) EngineChoice.CLAUDE else EngineChoice.OPENAI)
             }
+            if (engine == EngineChoice.GEMINI) GeminiModelChoice(settings)
             if (engine != EngineChoice.FREE) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TileLabel(stringResource(R.string.settings_key_for, engineName(context)))
@@ -195,8 +197,7 @@ fun SettingsScreen(onBack: () -> Unit, onPacks: () -> Unit, onTarget: () -> Unit
                                 val provider = choice.aiProvider
                                 if (provider == null) KeyCheck.deepL(typed)
                                 else {
-                                    val models = AiModel.load(context)[provider.id].orEmpty()
-                                    val model = models.firstOrNull { it.id == settings.aiModel } ?: models.firstOrNull()
+                                    val model = AiModel.selected(AiModel.load(context)[provider.id].orEmpty(), settings.aiModel(provider))
                                     if (model == null) OnlineKeyState.UNREACHABLE else KeyCheck.ai(provider, typed, model)
                                 }
                             }
@@ -345,6 +346,32 @@ fun SettingsScreen(onBack: () -> Unit, onPacks: () -> Unit, onTarget: () -> Unit
         Text(stringResource(R.string.settings_copyright), style = Tokens.Type.caption, color = Tokens.Color.secondary,
             modifier = Modifier.padding(top = Tokens.Space.inline))
     }
+}
+
+/**
+ * Gemini modeli (Mac ve Windows'taki Model seçimi, iPhone ile aynı): seçenekler ortak ai-models.json'dan gelir, ilki
+ * varsayılandır. Kayıt "geminiModel" adıyla tutulur; dakikalık istek hakkı seçilen modelin sınırıdır.
+ */
+@Composable
+private fun GeminiModelChoice(settings: AppSettings) {
+    val context = LocalContext.current
+    val models = remember { AiModel.load(context)[AiProvider.GEMINI.id].orEmpty() }
+    if (models.isEmpty()) return
+    var selected by remember { mutableStateOf(AiModel.selected(models, settings.aiModel(AiProvider.GEMINI))!!.id) }
+    TileLabel(stringResource(R.string.settings_model))
+    Segmented(models.map { modelLabel(it) }, models.indexOfFirst { it.id == selected }.coerceAtLeast(0)) { index ->
+        selected = models[index].id
+        settings.setAiModel(AiProvider.GEMINI, selected)
+    }
+    Text(selected, style = Tokens.Type.caption, color = Tokens.Color.secondary)
+}
+
+/** Modelin kısa açıklaması; listedeki açıklama (label) tanınmazsa olduğu gibi gösterilir. */
+@Composable
+private fun modelLabel(model: AiModel): String = when (model.label) {
+    "Fast and cheap (recommended)" -> stringResource(R.string.settings_model_fast)
+    "Better quality, a little slower" -> stringResource(R.string.settings_model_quality)
+    else -> model.label
 }
 
 

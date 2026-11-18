@@ -355,8 +355,19 @@ struct PageDots: View {
 
 /// Segmentli seçim (çeviri motoru): seçili öğe `raised` zemin ve yarı kalın; çerçeve ve parıltı yok.
 struct SegmentedTabs<Value: Hashable>: View {
-    let options: KeyValuePairs<Value, LocalizedStringKey>
+    let options: [(key: Value, value: LocalizedStringKey)]
     @Binding var selection: Value
+
+    init(options: KeyValuePairs<Value, LocalizedStringKey>, selection: Binding<Value>) {
+        self.options = options.map { ($0.key, $0.value) }
+        _selection = selection
+    }
+
+    /// Seçenekleri çalışırken gelen listeden (ör. ai-models.json'daki modeller) kurar.
+    init(options: [(key: Value, value: LocalizedStringKey)], selection: Binding<Value>) {
+        self.options = options
+        _selection = selection
+    }
 
     var body: some View {
         HStack(spacing: Mobile.Space.hair) {

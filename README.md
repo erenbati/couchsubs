@@ -151,7 +151,7 @@ vermezse o satır her zamanki ücretsiz çeviriyle gelir.
 1. [ollama.com/download](https://ollama.com/download)'dan Ollama'yı kurup açın.
 2. Terminal'de (Windows'ta PowerShell) modeli indirin: `ollama pull qwen2.5:7b`
 3. CouchSubs'ta **Ayarlar › Çeviri › Çeviri motoru › Yerel model**'i seçin. Sunucu adresi
-   `http://localhost:11434/v1`, model adı `qwen2.5:7b` olarak gelir; **Bağlantıyı dene**'ye basın.
+   `http://127.0.0.1:11434/v1`, model adı `qwen2.5:7b` olarak gelir; **Bağlantıyı dene**'ye basın.
 
 **LM Studio ile**
 
@@ -272,7 +272,7 @@ Samsung account once; Android TV: allow debugging on the TV). Guide: [docs/tv-se
 On Windows, if SmartScreen appears, choose **More info › Run anyway**.
 
 **Local AI translation:** in **Settings › Translation** choose **Local model** to translate with a model running on your
-own computer through [Ollama](https://ollama.com) (`ollama pull qwen2.5:7b`, address `http://localhost:11434/v1`) or
+own computer through [Ollama](https://ollama.com) (`ollama pull qwen2.5:7b`, address `http://127.0.0.1:11434/v1`) or
 [LM Studio](https://lmstudio.ai) (local server, `http://localhost:1234/v1`). No key, quota or cost, and subtitle text
 stays on your computer; **Test connection** checks the server and the model.
 

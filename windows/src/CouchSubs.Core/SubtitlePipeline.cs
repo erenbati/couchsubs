@@ -139,6 +139,11 @@ public sealed class SubtitlePipeline(ITextReader reader, ITextTranslator transla
     public Func<string, PackMatch?>? PackLookup { get; set; }
     /// <summary>Konuşan adı ("ARTHUR: …") TV'ye giden çeviride gösterilir; kapalıysa yalnız cümle gider.</summary>
     public bool ShowSpeakerNames { get; set; } = true;
+    /// <summary>
+    /// Hedef dil Türkçe: yüksek güvenle Türkçe olan satır (<see cref="TurkishText.IsSure"/>) çevirmene gönderilmez (#289).
+    /// Uygulama hedef dil Türkçe değilse kapatır.
+    /// </summary>
+    public bool SkipsTurkish { get; set; } = true;
 
     /// <summary>Paket önce adlı satırla, bulunmazsa adsız cümleyle aranır (paket anahtarları çoğu zaman adsızdır).</summary>
     private PackMatch? FindPack(string source)
@@ -254,7 +259,8 @@ public sealed class SubtitlePipeline(ITextReader reader, ITextTranslator transla
             }
             var box = reading.Box?.PlacedIn(area).CenteredOnScreen();
             // Satır henüz doğrulanmadı: çevirisi şimdiden başlasın, doğrulanınca beklemeden gösterilsin.
-            if (action.Kind == StabilizerKind.None && translator.Prefetches && reading.Text.Trim() is { Length: >= 6 } early && early != lastPrefetched)
+            if (action.Kind == StabilizerKind.None && translator.Prefetches && reading.Text.Trim() is { Length: >= 6 } early && early != lastPrefetched
+                && !(SkipsTurkish && TurkishText.IsSure(early)))
             {
                 lastPrefetched = early;
                 translator.Prefetch(SpeakerPrefix.Parse(early)?.Body ?? early);
@@ -308,6 +314,8 @@ public sealed class SubtitlePipeline(ITextReader reader, ITextTranslator transla
                     else if (LooksMisread(source) && now() - waiting.Since < waiting.Wait)
                     {
                         // Araya giren bozuk ve ilgisiz okuma ("Go to" beklerken "Bluffe") bekleyeni bozmaz; yok sayılır.
+                        // Kararlayıcı onu gönderilmiş saymasın: gerçek yeni satırsa bekleme bitince çevrilir.
+                        stabilizer.WithdrawSent();
                         action = StabilizerAction.None;
                     }
                     else
@@ -588,6 +596,12 @@ public sealed class SubtitlePipeline(ITextReader reader, ITextTranslator transla
         lineOnScreen = request.Number;
         lastSent = (source, ReadingScore(source), now());
         if (FindPack(source) is { } packed) return ShowPacked(request, packed);
+        if (SkipsTurkish && TurkishText.IsSure(source))
+        {
+            Remember(request.Number, source, null);
+            Write(request, $"{SubtitleLog.Excerpt(source)} → zaten Türkçe, çevrilmedi");
+            return null;
+        }
         var missed = PackMissed;
         if (inFlight is not { } current)
         {

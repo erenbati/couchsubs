@@ -582,6 +582,7 @@ final class PhoneModel: ObservableObject {
         let pipeline = SubtitlePipeline(reader: VisionReader(language: settings.sourceLanguage), translator: makeTranslator(),
                                         server: server, scheduler: scheduler)
         pipeline.showSpeakerNames = settings.showSpeakerNames
+        pipeline.skipsTurkish = settings.targetLanguage == "tr"
         pipeline.onPair = { [weak self, weak pipeline] source, translation in
             self?.lastSource = source
             self?.lastTranslation = translation
@@ -613,6 +614,7 @@ final class PhoneModel: ObservableObject {
     private func makeRegionWatcher(packLookup: ((String) -> PackMatch?)?) -> RegionWatcher {
         let watcher = RegionWatcher(reader: VisionReader(language: settings.sourceLanguage), translator: makeTranslator(), server: server)
         watcher.packLookup = packLookup
+        watcher.skipsTurkish = settings.targetLanguage == "tr"
         watcher.onLog = { SubtitleLog.write($0) }
         return watcher
     }

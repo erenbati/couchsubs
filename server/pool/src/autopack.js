@@ -43,9 +43,9 @@ const STATE = "auto/state.json";
 const KNOWN = "auto/known-keys.bin";
 const cacheFile = (job) => {
   if (job.titleId) return `auto/tr/${job.titleId}.json`;
-  const key = String(job.gameKey);
-  const suffix = /^[a-z0-9 ]+$/.test(key) ? gameSlug(key) : jobPackId(job).slice(PACK_PREFIX.length);
-  return `auto/tr/name-${suffix}.json`;
+  // Long ASCII names can have the same truncated slug while their pack IDs differ.
+  // Keep short ASCII cache paths compatible, but hash long and non-Latin identities.
+  return `auto/tr/name-${jobPackId(job).slice(PACK_PREFIX.length)}.json`;
 };
 
 // poolpack.py ile aynı: konuşmacı etiketi, Türkçe harf, yazı tanıma çöpü.

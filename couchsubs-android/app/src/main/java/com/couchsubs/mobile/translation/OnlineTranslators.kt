@@ -16,7 +16,8 @@ import java.util.Locale
 /** Çevrimiçi anahtarın durumu (ayarlardaki "Dene" ve ana ekrandaki uyarı için). */
 enum class OnlineKeyState { VALID, INVALID, QUOTA_EXCEEDED, MODEL_REJECTED, UNREACHABLE }
 
-class OnlineException(val state: OnlineKeyState) : IOException("online translation failed: $state")
+/** [rateLimited]: hizmet 429 döndü (DeepL: çok sık istek); bekleme süresince istek gönderilmez. */
+class OnlineException(val state: OnlineKeyState, val rateLimited: Boolean = false) : IOException("online translation failed: $state")
 
 /**
  * Hizmetin bildirdiği dakikalık istek sınırı aşımı (429; Windows: AiRateLimit). [retryAfterMs]: hizmetin önerdiği
@@ -51,6 +52,9 @@ data class AiModel(
     val requestsPerMinute: Int? = null,
 ) {
     companion object {
+        /** Kayıtlı kimlikteki model; kayıt yoksa ya da listede yoksa listenin ilki (varsayılan; Mac ve iPhone ile aynı). */
+        fun selected(models: List<AiModel>, id: String?): AiModel? = models.firstOrNull { it.id == id } ?: models.firstOrNull()
+
         /** Uygulamayla gelen ai-models.json; okunamazsa boş. */
         fun load(context: android.content.Context): Map<String, List<AiModel>> = try {
             parse(context.assets.open("ai-models.json").use { String(it.readBytes(), Charsets.UTF_8) })
@@ -176,6 +180,8 @@ abstract class SentenceTranslator<C>(
 
     private val names = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private var pausedUntil = 0L
+    /** Bekleme hizmetin 429 yanıtından mı; öyleyse yerel çeviri olmasa da istek gönderilmez. */
+    private var pauseRateLimited = false
 
     @Volatile var lastError: OnlineKeyState? = null
         private set
@@ -211,10 +217,15 @@ abstract class SentenceTranslator<C>(
         val translations = pieces.map { if (it.translate) cache.get(cacheKey(it.text, game)) else null }.toMutableList()
         val missing = pieces.indices.filter { pieces[it].translate && translations[it] == null }
         val sources = missing.map { SubtitleSegmenter.normalizeCase(pieces[it].text, known) }
-        // Hizmetin beklemesi yalnız eksik çeviriler içindir; önbellekteki parçalar yerel motor istemez.
-        if (sources.isNotEmpty() && clock() < pausedUntil) return fallback(text)
-        // Dakikalık hak bittiyse istek gönderilmez; satır sessizce yerel çeviriyle çevrilir (hata değildir).
-        if (sources.isNotEmpty() && budget?.take() == false) return fallback(text)
+        // Hizmetin beklemesi yalnız eksik çeviriler içindir; önbellekteki parçalar yerel motor istemez. Hata sonrası
+        // beklemede yerel çeviri yoksa (indirilmemiş, açılamadı) satır düşmesin: hizmet yine denenir. 429 beklemesi kalır.
+        if (sources.isNotEmpty() && clock() < pausedUntil) {
+            if (pauseRateLimited) return fallback(text)
+            tryLocal(text)?.let { remember(text, it); return it }
+        }
+        // Dakikalık hak bittiyse satır sessizce yerel çeviriyle çevrilir (hata değildir). Hak uygulamanın temkinli
+        // tahminidir; yerel çeviri yoksa satır denenmeden düşmesin, istek yine gönderilir.
+        if (sources.isNotEmpty() && budget?.take() == false) tryLocal(text)?.let { remember(text, it); return it }
         val translated = try {
             if (sources.isEmpty()) emptyList() else request(sources, context, game).also { report(null) }
         } catch (error: AiRateLimitedException) {
@@ -223,17 +234,19 @@ abstract class SentenceTranslator<C>(
         } catch (error: IOException) {
             report((error as? OnlineException)?.state ?: OnlineKeyState.UNREACHABLE)
             pausedUntil = clock() + RETRY_AFTER_MS
+            pauseRateLimited = (error as? OnlineException)?.rateLimited == true
             return fallback(text)
         } catch (error: JSONException) {
             report(OnlineKeyState.UNREACHABLE)
             pausedUntil = clock() + RETRY_AFTER_MS
+            pauseRateLimited = false
             return fallback(text)
         }
         var local = false
         for ((i, index) in missing.withIndex()) {
             val piece = pieces[index].text
             if (retriesEcho && isEcho(piece, translated[i])) {
-                val retried = retryEcho(piece)
+                val retried = tryLocal(piece)
                 if (retried != null && !isEcho(piece, retried)) {
                     // Yerel çeviri bu motorun önbelleğine yazılmaz.
                     translations[index] = retried
@@ -265,10 +278,11 @@ abstract class SentenceTranslator<C>(
         TextMatch.isSimilar(TextMatch.normalize(source), TextMatch.normalize(translation), 0.90)
 
     /**
-     * Geri verilen cümle cihaz üstü çeviriyle bir kez daha denenir; o da aynı kalırsa (ad, konsolun Türkçe menüsü)
-     * çevrilecek bir şey yoktur ve modelin yanıtı önbelleğe yazılır. Yerel çeviri yoksa ya da hata verirse null.
+     * Cümle cihaz üstü çeviriyle denenir; yerel çeviri yoksa ya da hata verirse null. Geri verilen cümlede o da aynı
+     * kalırsa (ad, konsolun Türkçe menüsü) çevrilecek bir şey yoktur ve modelin yanıtı önbelleğe yazılır; hizmet
+     * beklerken null dönerse istek yine gönderilir.
      */
-    private fun retryEcho(text: String): String? =
+    private fun tryLocal(text: String): String? =
         try {
             local?.translate(text)
         } catch (error: InterruptedException) {
@@ -296,6 +310,7 @@ abstract class SentenceTranslator<C>(
         if (error is AiRateLimitedException) return rateLimited(error.limit)
         report((error as? OnlineException)?.state ?: OnlineKeyState.UNREACHABLE)
         pausedUntil = clock() + RETRY_AFTER_MS
+        pauseRateLimited = (error as? OnlineException)?.rateLimited == true
     }
 
     /**
@@ -305,6 +320,7 @@ abstract class SentenceTranslator<C>(
     private fun rateLimited(limit: AiRateLimit) {
         limit.requestsPerMinute?.let { budget?.lower(it) }
         pausedUntil = clock() + (limit.retryAfterMs ?: RATE_LIMIT_PAUSE_MS).coerceIn(1_000L, RATE_LIMIT_PAUSE_MS)
+        pauseRateLimited = true
     }
 
     /** Hizmet yanıt vermeyen parçalar yerel motorla çevrilir; yerel motor yoksa hata yukarı çıkar. */
@@ -381,7 +397,7 @@ class DeepLTranslator(
             "POST", baseUrl(key) + "translate",
             mapOf("Authorization" to "DeepL-Auth-Key $key", "Content-Type" to "application/json"), body(sources, context, tagged), 4000,
         )
-        if (status !in 200..299) throw OnlineException(failure(status))
+        if (status !in 200..299) throw OnlineException(failure(status), rateLimited = status == 429)
         val list = JSONObject(response).optJSONArray("translations") ?: throw OnlineException(OnlineKeyState.UNREACHABLE)
         if (list.length() != sentences.size) throw OnlineException(OnlineKeyState.UNREACHABLE)
         val reply = (0 until list.length()).map { list.getJSONObject(it).getString("text") }

@@ -29,6 +29,23 @@ public class DisplayModeTest {
     }
 
     @Test
+    public void failedOverlayDoesNotReopenOverlay() {
+        // #275: katman açılamayıp uygulamayı geri açtıysa, kayıtlı tercih katman olsa da yeniden katmana geçilmez;
+        // yoksa uygulama ile servis birbirini açıp kapatır ve kullanıcı yalnız uygulamanın kapandığını görür.
+        assertEquals(DisplayMode.Start.IN_APP_OVERLAY_FAILED,
+                DisplayMode.atLaunch("overlay", true, DisplayMode.FAILED_WINDOW));
+        assertEquals(DisplayMode.Start.IN_APP_OVERLAY_FAILED,
+                DisplayMode.atLaunch("overlay", true, DisplayMode.FAILED_FOREGROUND));
+        assertEquals(DisplayMode.Start.IN_APP_OVERLAY_FAILED,
+                DisplayMode.atLaunch("inApp", true, DisplayMode.FAILED_WINDOW));
+        // İzin geri alındıysa iznin nasıl verileceği gösterilir.
+        assertEquals(DisplayMode.Start.IN_APP_NEEDS_PERMISSION,
+                DisplayMode.atLaunch("overlay", true, DisplayMode.FAILED_PERMISSION));
+        // Neden yoksa eski davranış.
+        assertEquals(DisplayMode.Start.OVERLAY, DisplayMode.atLaunch("overlay", true, null));
+    }
+
+    @Test
     public void sameModeSentAgainIsNotAChange() {
         // Bilgisayar her bağlantıda ayarı yeniden gönderir; kendiliğinden katmana geçen TV geri dönmemeli.
         assertFalse(DisplayMode.isChange(null, "inApp"));

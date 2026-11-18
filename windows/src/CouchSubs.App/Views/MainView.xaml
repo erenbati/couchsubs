@@ -241,6 +241,10 @@
                     <StackPanel>
                         <TextBlock Text="{t:T 'Subtitles will appear here while you play.'}" Style="{StaticResource HintText}"
                                    Visibility="{Binding LastTranslation, Converter={StaticResource VisibleIf}, ConverterParameter=invert}" />
+                        <!-- Çeviri PS5'ten (ikinci hesap) okunurken: kolu açınca ana hesap seçilmeli (GitHub #231). -->
+                        <TextBlock Style="{StaticResource HintText}" Margin="0,8,0,0" TextWrapping="Wrap"
+                                   Text="{t:T 'When you turn on the controller to play, choose your MAIN account on the PS5. Don\'t play with the second account CouchSubs signs in with, or the controller won\'t work in the game.'}"
+                                   Visibility="{Binding ShowsMainAccountTip, Converter={StaticResource VisibleIf}}" />
                         <TextBlock Text="{Binding LastTranslation}" Style="{StaticResource LiveText}" Foreground="{DynamicResource accentTextBrush}" Margin="0,4,0,0"
                                    Visibility="{Binding LastTranslation, Converter={StaticResource VisibleIf}}" />
                         <TextBlock Text="{Binding LastSource}" Style="{StaticResource CaptionText}" Margin="0,8,0,0"

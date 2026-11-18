@@ -243,6 +243,8 @@ class RegionWatcher(
     @Volatile private var session = 0
 
     @Volatile var packLookup: ((String) -> PackMatch?)? = null
+    /** Hedef dil Türkçe: yüksek güvenle Türkçe olan parça çevrilmez, aslı sayılır (#289). */
+    @Volatile var skipsTurkish = true
 
     /** Tamamlanan tur ve okuma sayısı (testler için). */
     var passes = 0
@@ -343,7 +345,10 @@ class RegionWatcher(
             return
         }
         val translated = try {
-            candidate.paragraphs.map { packLookup?.invoke(it)?.text ?: translator.translate(it) }
+            // Zaten Türkçe olan parça çevrilmez: aslı kalır, tümü öyleyse kutu gösterilmez.
+            candidate.paragraphs.map {
+                packLookup?.invoke(it)?.text ?: if (skipsTurkish && TurkishText.isSure(it)) it else translator.translate(it)
+            }
         } catch (error: Exception) {
             // Çevrilemedi: önceki yazı kutuda kalır, aynı yazı sonraki turda yeniden denenir.
             if (started == session && state.shown == candidate.key) {

@@ -155,6 +155,8 @@ fun PsnLoginScreen(onBack: (() -> Unit)? = null, onSkip: (() -> Unit)? = null, o
                         }
                     }
                 }
+                // Kol ikinci hesaba atanırsa ana hesapla açılan oyun onu kendi kolu saymaz (GitHub #231).
+                NoteTile(stringResource(R.string.psn_main_account))
                 problem?.let {
                     NoteTile(stringResource(R.string.psn_failed, it))
                     GhostButton(stringResource(R.string.psn_browser)) { openBrowser() }

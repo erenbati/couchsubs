@@ -1330,7 +1330,7 @@ public class AppControllerRunTests
         controller.Settings = controller.Settings with { LocalAiBaseUrl = LocalAiServer.LmStudioUrl, LocalAiModel = " qwen2.5-7b-instruct " };
         Assert.Equal(OnlineKeyState.Valid, (await controller.TestLocalAiAsync()).State);
         var (server, key) = Assert.Single(services.LocalTests);
-        Assert.Equal("http://localhost:1234/v1/chat/completions", server.ChatUrl.AbsoluteUri);
+        Assert.Equal("http://127.0.0.1:1234/v1/chat/completions", server.ChatUrl.AbsoluteUri);
         Assert.Equal("qwen2.5-7b-instruct", server.Model);
         Assert.Equal("", key);
         Assert.False(controller.HasKey(TranslationEngine.Local));

@@ -100,4 +100,33 @@ class PackedRereadTest {
             } finally { executor.shutdownNow() }
         }
     }
+
+    /**
+     * Temiz ama yarım görünen satır bekletilirken gelen bozuk okumalı yeni satır yok sayılıyordu; kararlayıcı onu
+     * gönderilmiş saydığı için ekranda kaldığı sürece bir daha hiç çevrilmiyordu. Bekleme bitince o da çevrilmeli.
+     */
+    @Test fun misreadLineArrivingDuringCleanHoldIsTranslatedLater() {
+        val held = "I told you to stay close"
+        val next = "Where is the bóat?"
+        val executor = Executors.newSingleThreadExecutor()
+        val requested = Collections.synchronizedList(mutableListOf<String>())
+        val translator = object : TextTranslator {
+            override fun translate(text: String): String { requested.add(text); return "TR: $text" }
+        }
+        val sender = Recorder()
+        var time = 0L
+        val pipeline = SubtitlePipeline(translator, sender, { time }, executor).apply {
+            holdReadings = true
+            packLookup = { null }
+        }
+        try {
+            (List(2) { held } + List(20) { next }).forEach { text ->
+                pipeline.process(Reading.fromText(text), CropRegion().box)
+                executor.submit {}.get(5, TimeUnit.SECONDS)
+                time += 100
+            }
+            assertEquals(listOf(held, next), requested)
+            assertEquals("TR: $next", sender.sent.last())
+        } finally { executor.shutdownNow() }
+    }
 }

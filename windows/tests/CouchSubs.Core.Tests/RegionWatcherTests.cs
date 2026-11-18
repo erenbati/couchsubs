@@ -157,6 +157,31 @@ public class RegionWatcherTests
         Assert.Single(server.Sent);
     }
 
+    /// <summary>Ekranda zaten Türkçe olan yazı (bozuk okunmuş olsa da) çevrilmez, kutu gösterilmez (#289).</summary>
+    [Fact]
+    public async Task TurkishTextIsNotTranslated()
+    {
+        var reader = new Reader { Lines = [Line("Sistem Yazillml Güncellem€")] };
+        var translator = new Translator();
+        var server = new Server();
+        var watcher = new RegionWatcher(reader, translator, server);
+        for (var i = 0; i < 3; i++) await watcher.PassAsync(Shade(10), [Quest]);
+        Assert.Empty(translator.Calls);
+        Assert.All(server.Sent, sent => Assert.Equal("", sent.Text));
+    }
+
+    [Fact]
+    public async Task EnglishTextWithTurkishNameIsTranslated()
+    {
+        var reader = new Reader { Lines = [Line("Atatürk said no.")] };
+        var translator = new Translator();
+        var server = new Server();
+        var watcher = new RegionWatcher(reader, translator, server);
+        for (var i = 0; i < 3; i++) await watcher.PassAsync(Shade(10), [Quest]);
+        Assert.Equal(["Atatürk said no."], translator.Calls);
+        Assert.Equal(["TR: Atatürk said no."], server.Sent.Select(s => s.Text));
+    }
+
     [Fact]
     public async Task SameTextAtNewGeometryUpdatesRegionWithoutRetranslating()
     {

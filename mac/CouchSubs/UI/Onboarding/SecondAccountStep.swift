@@ -13,6 +13,8 @@ struct SecondAccountStep: View {
                 NumberedRow(number: 2, text: "On the PS5, choose Add User and sign in once with the new account.")
                 NumberedRow(number: 3, text: "Still as the new user, go to Settings › System › Remote Play and turn on Enable Remote Play.")
                 NumberedRow(number: 4, text: "Switch back to your own user. You only do this once.")
+                // Kol ikinci hesaba atanırsa ana hesapla açılan oyun onu kendi kolu saymaz (GitHub #231).
+                HintText(text: "When you turn on the controller to play, choose your MAIN account on the PS5. Don't play with the second account CouchSubs signs in with, or the controller won't work in the game.")
                 // İkinci hesabı olmayanlar: görüntü bu Mac'teki Remote Play penceresinden okunur, PSN girişi ve PS5
                 // eşleştirmesi atlanır.
                 Card {
