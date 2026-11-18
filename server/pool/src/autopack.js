@@ -190,6 +190,7 @@ export function parseReply(reply, items) {
   }
   const out = new Map();
   if (!Array.isArray(parsed?.items)) return out;
+  const duplicates = new Set();
   for (const it of parsed.items) {
     const id = it?.id;
     if (typeof id !== "number" && !(typeof id === "string" && /^\d+$/.test(id))) continue;
@@ -198,6 +199,13 @@ export function parseReply(reply, items) {
     if (!Number.isSafeInteger(i) || !items[i] || !tr) continue;
     // Açıklama ya da birden çok satır yazmış, çok uzun ya da Türkçe değil: alınmaz.
     if (/[{}]/.test(tr) || tr.length > items[i].en.length * 3 + 40) continue;
+    // Ambiguous AI IDs must not silently overwrite an earlier, different subtitle.
+    if (duplicates.has(i)) continue;
+    if (out.has(i)) {
+      out.delete(i);
+      duplicates.add(i);
+      continue;
+    }
     out.set(i, tr);
   }
   return out;

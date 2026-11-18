@@ -379,3 +379,15 @@ test("long ASCII game names keep separate translation caches when their pack IDs
   const cachedKeys = cacheFiles.map((name) => Object.keys(JSON.parse(stored.get(name)).lines));
   assert.deepEqual(cachedKeys.map((keys) => keys.length), [1, 1]);
 });
+
+test("duplicate AI item IDs cannot overwrite a subtitle with an ambiguous translation", () => {
+  const items = [{ en: "The gates are closing now." }, { en: "We have to leave immediately." }];
+  const reply = { response: JSON.stringify({ items: [
+    { id: "0", tr: "Kap?lar ?imdi kapan?yor." },
+    { id: 0, tr: "Hemen gitmeliyiz." },
+    { id: "1", tr: "Derhal ayr?lmam?z gerekiyor." },
+  ] }) };
+  assert.deepEqual([...parseReply(reply, items)],
+    [[1, "Derhal ayr?lmam?z gerekiyor."]],
+    "duplicated IDs must be discarded, leaving the independent translation untouched");
+});
