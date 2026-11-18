@@ -167,8 +167,8 @@ class SubtitleStabilizer(
             if (history.size > HISTORY_SIZE) history.removeAt(0)
             sent = ""
             sentRaw = ""
-            lastSeen = null
         }
+        lastSeen = null
         clearPending = false
     }
 
@@ -185,7 +185,7 @@ class SubtitleStabilizer(
         if (sent.isNotEmpty()) clearPending = true
         sent = ""
         sentRaw = ""
-        lastSeen = null
+        if (!clearPending) lastSeen = null
     }
 
     /** Son gönderilen satırı unutur (çevirisi başarısız oldu); ekranda kaldıkça en erken [RETRY_AFTER_MS] sonra yeniden çevrilir. */
@@ -197,7 +197,7 @@ class SubtitleStabilizer(
         retryAt = now() + RETRY_AFTER_MS
         sent = ""
         sentRaw = ""
-        lastSeen = null
+        if (!clearPending) lastSeen = null
         candidate = ""
         candidateCount = 0
     }

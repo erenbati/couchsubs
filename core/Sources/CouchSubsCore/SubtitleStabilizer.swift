@@ -188,8 +188,8 @@ public struct SubtitleStabilizer {
             if history.count > Self.historySize { history.removeFirst() }
             sent = ""
             sentRaw = ""
-            lastSeen = nil
         }
+        lastSeen = nil
         clearPending = false
     }
 
@@ -214,7 +214,7 @@ public struct SubtitleStabilizer {
         if !sent.isEmpty { clearPending = true }
         sent = ""
         sentRaw = ""
-        lastSeen = nil
+        if !clearPending { lastSeen = nil }
     }
 
     /// Son gönderilen satırı unutur (ör. çevirisi başarısız oldu); satır ekranda kaldıkça yeniden kararlı sayılıp çevrilir,
@@ -227,7 +227,7 @@ public struct SubtitleStabilizer {
         retryAt = now() + Self.retryAfterMs
         sent = ""
         sentRaw = ""
-        lastSeen = nil
+        if !clearPending { lastSeen = nil }
         candidate = ""
         candidateCount = 0
         garbledPending = ""

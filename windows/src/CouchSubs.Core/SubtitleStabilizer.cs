@@ -238,8 +238,8 @@ public sealed class SubtitleStabilizer(double similarity = 0.85, int stableFrame
             if (history.Count > HistorySize) history.RemoveAt(0);
             sent = "";
             sentRaw = "";
-            lastSeen = null;
         }
+        lastSeen = null;
         clearPending = false;
     }
 
@@ -268,7 +268,7 @@ public sealed class SubtitleStabilizer(double similarity = 0.85, int stableFrame
         retryAt = now() + RetryAfterMs;
         sent = "";
         sentRaw = "";
-        lastSeen = null;
+        if (!clearPending) lastSeen = null;
         candidate = "";
         candidateCount = 0;
         garbledPending = "";
@@ -284,7 +284,7 @@ public sealed class SubtitleStabilizer(double similarity = 0.85, int stableFrame
         if (sent.Length > 0) clearPending = true;
         sent = "";
         sentRaw = "";
-        lastSeen = null;
+        if (!clearPending) lastSeen = null;
     }
 
     public StabilizerAction Reset()
