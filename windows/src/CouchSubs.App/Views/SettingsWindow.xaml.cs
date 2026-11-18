@@ -7,6 +7,8 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Navigation;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using CouchSubs.App.Services;
 using CouchSubs.Core;
 using CouchSubs.Core.LgTv;
@@ -330,27 +332,125 @@ public partial class SettingsWindow : Window
             });
             return;
         }
-        foreach (var pack in packs) PackList.Items.Add(PackTile(pack.Title, text.Format("%@ lines", pack.Entries.ToString("N0"))));
+        foreach (var pack in packs) PackList.Items.Add(PackTile(pack, text.Format("%@ lines", pack.Entries.ToString("N0"))));
     }
 
-    /// <summary>Bir paketin karosu: adın baş harflerinden rozet, ad ve satır sayısı.</summary>
-    private FrameworkElement PackTile(string title, string lines)
+    /// <summary>Square, user-selected cover art when available; otherwise the existing three-letter badge.</summary>
+    private FrameworkElement PackTile(GamePackLibrary.Info pack, string lines)
     {
-        var badge = new Border { Style = (Style)FindResource("GameMonogram"), Margin = new Thickness(0, 0, 16, 0) };
-        var initials = new TextBlock
+        var text = Localizer.Current;
+        var badge = new Border { Style = (Style)FindResource("GameMonogram") };
+        var coverPath = GameCoverStore.PathFor(pack.Id);
+        if (coverPath is not null && File.Exists(coverPath))
         {
-            Text = Initials(title), FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.NoWrap,
+            try
+            {
+                // OnLoad releases the file before the image is displayed, so replacing a cover works immediately.
+                using var stream = File.OpenRead(coverPath);
+                var cover = new BitmapImage();
+                cover.BeginInit();
+                cover.CacheOption = BitmapCacheOption.OnLoad;
+                cover.DecodePixelWidth = 128;
+                cover.StreamSource = stream;
+                cover.EndInit();
+                cover.Freeze();
+                badge.Child = new Image
+                {
+                    Source = cover, Width = 52, Height = 52, Stretch = Stretch.UniformToFill,
+                    Clip = new RectangleGeometry(new Rect(0, 0, 52, 52), 8, 8),
+                };
+            }
+            catch (Exception error) when (error is IOException or FormatException or NotSupportedException)
+            {
+                // A corrupted optional cover must never hide the pack or prevent opening Settings.
+            }
+        }
+        if (badge.Child is null)
+        {
+            var initials = new TextBlock
+            {
+                Text = Initials(pack.Title), FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.NoWrap,
+            };
+            initials.SetResourceReference(TextBlock.FontSizeProperty, "captionFontSize");
+            badge.Child = initials;
+        }
+
+        // Local artwork is chosen by the user, never downloaded automatically or bundled in the public repository.
+        var coverButton = new Button
+        {
+            Style = (Style)FindResource("IconButton"), Width = 52, Height = 52, Padding = new Thickness(0),
+            BorderThickness = new Thickness(0), Background = Brushes.Transparent,
+            Content = badge, Margin = new Thickness(0, 0, 16, 0), ToolTip = text["Choose game cover…"],
         };
-        initials.SetResourceReference(TextBlock.FontSizeProperty, "captionFontSize");
-        badge.Child = initials;
-        var name = new TextBlock { Text = title, Style = (Style)FindResource("HeadlineText") };
-        var count = new TextBlock { Text = lines, Style = (Style)FindResource("CaptionText"), Margin = new Thickness(0, 4, 0, 0) };
+        System.Windows.Automation.AutomationProperties.SetName(coverButton,
+            text["Choose game cover…"] + " " + pack.Title);
+        coverButton.Click += (_, _) => ChoosePackCover(pack.Id);
+        var choose = new MenuItem { Header = text["Choose game cover…"] };
+        choose.Click += (_, _) => ChoosePackCover(pack.Id);
+        var remove = new MenuItem
+        {
+            Header = text["Remove game cover"], IsEnabled = coverPath is not null && File.Exists(coverPath),
+        };
+        remove.Click += (_, _) =>
+        {
+            try { GameCoverStore.Remove(pack.Id); ShowPacks(); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                MessageBox.Show(this, text["The game cover could not be saved."], text["Game packs"],
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        };
+        coverButton.ContextMenu = new ContextMenu { Items = { choose, remove } };
+
+        var name = new TextBlock { Text = pack.Title, Style = (Style)FindResource("HeadlineText") };
+        var count = new TextBlock { Text = lines, Style = (Style)FindResource("CaptionText"),
+            Margin = new Thickness(0, 4, 0, 0) };
         var row = new DockPanel();
-        DockPanel.SetDock(badge, Dock.Left);
-        row.Children.Add(badge);
+        DockPanel.SetDock(coverButton, Dock.Left);
+        row.Children.Add(coverButton);
         row.Children.Add(new StackPanel { VerticalAlignment = VerticalAlignment.Center, Children = { name, count } });
         return new Controls.Card { Content = row, Margin = new Thickness(8) };
+    }
+
+    /// <summary>Import and center-crop one cover to a 128px PNG; no network or image dependency is needed.</summary>
+    private void ChoosePackCover(string packId)
+    {
+        var text = Localizer.Current;
+        if (GameCoverStore.PathFor(packId) is null) return;
+        var picker = new OpenFileDialog
+        {
+            Title = text["Choose game cover…"], CheckFileExists = true,
+            Filter = "Images (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg",
+        };
+        if (picker.ShowDialog(this) != true) return;
+        try
+        {
+            if (new FileInfo(picker.FileName).Length > 8 * 1024 * 1024)
+                throw new InvalidDataException("Image exceeds 8 MB.");
+            using var source = File.OpenRead(picker.FileName);
+            var decoder = BitmapDecoder.Create(source, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+            if (decoder.Frames.Count == 0) throw new InvalidDataException("Empty image.");
+            var frame = decoder.Frames[0];
+            var side = Math.Min(frame.PixelWidth, frame.PixelHeight);
+            if (side == 0) throw new InvalidDataException("Empty image.");
+            var crop = new CroppedBitmap(frame,
+                new Int32Rect((frame.PixelWidth - side) / 2, (frame.PixelHeight - side) / 2, side, side));
+            var thumb = new TransformedBitmap(crop, new ScaleTransform(128.0 / side, 128.0 / side));
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(thumb));
+            using var output = new MemoryStream();
+            encoder.Save(output);
+            GameCoverStore.Save(packId, output.ToArray());
+            ShowPacks();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException
+            or InvalidDataException or ArgumentException or FormatException or NotSupportedException)
+        {
+            MessageBox.Show(this, text["The game cover could not be saved."], text["Game packs"],
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     /// <summary>"Grand Theft Auto V" → "GTA": ilk üç sözcüğün baş harfleri (rakam olduğu gibi).</summary>
