@@ -23,6 +23,18 @@ class PoolPackTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             pp.wrangler("DELETE FROM lines")
 
+    def test_generated_read_queries_reject_unbounded_or_invalid_limits(self):
+        for n in (0, -1, -100):
+            with self.subTest(value=n):
+                with self.assertRaises(SystemExit):
+                    pp.titles_sql(limit=n)
+                with self.assertRaises(SystemExit):
+                    pp.query_sql(title="PPSA12345", limit=n)
+                with self.assertRaises(SystemExit):
+                    pp.query_sql(title="PPSA12345", min_installs=n)
+        self.assertIn("LIMIT 50", pp.titles_sql(50))
+        self.assertIn("LIMIT 5000", pp.query_sql(title="PPSA12345"))
+
     def test_clean_merges_sorts_and_drops_noise(self):
         rows = [
             {"text": "LUCIA: Get in the car, Jason.", "installs": 3},

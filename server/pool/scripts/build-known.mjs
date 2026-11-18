@@ -13,7 +13,12 @@ const dir = process.argv[2] ?? fileURLToPath(new URL("../../../core/Sources/Couc
 const keys = new Set();
 for (const name of readdirSync(dir).filter((n) => n.endsWith(".json.gz") && !n.startsWith("pool-"))) {
   const pack = JSON.parse(gunzipSync(readFileSync(join(dir, name))).toString("utf8"));
-  for (const k of [...Object.keys(pack.entries ?? {}), ...Object.keys(pack.segments ?? {})]) keys.add(BigInt("0x" + k));
+  for (const k of [...Object.keys(pack.entries ?? {}), ...Object.keys(pack.segments ?? {})]) {
+    // BigUint64Array silently truncates keys beyond 64 bits. Refuse malformed input
+    // before emitting a known-keys file that cannot protect manual translations.
+    if (!/^[0-9a-f]{16}$/i.test(k)) throw new Error("Invalid 64-bit subtitle key in " + name + ": " + k);
+    keys.add(BigInt("0x" + k));
+  }
 }
 const list = BigUint64Array.from([...keys].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
 process.stderr.write(`${list.length} anahtar\n`);

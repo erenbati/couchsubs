@@ -480,3 +480,22 @@ test("mark-exported refuses malformed individual hash keys before executing SQL"
     assert.equal(writes, 0, "invalid hashes must not touch D1");
   }
 });
+
+test("admin export rejects explicitly invalid game filters instead of exporting all games", async () => {
+  const DB = fakeDB();
+  const env = { DB, ADMIN_TOKEN: "t" };
+  for (const query of ["title=invalid", "title=", "title=12345", "game=%00", "game=",
+    "title=PPSA12345&game=%00"]) {
+    DB.last = null;
+    const response = await worker.fetch(new Request("https://pool.test/v1/export?" + query, {
+      headers: { authorization: "Bearer t" },
+    }), env);
+    assert.equal(response.status, 400, query + " must be rejected");
+    assert.equal(DB.last, null, "invalid filter must not execute an unfiltered SQL query");
+  }
+  const normal = await worker.fetch(new Request("https://pool.test/v1/export?title=ppsa12345", {
+    headers: { authorization: "Bearer t" },
+  }), env);
+  assert.equal(normal.status, 200);
+  assert.match(DB.last.sql, /title_id=\?/);
+});

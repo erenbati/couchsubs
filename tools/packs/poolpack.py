@@ -38,11 +38,15 @@ def sql_text(value):
 
 
 def titles_sql(limit=50):
+    if limit <= 0:
+        raise SystemExit("limit pozitif olmalı (SQLite LIMIT -1 sınırsız okur)")
     return ("SELECT title_id, game, COUNT(*) AS lines, SUM(installs) AS sightings FROM lines "
             f"WHERE title_id IS NOT NULL GROUP BY title_id, game ORDER BY lines DESC LIMIT {int(limit)}")
 
 
 def query_sql(title=None, game=None, min_installs=2, limit=5000, include_exported=False):
+    if limit <= 0 or min_installs <= 0:
+        raise SystemExit("limit ve en az kurulum sayısı pozitif olmalı")
     where = [f"installs >= {int(min_installs)}"]
     if not include_exported:
         where.append("exported = 0")
