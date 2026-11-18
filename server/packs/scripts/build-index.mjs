@@ -23,8 +23,18 @@ const packs = readdirSync(dir)
     const id = parsed.id ?? fileId;
     // README'deki R2 yükleme döngüsü dosya adını kullanır, API ise indeks kimliğini.
     if (id !== fileId) throw new Error(`Pack ID ${id} does not match file ${name}`);
-    const entries = Object.keys(parsed.entries ?? parsed).length;
-    return { id, title: parsed.title ?? id, version, sha256: createHash("sha256").update(data).digest("hex"), size: data.length, entries };
+    // Keep the generated index compatible with the packs Worker validator.
+    if (typeof id !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) {
+      throw new Error("Invalid pack ID");
+    }
+    const title = parsed.title ?? id;
+    if (typeof title !== "string" || !title.trim()) throw new Error("Invalid pack title");
+    const record = (v) => v && typeof v === "object" && !Array.isArray(v);
+    if (parsed.format === 2 && !record(parsed.entries)) throw new Error("Invalid format 2 pack entries");
+    const source = parsed.entries ?? parsed;
+    if (!record(source)) throw new Error("Invalid pack entries");
+    const entries = Object.keys(source).length;
+    return { id, title, version, sha256: createHash("sha256").update(data).digest("hex"), size: data.length, entries };
   });
 
 process.stdout.write(JSON.stringify({ packs }, null, 2) + "\n");

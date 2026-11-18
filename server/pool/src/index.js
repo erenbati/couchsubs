@@ -210,7 +210,8 @@ async function exportLines(url, env) {
 
 async function markExported(req, env) {
   const body = await req.json().catch(() => null);
-  const keys = Array.isArray(body?.keys) ? body.keys.slice(0, 20000) : [];
+  if (!Array.isArray(body?.keys)) return json({ error: "bad_request" }, 400);
+  const keys = body.keys.slice(0, 20000);
   for (let i = 0; i < keys.length; i += 100) {
     await env.DB.batch(keys.slice(i, i + 100).map((k) =>
       env.DB.prepare("UPDATE lines SET exported=1 WHERE key=?").bind(String(k))));

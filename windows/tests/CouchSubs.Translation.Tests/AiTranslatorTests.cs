@@ -477,7 +477,11 @@ public class AiTranslatorTests
         // Ollama'da düşünme kapalı (#295).
         Assert.False(json["think"]!.GetValue<bool>());
         Assert.Equal("none", json["reasoning_effort"]!.GetValue<string>());
-        Assert.Equal(["max_tokens", "messages", "model", "reasoning_effort", "stream", "temperature", "think"], json.Select(p => p.Key).Order());
+        Assert.Equal(["keep_alive", "max_tokens", "messages", "model", "reasoning_effort", "stream", "temperature", "think"], json.Select(p => p.Key).Order());
+        // Model bellekte kalır; uzun sessizlikten sonra ilk satır yükleme beklemez (#306).
+        Assert.Equal("24h", json["keep_alive"]!.GetValue<string>());
+        // Aynı satır her seferinde aynı çevrilsin (#306).
+        Assert.Equal(0, json["temperature"]!.GetValue<double>());
         Assert.Equal("qwen2.5:7b", json["model"]!.GetValue<string>());
         Assert.Equal(AiRequest.LocalTemperature, json["temperature"]!.GetValue<double>());
         Assert.Equal(AiRequest.MaxOutputTokens, json["max_tokens"]!.GetValue<int>());
@@ -499,9 +503,68 @@ public class AiTranslatorTests
         Assert.Equal("Bearer lm-key", Assert.Single(request.Headers.GetValues("Authorization")));
         var json = JsonNode.Parse(body)!.AsObject();
         Assert.Equal("qwen2.5-7b-instruct", json["model"]!.GetValue<string>());
-        // Düşünme alanları yalnız Ollama'ya gider.
+        // Düşünme alanları ve keep_alive yalnız Ollama'ya gider.
         Assert.False(json.ContainsKey("think"));
         Assert.False(json.ContainsKey("reasoning_effort"));
+        Assert.False(json.ContainsKey("keep_alive"));
+        Assert.Equal(0, json["temperature"]!.GetValue<double>());
+    }
+
+    /// <summary>Ek talimat (#306) bütün yapay zekâ hizmetlerinde sistem talimatının sonuna eklenir; boşsa hiçbir şey değişmez.</summary>
+    [Theory]
+    [InlineData(AiProvider.Gemini)]
+    [InlineData(AiProvider.OpenAi)]
+    [InlineData(AiProvider.Claude)]
+    [InlineData(AiProvider.Local)]
+    public void InstructionIsAppendedToSystemPrompt(AiProvider provider)
+    {
+        static string System(AiProvider provider, string? instruction)
+        {
+            var request = AiRequest.Build(provider, "k", provider.DefaultModel(), ["Run!"], [], instruction: instruction);
+            var json = JsonNode.Parse(request.Content!.ReadAsStringAsync().Result)!;
+            return provider switch
+            {
+                AiProvider.Gemini => json["systemInstruction"]!["parts"]![0]!["text"]!.GetValue<string>(),
+                AiProvider.Claude => json["system"]!.GetValue<string>(),
+                _ => json["messages"]![0]!["content"]!.GetValue<string>(),
+            };
+        }
+        Assert.Equal(AiRequest.SystemPrompt, System(provider, null));
+        Assert.Equal(AiRequest.SystemPrompt, System(provider, "   \n "));
+        Assert.Equal(AiRequest.SystemPrompt + "\n\nTranslate swear words without softening them.",
+                     System(provider, "  Translate swear words without softening them.\n"));
+    }
+
+    [Fact]
+    public void InstructionIsLimited()
+    {
+        Assert.Null(AiRequest.Instruction(null));
+        Assert.Null(AiRequest.Instruction("  "));
+        Assert.Equal(AiRequest.MaxInstructionLength, AiRequest.Instruction(new string('a', 5000))!.Length);
+        Assert.Null(AiRequest.InstructionTag(""));
+        Assert.Equal(AiRequest.InstructionTag("Be blunt."), AiRequest.InstructionTag(" Be blunt. "));
+        Assert.NotEqual(AiRequest.InstructionTag("Be blunt."), AiRequest.InstructionTag("Be polite."));
+    }
+
+    /// <summary>Talimat değişince önbellekteki eski çeviri dönmez; talimat yoksa eski kayıtlar geçerli kalır.</summary>
+    [Fact]
+    public async Task InstructionSeparatesCache()
+    {
+        var cache = new TranslationCache();
+        var fake = new FakeAi();
+        AiTranslator Make(string? instruction) => new(AiProvider.OpenAi, Secret, null, new FakeLocal(), new HttpClient(fake), cache,
+                                                      new RequestBudget(1000), instruction: instruction);
+        await Make(null).TranslateAsync("Run!");
+        Assert.Single(fake.Requests);
+        await Make("").TranslateAsync("Run!");
+        Assert.Single(fake.Requests);
+        await Make("Be blunt.").TranslateAsync("Run!");
+        Assert.Equal(2, fake.Requests.Count);
+        Assert.EndsWith("\n\nBe blunt.", JsonNode.Parse(fake.Requests[1].Body)!["messages"]![0]!["content"]!.GetValue<string>());
+        await Make("Be blunt.").TranslateAsync("Run!");
+        Assert.Equal(2, fake.Requests.Count);
+        await Make("Be polite.").TranslateAsync("Run!");
+        Assert.Equal(3, fake.Requests.Count);
     }
 
     /// <summary>Ayarlarda elle yazılmış "localhost" istekte 127.0.0.1 olur (Windows'ta IPv6 gecikmesi, #295); başka adrese dokunulmaz.</summary>

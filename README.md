@@ -165,6 +165,16 @@ istiyorsa **API anahtarı (isteğe bağlı)** alanına yazın. İlk istek modeli
 Bağlantıyı dene bunu da bekler. Çeviriler sunucu adresi ve model adıyla ayrı saklanır; modeli değiştirince eski
 modelin çevirileri karışmaz.
 
+Yerel model sıcaklık 0 ile çalışır: aynı satır her seferinde aynı çevrilir. Ollama'ya giden her istek modeli 24 saat
+bellekte tutar (`keep_alive`); oyunda uzun süre altyazı çıkmasa da ilk satır modelin yeniden yüklenmesini beklemez.
+Modeli daha erken boşaltmak isterseniz `ollama stop <model>` yazın. LM Studio'da modelin bellekte kalma süresi LM
+Studio'nun kendi ayarlarındadır.
+
+**Ek talimat:** Yapay zekâ motorlarında (Gemini, OpenAI, Claude, yerel model) Ayarlar'daki çeviri motoru bölümünde bulunan
+**Ek talimat** kutusuna yazdığınız metin çevirmenin talimatının sonuna eklenir (en çok 1000 karakter). Örneğin
+"Küfürleri yumuşatmadan çevir." yazabilirsiniz. Boş bırakılırsa hiçbir şey değişmez; talimatı değiştirince önceki
+talimatla yapılmış çeviriler yeniden kullanılmaz.
+
 ## Gizlilik
 
 CouchSubs hesap şifrenizi görmez (giriş doğrudan Sony'nin sayfasında yapılır), altyazıları ve oyun

@@ -454,6 +454,7 @@ final class AppModel: ObservableObject {
                 || settings.onlineEngine != oldValue.onlineEngine || settings.geminiModel != oldValue.geminiModel
                 || settings.openAIModel != oldValue.openAIModel || settings.claudeModel != oldValue.claudeModel
                 || settings.localAIBaseURL != oldValue.localAIBaseURL || settings.localAIModel != oldValue.localAIModel
+                || settings.aiInstruction != oldValue.aiInstruction
             if translationChanged { Task { await refreshTranslatorStatus() } }
             let languageChanged = settings.sourceLanguage != oldValue.sourceLanguage
                 || settings.targetLanguage != oldValue.targetLanguage
@@ -1483,12 +1484,13 @@ final class AppModel: ObservableObject {
             // Yerel modelin anahtarı isteğe bağlıdır; önbellekte sunucu ve model ayrı tutulur.
             let key = store.load(String.self, for: storeKey) ?? ""
             online = AITranslator(provider: .local, key: key, model: server.model, server: server, fallback: local,
-                                  cache: Self.translationCache(engine: server.engineID, source: source, target: target), game: game)
+                                  cache: Self.translationCache(engine: server.engineID, source: source, target: target), game: game,
+                                  instruction: settings.aiInstruction)
         } else if let key = store.load(String.self, for: storeKey), let provider = engine.aiProvider {
             let model = provider.model(settings.model(for: provider)).id
             online = AITranslator(provider: provider, key: key, model: model, fallback: local,
                                   cache: Self.translationCache(engine: provider.engineID(model: model), source: source, target: target),
-                                  game: game)
+                                  game: game, instruction: settings.aiInstruction)
         } else if let key = store.load(String.self, for: storeKey) {
             online = DeepLTranslator(key: key, fallback: local,
                                      cache: Self.translationCache(engine: DeepLTranslator.engineID, source: source, target: target))

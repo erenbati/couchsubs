@@ -135,7 +135,14 @@ test("autopack never replaces an absent or unreadable pack index", async () => {
     })),
     skip: {}, fail: {},
   };
-  for (const rawIndex of [null, "{broken json", JSON.stringify({ packs: null })]) {
+  for (const rawIndex of [
+    null, "{broken json", JSON.stringify({ packs: null }),
+    JSON.stringify({ packs: [
+      { id: "pool-genel", version: 1 },
+      { id: "pool-genel", version: 2 },
+    ] }),
+    JSON.stringify({ packs: [null] }),
+  ]) {
     const state = { night: "2026-11-20", queue: [job], translated: 0, done: [] };
     const stored = new Map([
       ["auto/state.json", JSON.stringify(state)],
@@ -169,7 +176,11 @@ test("autopack must not publish an empty pack when an existing translation cache
     queue: [{ titleId: GENERAL, game: null, lines: 350 }],
     translated: 0, done: [],
   };
-  for (const cacheRaw of ["{broken", JSON.stringify({ lines: [], skip: {} }), JSON.stringify({ lines: null, skip: {} })]) {
+  for (const cacheRaw of [
+    "{broken", JSON.stringify({ lines: [], skip: {} }), JSON.stringify({ lines: null, skip: {} }),
+    JSON.stringify({ lines: { "1111111111111111": null }, skip: {} }),
+    JSON.stringify({ lines: { "1111111111111111": { k: "not-a-hash", en: "We must leave now.", tr: "?imdi gitmeliyiz." } }, skip: {} }),
+  ]) {
     const stored = new Map([
       ["auto/state.json", JSON.stringify(state)],
       ["index.json", JSON.stringify({ packs: [{ id: "pool-genel", version: 1 }] })],
@@ -422,4 +433,16 @@ test("unchanged cache re-publishes a pack whose R2 object disappeared", async ()
   assert.equal(again.built, false);
   assert.equal(written.includes("packs/pool-genel.json.gz"), false);
   assert.equal(JSON.parse(stored.get("index.json")).packs[0].version, 5);
+});
+
+test("duplicate AI item IDs cannot overwrite a subtitle with an ambiguous translation", () => {
+  const items = [{ en: "The gates are closing now." }, { en: "We have to leave immediately." }];
+  const reply = { response: JSON.stringify({ items: [
+    { id: "0", tr: "Kap?lar ?imdi kapan?yor." },
+    { id: 0, tr: "Hemen gitmeliyiz." },
+    { id: "1", tr: "Derhal ayr?lmam?z gerekiyor." },
+  ] }) };
+  assert.deepEqual([...parseReply(reply, items)],
+    [[1, "Derhal ayr?lmam?z gerekiyor."]],
+    "duplicated IDs must be discarded, leaving the independent translation untouched");
 });

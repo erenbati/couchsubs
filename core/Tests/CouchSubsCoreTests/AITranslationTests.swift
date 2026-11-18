@@ -487,7 +487,11 @@ final class AITranslationTests: XCTestCase {
         // Ollama'da düşünme kapalı (#295).
         XCTAssertEqual(body["think"] as? Bool, false)
         XCTAssertEqual(body["reasoning_effort"] as? String, "none")
-        XCTAssertEqual(Set(body.keys), ["model", "messages", "temperature", "max_tokens", "stream", "think", "reasoning_effort"])
+        XCTAssertEqual(Set(body.keys), ["model", "messages", "temperature", "max_tokens", "stream", "think", "reasoning_effort", "keep_alive"])
+        // Model bellekte kalır; uzun sessizlikten sonra ilk satır yükleme beklemez (#306).
+        XCTAssertEqual(body["keep_alive"] as? String, "24h")
+        // Aynı satır her seferinde aynı çevrilsin (#306).
+        XCTAssertEqual(body["temperature"] as? Double, 0)
         let messages = body["messages"] as? [[String: Any]] ?? []
         XCTAssertEqual(messages.map { $0["role"] as? String }, ["system", "user"])
         XCTAssertEqual(messages[0]["content"] as? String, AIRequest.systemPrompt)
@@ -501,9 +505,56 @@ final class AITranslationTests: XCTestCase {
         XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:1234/v1/chat/completions")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer lm-key")
         XCTAssertEqual(body["model"] as? String, "qwen2.5-7b-instruct")
-        // Düşünme alanları yalnız Ollama'ya gider.
+        // Düşünme alanları ve keep_alive yalnız Ollama'ya gider.
         XCTAssertNil(body["think"])
         XCTAssertNil(body["reasoning_effort"])
+        XCTAssertNil(body["keep_alive"])
+        XCTAssertEqual(body["temperature"] as? Double, 0)
+    }
+
+    /// Ek talimat (#306) bütün yapay zekâ hizmetlerinde sistem talimatının sonuna eklenir; boşsa hiçbir şey değişmez.
+    func testInstructionIsAppendedToSystemPrompt() throws {
+        func system(_ provider: AIProvider, _ instruction: String?) throws -> String? {
+            let request = AIRequest.make(provider: provider, key: "k", model: provider.defaultModel, sentences: ["Run!"], context: [],
+                                         instruction: instruction)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBody)) as? [String: Any])
+            switch provider {
+            case .gemini:
+                return (((json["systemInstruction"] as? [String: Any])?["parts"] as? [[String: Any]])?.first?["text"]) as? String
+            case .claude: return json["system"] as? String
+            case .openAI, .local: return (json["messages"] as? [[String: Any]])?.first?["content"] as? String
+            }
+        }
+        for provider in AIProvider.allCases {
+            XCTAssertEqual(try system(provider, nil), AIRequest.systemPrompt)
+            XCTAssertEqual(try system(provider, "  \n "), AIRequest.systemPrompt)
+            XCTAssertEqual(try system(provider, " Translate swear words without softening them.\n"),
+                           AIRequest.systemPrompt + "\n\nTranslate swear words without softening them.")
+        }
+        XCTAssertEqual(AIRequest.instruction(String(repeating: "a", count: 5000))?.count, AIRequest.maxInstructionLength)
+        XCTAssertNil(AIRequest.instructionTag(" "))
+        XCTAssertEqual(AIRequest.instructionTag("Be blunt."), AIRequest.instructionTag(" Be blunt. "))
+        XCTAssertNotEqual(AIRequest.instructionTag("Be blunt."), AIRequest.instructionTag("Be polite."))
+    }
+
+    /// Talimat değişince önbellekteki eski çeviri dönmez; talimat yoksa eski kayıtlar geçerli kalır.
+    func testInstructionSeparatesCache() async throws {
+        let cache = TranslationCache()
+        func make(_ instruction: String?) -> AITranslationCore {
+            AITranslationCore(provider: .openAI, key: secret, session: FakeAI.session(), cache: cache,
+                              budget: RequestBudget(perMinute: 1000), instruction: instruction)
+        }
+        _ = try await make(nil).translate("Run!", fallback: local)
+        _ = try await make("").translate("Run!", fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 1)
+        _ = try await make("Be blunt.").translate("Run!", fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 2)
+        let messages = FakeAI.requests[1].body["messages"] as? [[String: Any]] ?? []
+        XCTAssertTrue((messages.first?["content"] as? String ?? "").hasSuffix("\n\nBe blunt."))
+        _ = try await make("Be blunt.").translate("Run!", fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 2)
+        _ = try await make("Be polite.").translate("Run!", fallback: local)
+        XCTAssertEqual(FakeAI.requests.count, 3)
     }
 
     /// Ayarlarda elle yazılmış "localhost" istekte 127.0.0.1 olur (Windows'ta IPv6 gecikmesi, #295); başka adrese dokunulmaz.

@@ -381,6 +381,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
                                      || old.GeminiModel != value.GeminiModel || old.OpenAiModel != value.OpenAiModel
                                      || old.ClaudeModel != value.ClaudeModel
                                      || old.LocalAiBaseUrl != value.LocalAiBaseUrl || old.LocalAiModel != value.LocalAiModel
+                                     || old.AiInstruction != value.AiInstruction
                                      || old.TranslationDevice != value.TranslationDevice
                                      || old.CpuTranslationThreads != value.CpuTranslationThreads;
             if (translationChanged && !isRunning) RefreshTranslatorStatus();
@@ -1899,13 +1900,13 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         if (engine == TranslationEngine.Local && settings.LocalAiServer is { } server)
         {
             // Yerel modelin anahtarı isteğe bağlıdır; önbellekte sunucu ve model ayrı tutulur.
-            online = services.MakeLocalAiTranslator(server, store.Load<string>(storeKey) ?? "", fallback, game);
+            online = services.MakeLocalAiTranslator(server, store.Load<string>(storeKey) ?? "", fallback, game, settings.AiInstruction);
         }
         else
         {
             if (store.Load<string>(storeKey) is not { Length: > 0 } key) return local;
             online = engine.Provider() is { } provider
-                ? services.MakeAiTranslator(provider, key, provider.Model(settings.ModelFor(provider)).Id, fallback, game)
+                ? services.MakeAiTranslator(provider, key, provider.Model(settings.ModelFor(provider)).Id, fallback, game, settings.AiInstruction)
                 : services.MakeOnlineTranslator(key, fallback);
         }
         if (online is null) return local;

@@ -116,6 +116,14 @@ class AppSettings(context: Context) {
     fun aiModel(provider: AiProvider): String? = prefs.getString(modelKey(provider), null)
     fun setAiModel(provider: AiProvider, id: String) = prefs.edit().putString(modelKey(provider), id).apply()
 
+    /**
+     * Ayarlardaki "Ek talimat" (#306): yapay zekâ çevirmeninin sistem talimatının sonuna eklenir; boşsa hiçbir şey
+     * değişmez. Ad iPhone UserSettings ile aynı: aiInstruction.
+     */
+    var aiInstruction: String
+        get() = prefs.getString("aiInstruction", null).orEmpty()
+        set(value) = prefs.edit().putString("aiInstruction", value.trim()).apply()
+
     private fun modelKey(provider: AiProvider) = when (provider) {
         AiProvider.GEMINI -> "geminiModel"
         AiProvider.OPENAI -> "openAIModel"

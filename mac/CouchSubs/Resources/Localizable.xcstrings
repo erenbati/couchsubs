@@ -1,6 +1,9 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Extra instruction": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Extra instruction"}},"tr":{"stringUnit":{"state":"translated","value":"Ek talimat"}}}},
+    "Example: Translate swear words without softening them.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Example: Translate swear words without softening them."}},"tr":{"stringUnit":{"state":"translated","value":"Örn: Küfürleri yumuşatmadan çevir."}}}},
+    "Added to the end of the AI translator's instructions (up to 1000 characters). Leave it empty if you don't need it.": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Added to the end of the AI translator's instructions (up to 1000 characters). Leave it empty if you don't need it."}},"tr":{"stringUnit":{"state":"translated","value":"Yapay zekâ çevirmeninin talimatının sonuna eklenir (en çok 1000 karakter). Gerekmiyorsa boş bırakın."}}}},
     "%@ or %@": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"%@ or %@"}},"tr":{"stringUnit":{"state":"translated","value":"%@ ya da %@"}}}},
     "no shortcut": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"no shortcut"}},"tr":{"stringUnit":{"state":"translated","value":"kısayol yok"}}}},
     "Translate the screen (%@)": {"localizations":{"en":{"stringUnit":{"state":"translated","value":"Translate the screen (%@)"}},"tr":{"stringUnit":{"state":"translated","value":"Ekranı çevir (%@)"}}}},

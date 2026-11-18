@@ -174,6 +174,68 @@ class OnlineTranslationTest {
         assertEquals(3, http.requests.size)
     }
 
+    /** Ek talimat (#306) bütün hizmetlerde sistem talimatının sonuna eklenir; boşsa hiçbir şey değişmez. */
+    @Test
+    fun instructionIsAppendedToTheSystemPrompt() {
+        fun system(provider: AiProvider, instruction: String?): String {
+            val json = JSONObject(AiRequest.build(provider, "k", AiModel("m", "Hızlı"), listOf("Run!"), emptyList(),
+                instruction = instruction).body)
+            return when (provider) {
+                AiProvider.GEMINI -> json.getJSONObject("systemInstruction").getJSONArray("parts").getJSONObject(0).getString("text")
+                AiProvider.CLAUDE -> json.getString("system")
+                AiProvider.OPENAI -> json.getJSONArray("messages").getJSONObject(0).getString("content")
+            }
+        }
+        for (provider in AiProvider.entries) {
+            assertEquals(AiRequest.SYSTEM_PROMPT, system(provider, null))
+            assertEquals(AiRequest.SYSTEM_PROMPT, system(provider, "  \n "))
+            assertEquals(AiRequest.SYSTEM_PROMPT + "\n\nTranslate swear words without softening them.",
+                system(provider, " Translate swear words without softening them.\n"))
+        }
+        assertEquals(AiRequest.MAX_INSTRUCTION_LENGTH, AiRequest.instruction("a".repeat(5000))!!.length)
+        assertNull(AiRequest.instructionTag(" "))
+        assertEquals(AiRequest.instructionTag("Be blunt."), AiRequest.instructionTag(" Be blunt. "))
+        assertFalse(AiRequest.instructionTag("Be blunt.") == AiRequest.instructionTag("Be polite."))
+    }
+
+    /** Talimat değişince önbellekteki eski çeviri dönmez; talimat yoksa eski kayıtlar geçerli kalır. */
+    @Test
+    fun instructionSeparatesTheCache() {
+        val http = FakeHttp(200, "{\"content\":[{\"type\":\"text\",\"text\":\"[\\\"Koş!\\\"]\"}]}")
+        val cache = com.couchsubs.mobile.translation.TranslationCache()
+        fun make(instruction: String?) =
+            AiTranslator(AiProvider.CLAUDE, "sk", AiModel("claude-x", "Hızlı"), null, http, cache, instruction = { instruction })
+        make(null).translate("Run!")
+        make("").translate("Run!")
+        assertEquals(1, http.requests.size)
+        make("Be blunt.").translate("Run!")
+        assertEquals(2, http.requests.size)
+        assertTrue(JSONObject(http.requests.last().third!!).getString("system").endsWith("\n\nBe blunt."))
+        make("Be blunt.").translate("Run!")
+        assertEquals(2, http.requests.size)
+        make("Be polite.").translate("Run!")
+        assertEquals(3, http.requests.size)
+    }
+
+    /** Ayarlar'da talimat değişince çalışan çevirmen yeni talimatı hemen kullanır (iPhone ile aynı). */
+    @Test
+    fun instructionChangeAppliesToTheRunningTranslator() {
+        val http = FakeHttp(200, "{\"content\":[{\"type\":\"text\",\"text\":\"[\\\"Koş!\\\"]\"}]}")
+        var instruction = ""
+        val translator = AiTranslator(AiProvider.CLAUDE, "sk", AiModel("claude-x", "Hızlı"), null, http, instruction = { instruction })
+        translator.translate("Run!")
+        assertEquals(AiRequest.SYSTEM_PROMPT, JSONObject(http.requests.last().third!!).getString("system"))
+        instruction = "Be blunt."
+        translator.translate("Run!")
+        assertEquals(2, http.requests.size)
+        assertTrue(JSONObject(http.requests.last().third!!).getString("system").endsWith("\n\nBe blunt."))
+        translator.translate("Run!")
+        assertEquals(2, http.requests.size)
+        instruction = ""
+        translator.translate("Run!")
+        assertEquals(2, http.requests.size)
+    }
+
     @Test
     fun translationsAcceptFencedArraysAndPlainText() {
         assertEquals(listOf("Bir", "İki"), AiRequest.translations("```json\n[\"Bir\", \"İki\"]\n```", 2))

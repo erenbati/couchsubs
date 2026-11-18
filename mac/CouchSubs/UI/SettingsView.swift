@@ -865,6 +865,8 @@ struct TranslationCard: View {
                 if let provider = engine.aiProvider { AIKeySection(provider: provider).id(provider) }
             case .local: LocalAISection()
             }
+            // Ek talimat (#306) yalnız yapay zekâ motorlarında (Gemini, OpenAI, Claude, yerel model); DeepL'de yoktur.
+            if engine.aiProvider != nil { AIInstructionSection() }
             if engine == .gemini {
                 HintText(text: FreeGemini.privacy)
                 HintText(text: FreeGemini.limit)
@@ -1115,6 +1117,37 @@ private struct AIKeySection: View {
 /// Yerel model (Ollama, LM Studio): sunucu adresi, model adı (kullanıcı yazar), isteğe bağlı anahtar ve "Bağlantıyı
 /// dene" (Windows'taki ayarlarla aynı). Adres ve model, alandan çıkınca ya da Return'e basınca kaydedilir; her tuşta
 /// çeviri hattı yeniden kurulmasın.
+/// Ayarlardaki "Ek talimat" (#306): yapay zekâ çevirmeninin talimatının sonuna eklenir. Alandan çıkınca kaydedilir; her
+/// tuşta çeviri hattı yeniden kurulmaz (Windows ile aynı).
+private struct AIInstructionSection: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.space("s")) {
+            Text("Extra instruction")
+            TextField("Extra instruction", text: $text, prompt: Text("Example: Translate swear words without softening them."),
+                      axis: .vertical)
+                .lineLimit(3...6)
+                .textFieldStyle(CSTextFieldStyle())
+                .focused($focused)
+                .onChange(of: text) { value in
+                    if value.count > AIRequest.maxInstructionLength { text = String(value.prefix(AIRequest.maxInstructionLength)) }
+                }
+            HintText(text: "Added to the end of the AI translator's instructions (up to 1000 characters). Leave it empty if you don't need it.")
+        }
+        .onAppear { text = model.settings.aiInstruction }
+        .onChange(of: focused) { _ in commit() }
+        .onDisappear(perform: commit)
+    }
+
+    private func commit() {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value != model.settings.aiInstruction { model.settings.aiInstruction = value }
+    }
+}
+
 private struct LocalAISection: View {
     @EnvironmentObject private var model: AppModel
     @State private var address = ""

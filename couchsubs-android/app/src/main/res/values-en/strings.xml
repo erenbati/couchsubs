@@ -253,6 +253,9 @@
     <string name="settings_model_quality">Better quality, slower</string>
     <string name="settings_key_for">%1$s key</string>
     <string name="settings_key_saved">saved</string>
+    <string name="settings_instruction">Extra instruction</string>
+    <string name="settings_instruction_example">Example: Translate swear words without softening them.</string>
+    <string name="settings_instruction_note">Added to the end of the AI translator\'s instructions (up to 1000 characters). Leave it empty if you don\'t need it.</string>
     <string name="settings_engine_note">In games with a ready pack, this engine only translates missing lines.</string>
     <string name="settings_preview">Dinliyor musun beni?</string>
     <string name="settings_color">Text color</string>

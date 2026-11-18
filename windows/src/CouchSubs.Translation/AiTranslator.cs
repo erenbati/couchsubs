@@ -38,6 +38,32 @@ public static class AiRequest
         "Keep line breaks. Keep the meaning and tone; do not add or leave out anything. " +
         "Reply with only the translation, no explanations, notes or quotes.";
 
+    /// <summary>Kullanıcının ek talimatında en çok bu kadar karakter gider (fazlası kesilir).</summary>
+    public const int MaxInstructionLength = 1000;
+
+    /// <summary>Ayarlardaki "Ek talimat": baştaki/sondaki boşluk atılır, sınırdan uzunsa kesilir; boşsa null.</summary>
+    public static string? Instruction(string? text)
+    {
+        var trimmed = text?.Trim() ?? "";
+        if (trimmed.Length > MaxInstructionLength) trimmed = trimmed[..MaxInstructionLength].TrimEnd();
+        return trimmed.Length == 0 ? null : trimmed;
+    }
+
+    /// <summary>
+    /// Sistem talimatı: kullanıcının ek talimatı varsa sona eklenir (#306; ör. küfrü yumuşatmadan çevir). Boşsa
+    /// <see cref="SystemPrompt"/> olduğu gibi gider.
+    /// </summary>
+    public static string SystemPromptWith(string? instruction) =>
+        Instruction(instruction) is { } extra ? SystemPrompt + "\n\n" + extra : SystemPrompt;
+
+    /// <summary>
+    /// Ek talimatın önbellek etiketi: talimat değişince eski çeviriler dönmesin diye anahtarın başına girer. Talimat
+    /// yoksa null; o zaman anahtar eskisi gibidir ve önceki çeviriler geçerli kalır (Mac ve telefonla aynı).
+    /// </summary>
+    public static string? InstructionTag(string? instruction) => Instruction(instruction) is { } extra
+        ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(extra)))[..16].ToLowerInvariant()
+        : null;
+
     private static readonly JsonSerializerOptions Compact = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     /// <summary>
@@ -67,20 +93,28 @@ public static class AiRequest
         return string.Join("\n\n", parts);
     }
 
-    /// <summary>Yerel modelin sıcaklığı: çeviri tutarlı olsun, yine de doğal kalsın.</summary>
-    public const double LocalTemperature = 0.2;
+    /// <summary>Yerel modelin sıcaklığı: 0, aynı satır her seferinde aynı çevrilir (#306).</summary>
+    public const double LocalTemperature = 0;
+
+    /// <summary>
+    /// Ollama modeli son istekten sonra bu kadar bellekte tutar (varsayılan 5 dk). Oyunda uzun süre altyazı çıkmayınca
+    /// model bellekten atılıyor, ilk satır modelin diskten yeniden yüklenmesini bekliyordu (#306).
+    /// </summary>
+    public const string OllamaKeepAlive = "24h";
 
     /// <summary>
     /// Hizmete giden HTTP isteği. <paramref name="server"/>: yerel modelin sunucusu (verilmezse Ollama'nın varsayılan adresi).
     /// <paramref name="thinkingOff"/>: Ollama'da düşünmeyi kapatan alanlar gitsin mi (bu alanları reddeden eski sürümde false).
+    /// <paramref name="instruction"/>: Ayarlardaki "Ek talimat"; sistem talimatının sonuna eklenir, boşsa hiçbir şey değişmez.
     /// </summary>
     public static HttpRequestMessage Build(AiProvider provider, string key, AiModel model, IReadOnlyList<string> sentences,
                                            IReadOnlyList<AiContextLine> context, string? game = null, LocalAiServer? server = null,
                                            int maxOutputTokens = MaxOutputTokens, bool thinkingOff = true,
-                                           IReadOnlyList<string>? names = null)
+                                           IReadOnlyList<string>? names = null, string? instruction = null)
     {
         key = key.Trim();
         var user = UserMessage(sentences, context, game, names);
+        var system = SystemPromptWith(instruction);
         HttpRequestMessage request;
         JsonObject body;
         switch (provider)
@@ -94,7 +128,7 @@ public static class AiRequest
                 request.Headers.Add("x-goog-api-key", key);
                 body = new JsonObject
                 {
-                    ["systemInstruction"] = new JsonObject { ["parts"] = new JsonArray(new JsonObject { ["text"] = SystemPrompt }) },
+                    ["systemInstruction"] = new JsonObject { ["parts"] = new JsonArray(new JsonObject { ["text"] = system }) },
                     ["contents"] = new JsonArray(new JsonObject
                     {
                         ["role"] = "user",
@@ -113,7 +147,7 @@ public static class AiRequest
                 {
                     ["model"] = model.Id,
                     ["messages"] = new JsonArray(
-                        new JsonObject { ["role"] = "developer", ["content"] = SystemPrompt },
+                        new JsonObject { ["role"] = "developer", ["content"] = system },
                         new JsonObject { ["role"] = "user", ["content"] = user }),
                     ["max_completion_tokens"] = maxOutputTokens,
                 };
@@ -130,7 +164,7 @@ public static class AiRequest
                 {
                     ["model"] = model.Id,
                     ["messages"] = new JsonArray(
-                        new JsonObject { ["role"] = "system", ["content"] = SystemPrompt },
+                        new JsonObject { ["role"] = "system", ["content"] = system },
                         new JsonObject { ["role"] = "user", ["content"] = user }),
                     ["temperature"] = LocalTemperature,
                     ["max_tokens"] = maxOutputTokens,
@@ -144,6 +178,10 @@ public static class AiRequest
                     body["think"] = false;
                     body["reasoning_effort"] = "none";
                 }
+                // Ollama'nın OpenAI uyumlu adresi keep_alive'ı okur ("Ollama extension", github.com/ollama/ollama
+                // openai/openai.go ChatCompletionRequest.KeepAlive); bu alanı bilmeyen eski sürüm bilinmeyen alanı yok
+                // sayar. Yalnız Ollama'ya gider: LM Studio ve başka sunucular bu alanı tanımaz (#306).
+                if (local.Kind == LocalAiServerKind.Ollama) body["keep_alive"] = OllamaKeepAlive;
                 break;
             default:
                 // https://docs.anthropic.com/en/api/messages (platform.claude.com/docs/en/api/messages): POST /v1/messages,
@@ -156,7 +194,7 @@ public static class AiRequest
                 {
                     ["model"] = model.Id,
                     ["max_tokens"] = maxOutputTokens,
-                    ["system"] = SystemPrompt,
+                    ["system"] = system,
                     ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = user }),
                 };
                 if (model.Effort is { } claudeEffort) body["output_config"] = new JsonObject { ["effort"] = claudeEffort };
@@ -423,6 +461,10 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
     private readonly SpeakerNameGuard _speakers = new();
     private readonly List<AiContextLine> _recent = [];
     private readonly Func<string?>? _game;
+    /// <summary>Ayarlardaki "Ek talimat" (sınırlanmış); yoksa null.</summary>
+    private readonly string? _instruction;
+    /// <summary>Ek talimatın önbellek etiketi; talimat yoksa null (anahtar eskisi gibi).</summary>
+    private readonly string? _instructionTag;
     private DateTimeOffset _pausedUntil = DateTimeOffset.MinValue;
     /// <summary>Bekleme hizmetin 429 yanıtından mı (dakikalık sınır); öyleyse yerel yedek olmasa da istek gönderilmez.</summary>
     private bool _pauseRateLimited;
@@ -439,11 +481,14 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
     /// <param name="game">
     /// Oynanan oyunun adı (ör. eşleşen oyun paketinin başlığı); her istekte sorulur, null ya da boşsa istemde oyun satırı olmaz.
     /// </param>
+    /// <param name="instruction">Ayarlardaki "Ek talimat": sistem talimatının sonuna eklenir; boşsa hiçbir şey değişmez.</param>
     public AiTranslator(AiProvider provider, string key, string? model, ITextTranslator? fallback, HttpClient? http = null,
                         TranslationCache? cache = null, RequestBudget? budget = null, LocalAiServer? server = null,
-                        Func<string?>? game = null)
+                        Func<string?>? game = null, string? instruction = null)
     {
         _game = game;
+        _instruction = AiRequest.Instruction(instruction);
+        _instructionTag = AiRequest.InstructionTag(_instruction);
         Provider = provider;
         Model = provider.Model(model);
         Server = provider.IsLocal() ? server ?? LocalAiServer.Create(LocalAiServer.OllamaUrl, Model.Id) : null;
@@ -468,9 +513,13 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
 
     public event Action<OnlineKeyState?>? FailureChanged;
 
-    // Oyun bilinmiyorsa eski kayıtlar geçerlidir; biliniyorsa yalnız o oyunun sonucu kullanılır.
-    private static string CacheKey(string text, string? game) =>
-        string.IsNullOrEmpty(game) ? text : game + "\u001f" + text;
+    // Oyun bilinmiyorsa eski kayıtlar geçerlidir; biliniyorsa yalnız o oyunun sonucu kullanılır. Ek talimat varsa
+    // anahtar onun etiketiyle başlar: talimat değişince eski çeviriler dönmez, talimat yoksa anahtar eskisi gibidir.
+    private string CacheKey(string text, string? game)
+    {
+        var key = string.IsNullOrEmpty(game) ? text : game + "\u001f" + text;
+        return _instructionTag is null ? key : "i:" + _instructionTag + "\u001f" + key;
+    }
 
     /// <summary>Konuşan adını öğrenir ("OLD MAN" → "old", "man"); korunacak adlar ayrıca (#287).</summary>
     public void NoteSpeaker(string name)
@@ -611,7 +660,7 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
             {
                 var sentences = chunk.Select(i => texts[i]).ToList();
                 var translated = await PerformAsync(thinkingOff => AiRequest.Build(Provider, _key, Model, sentences, [], game, Server,
-                    maxOutputTokens: AiRequest.ScreenOutputTokens, thinkingOff: thinkingOff), _screenHttp, sentences.Count, cancellationToken).ConfigureAwait(false);
+                    maxOutputTokens: AiRequest.ScreenOutputTokens, thinkingOff: thinkingOff, instruction: _instruction), _screenHttp, sentences.Count, cancellationToken).ConfigureAwait(false);
                 Report(null);
                 for (var i = 0; i < chunk.Count; i++)
                 {
@@ -695,7 +744,8 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
 
     private Task<string[]> RequestAsync(List<string> sentences, List<AiContextLine> context, string? game,
                                         IReadOnlyList<string> names, CancellationToken cancellationToken) =>
-        PerformAsync(thinkingOff => AiRequest.Build(Provider, _key, Model, sentences, context, game, Server, thinkingOff: thinkingOff, names: names),
+        PerformAsync(thinkingOff => AiRequest.Build(Provider, _key, Model, sentences, context, game, Server, thinkingOff: thinkingOff, names: names,
+                                                       instruction: _instruction),
                      _http, sentences.Count, cancellationToken);
 
     /// <summary>Düşünmeyi kapatan alanları reddeden Ollama sunucuları; uygulama açık kaldıkça hatırlanır.</summary>
@@ -743,14 +793,15 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
     /// anahtar isteğe bağlıdır ve model belleğe yüklenirken uzun beklenir.
     /// </summary>
     public static async Task<AiTestResult> TestAsync(AiProvider provider, string key, string? model, HttpClient? http = null,
-                                                     CancellationToken cancellationToken = default, LocalAiServer? server = null)
+                                                     CancellationToken cancellationToken = default, LocalAiServer? server = null,
+                                                     string? instruction = null)
     {
         key = key.Trim();
         if (key.Length == 0 && !provider.IsLocal()) return new(OnlineKeyState.Invalid);
         http ??= provider.IsLocal() ? LocalTestClient.Value : SharedClient.Value;
         // Deneme tek istektir; çeviri hattının dakikalık hakkından yemez.
         var translator = new AiTranslator(provider, key, model, new FailingTranslator(), http, budget: new RequestBudget(int.MaxValue),
-                                          server: server);
+                                          server: server, instruction: instruction);
         try
         {
             return new(OnlineKeyState.Valid, await translator.TranslateAsync(Sample, cancellationToken).ConfigureAwait(false));

@@ -259,6 +259,9 @@
     <string name="settings_model_quality">Daha kaliteli, daha yavaş</string>
     <string name="settings_key_for">%1$s anahtarı</string>
     <string name="settings_key_saved">kayıtlı</string>
+    <string name="settings_instruction">Ek talimat</string>
+    <string name="settings_instruction_example">Örn: Küfürleri yumuşatmadan çevir.</string>
+    <string name="settings_instruction_note">Yapay zekâ çevirmeninin talimatının sonuna eklenir (en çok 1000 karakter). Gerekmiyorsa boş bırakın.</string>
     <string name="settings_engine_note">Hazır paketi olan oyunlarda bu motor yalnız eksik satırlar için çalışır.</string>
     <string name="settings_preview">Dinliyor musun beni?</string>
     <string name="settings_color">Yazı rengi</string>

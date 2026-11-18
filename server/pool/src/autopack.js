@@ -190,6 +190,7 @@ export function parseReply(reply, items) {
   }
   const out = new Map();
   if (!Array.isArray(parsed?.items)) return out;
+  const duplicates = new Set();
   for (const it of parsed.items) {
     const id = it?.id;
     if (typeof id !== "number" && !(typeof id === "string" && /^\d+$/.test(id))) continue;
@@ -198,6 +199,13 @@ export function parseReply(reply, items) {
     if (!Number.isSafeInteger(i) || !items[i] || !tr) continue;
     // Açıklama ya da birden çok satır yazmış, çok uzun ya da Türkçe değil: alınmaz.
     if (/[{}]/.test(tr) || tr.length > items[i].en.length * 3 + 40) continue;
+    // Ambiguous AI IDs must not silently overwrite an earlier, different subtitle.
+    if (duplicates.has(i)) continue;
+    if (out.has(i)) {
+      out.delete(i);
+      duplicates.add(i);
+      continue;
+    }
     out.set(i, tr);
   }
   return out;
@@ -223,6 +231,13 @@ async function loadCache(env, job) {
     const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
     if (!record(cache) || !record(cache.lines) || !record(cache.skip)
       || (cache.fail != null && !record(cache.fail))) return null;
+    // A parseable cache with a null line or malformed hash otherwise throws in
+    // packBody/isKnown and stops the remaining nightly scheduler calls.
+    if (!Object.entries(cache.lines).every(([pool, line]) =>
+      /^[0-9a-f]{16}$/.test(pool) && record(line)
+      && typeof line.k === "string" && /^[0-9a-f]{16}$/.test(line.k)
+      && typeof line.en === "string" && line.en.trim().length > 0
+      && typeof line.tr === "string" && line.tr.trim().length > 0)) return null;
     return cache;
   } catch { return null; }
 }
@@ -276,6 +291,16 @@ async function readIndex(env) {
   const index = await getJson(env, "index.json");
   // Eksik/bozuk indeks, boş bir indeks değildir: aksi halde sonraki paket mevcut listeyi siler.
   if (!Array.isArray(index?.packs)) throw new Error("autopack index unavailable or invalid");
+  // An ambiguous or malformed index makes every client's pack list unavailable.
+  // Never rewrite it or drop entries while trying to publish another pack.
+  const ids = new Set();
+  for (const pack of index.packs) {
+    if (!pack || typeof pack !== "object" || typeof pack.id !== "string"
+      || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(pack.id) || ids.has(pack.id)) {
+      throw new Error("autopack index invalid or duplicate pack ID");
+    }
+    ids.add(pack.id);
+  }
   return index.packs;
 }
 

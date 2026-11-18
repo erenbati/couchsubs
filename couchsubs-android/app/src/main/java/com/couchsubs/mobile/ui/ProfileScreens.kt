@@ -51,6 +51,7 @@ import com.couchsubs.mobile.settings.AppSettings
 import com.couchsubs.mobile.settings.EngineChoice
 import com.couchsubs.mobile.settings.SubtitleTarget
 import com.couchsubs.mobile.translation.AiModel
+import com.couchsubs.mobile.translation.AiRequest
 import com.couchsubs.mobile.translation.AiProvider
 import com.couchsubs.mobile.translation.KeyCheck
 import com.couchsubs.mobile.translation.OnlineKeyState
@@ -214,6 +215,8 @@ fun SettingsScreen(onBack: () -> Unit, onPacks: () -> Unit, onTarget: () -> Unit
                     if (keyRejected) NoteTile(stringResource(R.string.settings_key_rejected))
                 }
             }
+            // Ek talimat (#306) yalnız yapay zekâ motorlarında; DeepL'de yoktur (iPhone ile aynı).
+            if (engine.aiProvider != null) AiInstructionField(settings)
             Text(stringResource(R.string.settings_engine_note), style = Tokens.Type.caption, color = Tokens.Color.secondary)
         }
         Tile(Modifier.fillMaxWidth()) {
@@ -364,6 +367,20 @@ private fun GeminiModelChoice(settings: AppSettings) {
         settings.setAiModel(AiProvider.GEMINI, selected)
     }
     Text(selected, style = Tokens.Type.caption, color = Tokens.Color.secondary)
+}
+
+/**
+ * Ek talimat (#306; iPhone, Mac ve Windows ile aynı): yapay zekâ çevirmeninin talimatının sonuna eklenir, boşsa hiçbir
+ * şey değişmez. Yazıldıkça kaydedilir; çeviri sürerken de sonraki istekten itibaren yeni talimat kullanılır.
+ */
+@Composable
+private fun AiInstructionField(settings: AppSettings) {
+    var text by remember { mutableStateOf(settings.aiInstruction) }
+    Field(text, { value ->
+        text = value.take(AiRequest.MAX_INSTRUCTION_LENGTH)
+        settings.aiInstruction = text
+    }, stringResource(R.string.settings_instruction), lines = 3, placeholder = stringResource(R.string.settings_instruction_example))
+    Text(stringResource(R.string.settings_instruction_note), style = Tokens.Type.caption, color = Tokens.Color.secondary)
 }
 
 /** Modelin kısa açıklaması; listedeki açıklama (label) tanınmazsa olduğu gibi gösterilir. */

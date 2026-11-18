@@ -184,6 +184,8 @@ struct SettingsScreen: View {
                     if checking { ProgressView().tint(Mobile.Palette.accent) }
                     if let keyResult { MobileNote(text: keyResult) }
                 }
+                // Ek talimat (#306) yalnız yapay zekâ motorlarında; DeepL'de yoktur (Android ile aynı).
+                if engine.aiProvider != nil { AIInstructionField() }
                 Text("In games with a ready pack this engine only translates the missing lines.")
                     .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
             }
@@ -364,6 +366,41 @@ private struct GeminiModelChoice: View {
         case "Better quality, a little slower": "Better quality, slower"
         default: LocalizedStringKey(option.label)
         }
+    }
+}
+
+/// Ek talimat (#306; Mac, Windows ve Android ile aynı): yapay zekâ çevirmeninin talimatının sonuna eklenir, boşsa hiçbir
+/// şey değişmez. Alandan çıkınca kaydedilir; her tuşta çeviri hattı yeniden kurulmaz.
+private struct AIInstructionField: View {
+    @EnvironmentObject private var model: PhoneModel
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Text("Extra instruction").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+        TextField("Example: Translate swear words without softening them.", text: $text, axis: .vertical)
+            .lineLimit(3...6)
+            // MobileFieldStyle ile aynı görünüm; çok satırlı alan için üstte ve altta da boşluk var.
+            .font(Mobile.TypeScale.headline.weight(.regular))
+            .foregroundStyle(Mobile.Palette.text)
+            .padding(.horizontal, Mobile.Space.tile)
+            .padding(.vertical, Mobile.Space.gap)
+            .background(Mobile.Palette.surface2, in: RoundedRectangle(cornerRadius: Mobile.Radius.control))
+            .overlay(RoundedRectangle(cornerRadius: Mobile.Radius.control).strokeBorder(Mobile.Palette.border))
+            .focused($focused)
+            .onAppear { text = model.settings.aiInstruction }
+            .onChange(of: text) { value in
+                if value.count > AIRequest.maxInstructionLength { text = String(value.prefix(AIRequest.maxInstructionLength)) }
+            }
+            .onChange(of: focused) { _ in commit() }
+            .onDisappear(perform: commit)
+        Text("Added to the end of the AI translator's instructions (up to 1000 characters). Leave it empty if you don't need it.")
+            .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+    }
+
+    private func commit() {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value != model.settings.aiInstruction { model.settings.aiInstruction = value }
     }
 }
 

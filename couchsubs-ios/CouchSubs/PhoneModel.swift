@@ -55,6 +55,7 @@ final class PhoneModel: ObservableObject {
             let translationChanged = settings.onlineTranslation != oldValue.onlineTranslation
                 || settings.onlineEngine != oldValue.onlineEngine || settings.geminiModel != oldValue.geminiModel
                 || settings.openAIModel != oldValue.openAIModel || settings.claudeModel != oldValue.claudeModel
+                || settings.aiInstruction != oldValue.aiInstruction
             if translationChanged { Task { await refreshTranslatorStatus() } }
             if isRunning, translationChanged || settings.fastSubtitleDetection != oldValue.fastSubtitleDetection {
                 makePipeline()
@@ -743,7 +744,7 @@ final class PhoneModel: ObservableObject {
             let sense = gameChoice.sense
             online = AITranslator(provider: provider, key: key, model: model, fallback: local,
                                   cache: Self.translationCache(engine: provider.engineID(model: model), source: source, target: target),
-                                  game: { sense.current?.name })
+                                  game: { sense.current?.name }, instruction: settings.aiInstruction)
         } else {
             online = DeepLTranslator(key: key, fallback: local,
                                      cache: Self.translationCache(engine: DeepLTranslator.engineID, source: source, target: target))

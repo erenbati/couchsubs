@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import CryptoKit
 import Foundation
 
 /// Kullanıcının kendi anahtarıyla çalışan yapay zekâ çeviri hizmetleri (Windows'taki CouchSubs.Core/AiProvider.cs ile aynı).
@@ -266,6 +267,32 @@ public enum AIRequest {
         Reply with only the translation, no explanations, notes or quotes.
         """
 
+    /// Kullanıcının ek talimatında en çok bu kadar karakter gider (fazlası kesilir).
+    public static let maxInstructionLength = 1000
+
+    /// Ayarlardaki "Ek talimat": baştaki/sondaki boşluk atılır, sınırdan uzunsa kesilir; boşsa nil.
+    public static func instruction(_ text: String?) -> String? {
+        var trimmed = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count > maxInstructionLength {
+            trimmed = String(trimmed.prefix(maxInstructionLength)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Sistem talimatı: kullanıcının ek talimatı varsa sona eklenir (#306; ör. küfrü yumuşatmadan çevir). Boşsa
+    /// `systemPrompt` olduğu gibi gider.
+    public static func systemPromptWith(_ instruction: String?) -> String {
+        guard let extra = self.instruction(instruction) else { return systemPrompt }
+        return systemPrompt + "\n\n" + extra
+    }
+
+    /// Ek talimatın önbellek etiketi: talimat değişince eski çeviriler dönmesin diye anahtarın başına girer. Talimat
+    /// yoksa nil; o zaman anahtar eskisi gibidir ve önceki çeviriler geçerli kalır (Windows ve Android ile aynı).
+    public static func instructionTag(_ instruction: String?) -> String? {
+        guard let extra = self.instruction(instruction) else { return nil }
+        return String(SHA256.hash(data: Data(extra.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16))
+    }
+
     /// Kullanıcı iletisi: önceki satırlar (yalnız bağlam) ve çevrilecek cümleler. `names`: konuşan etiketlerinden
     /// öğrenilip cümlelerde geçen adlar; model "Price"ı "Fiyat" diye çevirmesin diye adıyla söylenir (#287).
     public static func userMessage(sentences: [String], context: [AIContextLine], game: String? = nil,
@@ -290,17 +317,23 @@ public enum AIRequest {
         return parts.joined(separator: "\n\n")
     }
 
-    /// Yerel modelin sıcaklığı: çeviri tutarlı olsun, yine de doğal kalsın.
-    public static let localTemperature = 0.2
+    /// Yerel modelin sıcaklığı: 0, aynı satır her seferinde aynı çevrilir (#306).
+    public static let localTemperature = 0.0
+
+    /// Ollama modeli son istekten sonra bu kadar bellekte tutar (varsayılan 5 dk). Oyunda uzun süre altyazı çıkmayınca
+    /// model bellekten atılıyor, ilk satır modelin diskten yeniden yüklenmesini bekliyordu (#306).
+    public static let ollamaKeepAlive = "24h"
 
     /// Hizmete giden HTTP isteği. `server`: yerel modelin sunucusu (verilmezse Ollama'nın varsayılan adresi).
     /// `thinkingOff`: Ollama'da düşünmeyi kapatan alanlar gitsin mi (bu alanları reddeden eski sürümde false).
+    /// `instruction`: Ayarlardaki "Ek talimat"; sistem talimatının sonuna eklenir, boşsa hiçbir şey değişmez.
     public static func make(provider: AIProvider, key: String, model: AIModel, sentences: [String],
                             context: [AIContextLine], game: String? = nil, server: LocalAIServer? = nil,
                             maxOutputTokens: Int = AIRequest.maxOutputTokens, thinkingOff: Bool = true,
-                            names: [String] = []) -> URLRequest {
+                            names: [String] = [], instruction: String? = nil) -> URLRequest {
         let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
         let user = userMessage(sentences: sentences, context: context, game: game, names: names)
+        let system = systemPromptWith(instruction)
         var request: URLRequest
         var body: [String: Any]
         switch provider {
@@ -314,7 +347,7 @@ public enum AIRequest {
             var config: [String: Any] = ["maxOutputTokens": maxOutputTokens]
             if let thinking = model.thinking { config["thinkingConfig"] = ["thinkingLevel": thinking] }
             body = [
-                "systemInstruction": ["parts": [["text": systemPrompt]]],
+                "systemInstruction": ["parts": [["text": system]]],
                 "contents": [["role": "user", "parts": [["text": user]]]],
                 "generationConfig": config,
             ]
@@ -325,7 +358,7 @@ public enum AIRequest {
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
             body = [
                 "model": model.id,
-                "messages": [["role": "developer", "content": systemPrompt], ["role": "user", "content": user]],
+                "messages": [["role": "developer", "content": system], ["role": "user", "content": user]],
                 "max_completion_tokens": maxOutputTokens,
             ]
             if let effort = model.effort { body["reasoning_effort"] = effort }
@@ -339,7 +372,7 @@ public enum AIRequest {
             body = [
                 "model": model.id,
                 "max_tokens": maxOutputTokens,
-                "system": systemPrompt,
+                "system": system,
                 "messages": [["role": "user", "content": user]],
             ]
             if let effort = model.effort { body["output_config"] = ["effort": effort] }
@@ -353,7 +386,7 @@ public enum AIRequest {
             if !key.isEmpty { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
             body = [
                 "model": model.id,
-                "messages": [["role": "system", "content": systemPrompt], ["role": "user", "content": user]],
+                "messages": [["role": "system", "content": system], ["role": "user", "content": user]],
                 "temperature": localTemperature,
                 "max_tokens": maxOutputTokens,
                 "stream": false,
@@ -365,6 +398,10 @@ public enum AIRequest {
                 body["think"] = false
                 body["reasoning_effort"] = "none"
             }
+            // Ollama'nın OpenAI uyumlu adresi keep_alive'ı okur ("Ollama extension", github.com/ollama/ollama
+            // openai/openai.go ChatCompletionRequest.KeepAlive); bu alanı bilmeyen eski sürüm bilinmeyen alanı yok
+            // sayar. Yalnız Ollama'ya gider: LM Studio ve başka sunucular bu alanı tanımaz (#306).
+            if server.kind == .ollama { body["keep_alive"] = ollamaKeepAlive }
         }
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -551,6 +588,10 @@ public final class AITranslationCore: @unchecked Sendable {
     private var rateLimited = false
     /// Oynanan oyunun adı (ör. paket eşleşmesinden); biliniyorsa istemde "Game:" olarak gider.
     private let game: (@Sendable () -> String?)?
+    /// Ayarlardaki "Ek talimat" (sınırlanmış); yoksa nil.
+    private let instruction: String?
+    /// Ek talimatın önbellek etiketi; talimat yoksa nil (anahtar eskisi gibi).
+    private let instructionTag: String?
 
     /// Son hata; çeviri düzgün gidiyorsa nil. Değiştikçe `onFailureChanged` çağrılır.
     public var lastFailure: AIFailure? { lock.withLock { failure } }
@@ -564,10 +605,14 @@ public final class AITranslationCore: @unchecked Sendable {
     /// `server`: yerel modelin sunucusu (yalnız `.local`; verilmezse Ollama'nın varsayılan adresi).
     /// `session`: verilmezse hizmete uygun zaman aşımıyla kurulur (yerel model daha uzun bekler).
     /// `game`: oynanan oyunun adı; her istekte sorulur, nil ya da boşsa istemde oyun satırı olmaz.
+    /// `instruction`: Ayarlardaki "Ek talimat"; sistem talimatının sonuna eklenir, boşsa hiçbir şey değişmez.
     public init(provider: AIProvider, key: String, model: String? = nil, server: LocalAIServer? = nil, session: URLSession? = nil,
-                cache: TranslationCache = TranslationCache(), budget: RequestBudget? = nil, game: (@Sendable () -> String?)? = nil) {
+                cache: TranslationCache = TranslationCache(), budget: RequestBudget? = nil, game: (@Sendable () -> String?)? = nil,
+                instruction: String? = nil) {
         self.provider = provider
         self.game = game
+        self.instruction = AIRequest.instruction(instruction)
+        instructionTag = AIRequest.instructionTag(instruction)
         self.key = key.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolved = provider.model(model)
         self.model = resolved
@@ -612,11 +657,11 @@ public final class AITranslationCore: @unchecked Sendable {
         // Bağlam, bu satırdan önce gösterilenlerdir; satırın kendisi bağlama girmez.
         let context = lock.withLock { recent }
         shown(text)
-        if let cached = cache.value(for: Self.cacheKey(text, game: game)) { return remember(cached, for: text) }
+        if let cached = cache.value(for: self.cacheKey(text, game: game)) { return remember(cached, for: text) }
         let pieces = SubtitleSegmenter.split(text)
         names.learn(from: pieces)
         // Önbellekte duran cümleler yeniden gönderilmez.
-        var translations: [String?] = pieces.map { $0.translate ? cache.value(for: Self.cacheKey($0.text, game: game)) : nil }
+        var translations: [String?] = pieces.map { $0.translate ? cache.value(for: self.cacheKey($0.text, game: game)) : nil }
         let missing = pieces.indices.filter { pieces[$0].translate && translations[$0] == nil }
         let sources = missing.map { SubtitleSegmenter.normalizeCase(pieces[$0].text, names: names.all) }
         // Hizmetin beklemesi yalnız eksik çeviriler içindir; önbellekteki parçalar yerel motor istemez. Hata sonrası
@@ -672,14 +717,14 @@ public final class AITranslationCore: @unchecked Sendable {
                 continue
             }
             translations[index] = sentence
-            cache.store(sentence, for: Self.cacheKey(piece, game: game))
+            cache.store(sentence, for: self.cacheKey(piece, game: game))
         }
         let result = zip(pieces, translations).map { $1 ?? $0.text }.joined()
         lock.withLock {
             if speech.count >= 512 { speech.removeAll() }
-            speech[Self.cacheKey(text, game: game)] = SpeechScript.lines(pieces: pieces, translations: translations)
+            speech[self.cacheKey(text, game: game)] = SpeechScript.lines(pieces: pieces, translations: translations)
         }
-        if !local { cache.store(result, for: Self.cacheKey(text, game: game)) }
+        if !local { cache.store(result, for: self.cacheKey(text, game: game)) }
         return remember(result, for: text)
     }
 
@@ -710,7 +755,7 @@ public final class AITranslationCore: @unchecked Sendable {
     /// sınırda parçalar yerel çeviriyle çevrilir; o da yoksa hata yukarı çıkar ve ekranda gösterilir.
     public func translateAll(_ texts: [String], fallback: (String) async throws -> String) async throws -> [String] {
         let game = self.game?()?.trimmingCharacters(in: .whitespacesAndNewlines)
-        var results: [String?] = texts.map { cache.value(for: Self.cacheKey($0, game: game)) }
+        var results: [String?] = texts.map { cache.value(for: self.cacheKey($0, game: game)) }
         let missing = texts.indices.filter { results[$0] == nil }
         var failed = Date() < lock.withLock({ pausedUntil })
         for chunk in stride(from: 0, to: missing.count, by: Self.screenBatch).map({ Array(missing[$0..<min($0 + Self.screenBatch, missing.count)]) })
@@ -722,12 +767,13 @@ public final class AITranslationCore: @unchecked Sendable {
                 let sentences = chunk.map { texts[$0] }
                 let translated = try await perform(count: sentences.count, session: screenSession) { thinkingOff in
                     AIRequest.make(provider: provider, key: key, model: model, sentences: sentences, context: [], game: game,
-                                   server: server, maxOutputTokens: AIRequest.screenOutputTokens, thinkingOff: thinkingOff)
+                                   server: server, maxOutputTokens: AIRequest.screenOutputTokens, thinkingOff: thinkingOff,
+                                   instruction: instruction)
                 }
                 setFailure(nil)
                 for (index, translation) in zip(chunk, translated) {
                     results[index] = translation
-                    cache.store(translation, for: Self.cacheKey(texts[index], game: game))
+                    cache.store(translation, for: self.cacheKey(texts[index], game: game))
                 }
             } catch is CancellationError {
                 throw CancellationError()
@@ -760,15 +806,18 @@ public final class AITranslationCore: @unchecked Sendable {
 
     public func spokenLines(for text: String, fallback: (String) -> [SpokenLine]) -> [SpokenLine] {
         let game = self.game?()?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let lines = lock.withLock({ speech[Self.cacheKey(text, game: game)] }) { return lines }
-        let cached = SpeechScript.fromCache(text, cache: cache, cacheKey: { Self.cacheKey($0, game: game) })
+        if let lines = lock.withLock({ speech[self.cacheKey(text, game: game)] }) { return lines }
+        let cached = SpeechScript.fromCache(text, cache: cache, cacheKey: { self.cacheKey($0, game: game) })
         return cached.isEmpty ? fallback(text) : cached
     }
 
-    // Oyun bilinmiyorsa eski kayıtlar geçerlidir; biliniyorsa yalnız o oyunun sonucu kullanılır.
-    private static func cacheKey(_ text: String, game: String?) -> String {
-        guard let game, !game.isEmpty else { return text }
-        return game + "\u{001f}" + text
+    // Oyun bilinmiyorsa eski kayıtlar geçerlidir; biliniyorsa yalnız o oyunun sonucu kullanılır. Ek talimat varsa
+    // anahtar onun etiketiyle başlar: talimat değişince eski çeviriler dönmez, talimat yoksa anahtar eskisi gibidir.
+    private func cacheKey(_ text: String, game: String?) -> String {
+        var key = text
+        if let game, !game.isEmpty { key = game + "\u{001f}" + text }
+        guard let instructionTag else { return key }
+        return "i:" + instructionTag + "\u{001f}" + key
     }
 
     private func shown(_ text: String) {
@@ -799,7 +848,7 @@ public final class AITranslationCore: @unchecked Sendable {
     private func request(_ sentences: [String], context: [AIContextLine], game: String?, names: [String]) async throws -> [String] {
         try await perform(count: sentences.count, session: session) { thinkingOff in
             AIRequest.make(provider: provider, key: key, model: model, sentences: sentences, context: context, game: game,
-                           server: server, thinkingOff: thinkingOff, names: names)
+                           server: server, thinkingOff: thinkingOff, names: names, instruction: instruction)
         }
     }
 

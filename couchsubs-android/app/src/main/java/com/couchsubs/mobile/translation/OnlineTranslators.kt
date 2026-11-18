@@ -11,6 +11,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.security.MessageDigest
 import java.util.Locale
 
 /** Çevrimiçi anahtarın durumu (ayarlardaki "Dene" ve ana ekrandaki uyarı için). */
@@ -430,6 +431,29 @@ object AiRequest {
             "Keep line breaks. Keep the meaning and tone; do not add or leave out anything. " +
             "Reply with only the translation, no explanations, notes or quotes."
 
+    /** Kullanıcının ek talimatında en çok bu kadar karakter gider (fazlası kesilir). */
+    const val MAX_INSTRUCTION_LENGTH = 1000
+
+    /** Ayarlardaki "Ek talimat": baştaki/sondaki boşluk atılır, sınırdan uzunsa kesilir; boşsa null. */
+    fun instruction(text: String?): String? {
+        var trimmed = text?.trim().orEmpty()
+        if (trimmed.length > MAX_INSTRUCTION_LENGTH) trimmed = trimmed.take(MAX_INSTRUCTION_LENGTH).trimEnd()
+        return trimmed.ifEmpty { null }
+    }
+
+    /** Sistem talimatı: kullanıcının ek talimatı varsa sona eklenir (#306); boşsa [SYSTEM_PROMPT] olduğu gibi gider. */
+    fun systemPrompt(instruction: String?): String =
+        AiRequest.instruction(instruction)?.let { "$SYSTEM_PROMPT\n\n$it" } ?: SYSTEM_PROMPT
+
+    /**
+     * Ek talimatın önbellek etiketi: talimat değişince eski çeviriler dönmesin diye anahtarın başına girer. Talimat yoksa
+     * null; o zaman anahtar eskisi gibidir ve önceki çeviriler geçerli kalır (iPhone, Mac ve Windows ile aynı).
+     */
+    fun instructionTag(instruction: String?): String? = AiRequest.instruction(instruction)?.let { extra ->
+        MessageDigest.getInstance("SHA-256").digest(extra.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }.take(16)
+    }
+
     /** Bağlam satırı: daha önce gösterilmiş İngilizce ve (biliniyorsa) Türkçesi. */
     data class ContextLine(val source: String, val translation: String? = null)
 
@@ -458,15 +482,18 @@ object AiRequest {
     fun build(
         provider: AiProvider, key: String, model: AiModel, sentences: List<String>, context: List<ContextLine>,
         maxOutputTokens: Int = MAX_OUTPUT_TOKENS, game: String? = null, names: List<String> = emptyList(),
+        // Ayarlardaki "Ek talimat"; sistem talimatının sonuna eklenir, boşsa hiçbir şey değişmez.
+        instruction: String? = null,
     ): AiHttpRequest {
         val trimmed = key.trim()
         val user = userMessage(sentences, context, game, names)
+        val system = systemPrompt(instruction)
         return when (provider) {
             AiProvider.GEMINI -> {
                 val config = JSONObject().put("maxOutputTokens", maxOutputTokens)
                 model.thinking?.let { config.put("thinkingConfig", JSONObject().put("thinkingLevel", it)) }
                 val body = JSONObject()
-                    .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", SYSTEM_PROMPT))))
+                    .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
                     .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", user)))))
                     .put("generationConfig", config)
                 AiHttpRequest(
@@ -478,7 +505,7 @@ object AiRequest {
                 val body = JSONObject()
                     .put("model", model.id)
                     .put("messages", JSONArray()
-                        .put(JSONObject().put("role", "developer").put("content", SYSTEM_PROMPT))
+                        .put(JSONObject().put("role", "developer").put("content", system))
                         .put(JSONObject().put("role", "user").put("content", user)))
                     .put("max_completion_tokens", maxOutputTokens)
                 model.effort?.let { body.put("reasoning_effort", it) }
@@ -489,7 +516,7 @@ object AiRequest {
                 val body = JSONObject()
                     .put("model", model.id)
                     .put("max_tokens", maxOutputTokens)
-                    .put("system", SYSTEM_PROMPT)
+                    .put("system", system)
                     .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", user)))
                 model.effort?.let { body.put("output_config", JSONObject().put("effort", it)) }
                 model.thinking?.let { body.put("thinking", JSONObject().put("type", it)) }
@@ -663,6 +690,9 @@ class AiTranslator(
     // Dakikalık istek hakkı; null ise modelin uygulama genelindeki ortak hakkı (Google sınırı proje ve model başına
     // sayar; çeviri hattı yeniden kurulsa da hak sıfırlanmaz). Modelin sınırı yoksa hak da yoktur.
     budget: RequestBudget? = null,
+    // Ayarlardaki "Ek talimat" (#306): sistem talimatının sonuna eklenir; boşsa hiçbir şey değişmez. Her istekte
+    // sorulur: Ayarlar'da değişince çalışan çeviri hattı yeni talimatı hemen kullanır (iPhone ile aynı).
+    private val instruction: (() -> String?)? = null,
 ) : SentenceTranslator<List<AiRequest.ContextLine>>(fallback, cache, clock, budget ?: RequestBudget.shared(provider, model)) {
     companion object {
         /** Kalıcı önbellek dosyasındaki motor adı (iPhone ile aynı: "gemini:<model>"). */
@@ -694,7 +724,8 @@ class AiTranslator(
             val sentences = chunk.map { texts[it] }
             countRequest()
             try {
-                val request = AiRequest.build(provider, key, model, sentences, emptyList(), AiRequest.SCREEN_OUTPUT_TOKENS, game)
+                val request = AiRequest.build(provider, key, model, sentences, emptyList(), AiRequest.SCREEN_OUTPUT_TOKENS, game,
+                    instruction = scope.instruction)
                 val (status, body) = http.send("POST", request.url, request.headers, request.body, SCREEN_TIMEOUT_MS)
                 if (status !in 200..299) throw AiRequest.error(status, body)
                 val translated = AiRequest.translations(AiRequest.text(provider, body), sentences.size)
@@ -715,6 +746,17 @@ class AiTranslator(
     }
 
     private val key = key.trim()
+
+    /** Geçerli ek talimat ve önbellek etiketi; etiket yalnız talimat değişince yeniden hesaplanır. */
+    private class InstructionScope(val instruction: String?, val tag: String?)
+    @Volatile private var lastScope = InstructionScope(null, null)
+    private val scope: InstructionScope
+        get() {
+            val current = AiRequest.instruction(instruction?.invoke())
+            val last = lastScope
+            if (last.instruction == current) return last
+            return InstructionScope(current, AiRequest.instructionTag(current)).also { lastScope = it }
+        }
     private val recent = ArrayDeque<AiRequest.ContextLine>()
 
     override fun context(text: String): List<AiRequest.ContextLine> = synchronized(recent) {
@@ -736,11 +778,17 @@ class AiTranslator(
 
     override fun game(): String? = playedGame?.invoke()?.trim()
 
-    /** Oyun bilinmiyorsa eski kayıtlar geçerlidir; biliniyorsa yalnız o oyunun sonucu kullanılır (Windows ve Mac ile aynı). */
-    override fun cacheKey(text: String, game: String?): String = if (game.isNullOrEmpty()) text else "$game\u001f$text"
+    /**
+     * Oyun bilinmiyorsa eski kayıtlar geçerlidir; biliniyorsa yalnız o oyunun sonucu kullanılır (Windows ve Mac ile aynı).
+     * Ek talimat varsa anahtar onun etiketiyle başlar: talimat değişince eski çeviriler dönmez.
+     */
+    override fun cacheKey(text: String, game: String?): String {
+        val key = if (game.isNullOrEmpty()) text else "$game\u001f$text"
+        return scope.tag?.let { "i:$it\u001f$key" } ?: key
+    }
 
     override fun request(sentences: List<String>, context: List<AiRequest.ContextLine>, game: String?, names: List<String>): List<String> {
-        val request = AiRequest.build(provider, key, model, sentences, context, game = game, names = names)
+        val request = AiRequest.build(provider, key, model, sentences, context, game = game, names = names, instruction = scope.instruction)
         val (status, body) = http.send("POST", request.url, request.headers, request.body, 5000)
         if (status !in 200..299) throw AiRequest.error(status, body)
         return AiRequest.translations(AiRequest.text(provider, body), sentences.size)

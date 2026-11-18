@@ -127,6 +127,9 @@ public struct UserSettings: Codable, Equatable {
     /// kullanıcının yazdığı model adı.
     public var localAIBaseURL = LocalAIServer.ollamaURL
     public var localAIModel = LocalAIServer.defaultModel
+    /// Ayarlardaki "Ek talimat" (#306): yapay zekâ çevirmeninin (Gemini, OpenAI, Claude, yerel model) sistem talimatının
+    /// sonuna eklenir; boşsa hiçbir şey değişmez. Eski kayıtlarda yoktur, boş açılır.
+    public var aiInstruction = ""
     /// Altyazı TV'de mi, bilgisayar ekranındaki pencerede mi, ikisinde de mi. Eski kayıtlar TV ile açılır.
     public var output = SubtitleOutput.tv
     /// Bilgisayar ekranındaki altyazı penceresi tıklamaları alttaki pencereye (oyun, PS Remote Play) geçirir.
@@ -173,6 +176,7 @@ public struct UserSettings: Codable, Equatable {
         claudeModel = try values.decodeIfPresent(String.self, forKey: .claudeModel) ?? defaults.claudeModel
         localAIBaseURL = try values.decodeIfPresent(String.self, forKey: .localAIBaseURL) ?? defaults.localAIBaseURL
         localAIModel = try values.decodeIfPresent(String.self, forKey: .localAIModel) ?? defaults.localAIModel
+        aiInstruction = (try? values.decodeIfPresent(String.self, forKey: .aiInstruction)) ?? defaults.aiInstruction
         output = (try? values.decodeIfPresent(SubtitleOutput.self, forKey: .output)) ?? defaults.output
         overlayClickThrough = try values.decodeIfPresent(Bool.self, forKey: .overlayClickThrough) ?? defaults.overlayClickThrough
         gamePacks = try values.decodeIfPresent(Bool.self, forKey: .gamePacks) ?? defaults.gamePacks
