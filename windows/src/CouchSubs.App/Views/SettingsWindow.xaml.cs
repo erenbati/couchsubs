@@ -382,23 +382,23 @@ public partial class SettingsWindow : Window
         {
             Style = (Style)FindResource("IconButton"), Width = 52, Height = 52, Padding = new Thickness(0),
             BorderThickness = new Thickness(0), Background = Brushes.Transparent,
-            Content = badge, Margin = new Thickness(0, 0, 16, 0), ToolTip = text["Choose game cover…"],
+            Content = badge, Margin = new Thickness(0, 0, 16, 0), ToolTip = CoverText("Choose game cover…", "Oyun kapağı seç…"),
         };
         System.Windows.Automation.AutomationProperties.SetName(coverButton,
-            text["Choose game cover…"] + " " + pack.Title);
+            CoverText("Choose game cover…", "Oyun kapağı seç…") + " " + pack.Title);
         coverButton.Click += (_, _) => ChoosePackCover(pack.Id);
-        var choose = new MenuItem { Header = text["Choose game cover…"] };
+        var choose = new MenuItem { Header = CoverText("Choose game cover…", "Oyun kapağı seç…") };
         choose.Click += (_, _) => ChoosePackCover(pack.Id);
         var remove = new MenuItem
         {
-            Header = text["Remove game cover"], IsEnabled = coverPath is not null && File.Exists(coverPath),
+            Header = CoverText("Remove game cover", "Oyun kapağını kaldır"), IsEnabled = coverPath is not null && File.Exists(coverPath),
         };
         remove.Click += (_, _) =>
         {
             try { GameCoverStore.Remove(pack.Id); ShowPacks(); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
-                MessageBox.Show(this, text["The game cover could not be saved."], text["Game packs"],
+                MessageBox.Show(this, CoverText("The game cover could not be saved.", "Oyun kapağı kaydedilemedi."), text["Game packs"],
                     MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         };
@@ -421,8 +421,8 @@ public partial class SettingsWindow : Window
         if (GameCoverStore.PathFor(packId) is null) return;
         var picker = new OpenFileDialog
         {
-            Title = text["Choose game cover…"], CheckFileExists = true,
-            Filter = $"{text["Images"]} (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg",
+            Title = CoverText("Choose game cover…", "Oyun kapağı seç…"), CheckFileExists = true,
+            Filter = $"{CoverText("Images", "Görseller")} (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg",
         };
         if (picker.ShowDialog(this) != true) return;
         try
@@ -455,10 +455,14 @@ public partial class SettingsWindow : Window
         catch (Exception error) when (error is IOException or UnauthorizedAccessException
             or InvalidDataException or ArgumentException or FormatException or NotSupportedException)
         {
-            MessageBox.Show(this, text["The game cover could not be saved."], text["Game packs"],
+            MessageBox.Show(this, CoverText("The game cover could not be saved.", "Oyun kapağı kaydedilemedi."), text["Game packs"],
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
+
+    // Cover-picker labels are Windows-only; avoid changing the shared Mac/iOS localization catalog.
+    private static string CoverText(string english, string turkish) =>
+        Localizer.Current.Language == "tr" ? turkish : english;
 
     /// <summary>"Grand Theft Auto V" → "GTA": ilk üç sözcüğün baş harfleri (rakam olduğu gibi).</summary>
     internal static string Initials(string title)
