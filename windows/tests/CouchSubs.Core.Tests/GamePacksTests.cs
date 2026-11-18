@@ -293,3 +293,57 @@ public class GamePackTests
         Assert.Equal("Odaklan! Avcılar! Çok fazlalar!", library.Find("Focus! Hunters! Lots of them!"));
     }
 }
+
+public class GameCoverStoreTests
+{
+    [Theory]
+    [InlineData("../gta-v")]
+    [InlineData("gta/v")]
+    [InlineData("GTA-V")]
+    [InlineData("")]
+    [InlineData("gta-v.png")]
+    public void UnsafePackIdsHaveNoCoverPath(string id)
+    {
+        Assert.Null(GameCoverStore.PathFor(id, Path.GetTempPath()));
+    }
+
+    [Fact]
+    public void UserCoverIsStoredLocallyAndCanBeRemovedWithoutTouchingGamePacks()
+    {
+        var directory = PackFixtures.TemporaryDirectory();
+        try
+        {
+            var path = GameCoverStore.PathFor("gta-v", directory);
+            Assert.Equal(Path.Combine(directory, "gta-v.png"), path);
+            Assert.False(File.Exists(path));
+
+            var png = Convert.FromBase64String(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+V8dMAAAAASUVORK5CYII=");
+            GameCoverStore.Save("gta-v", png, directory);
+            Assert.Equal(png, File.ReadAllBytes(path!));
+
+            Assert.True(GameCoverStore.Remove("gta-v", directory));
+            Assert.False(File.Exists(path));
+            Assert.False(GameCoverStore.Remove("gta-v", directory));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public void OversizedOrNonPngCoverNeverOverwritesAnExistingCover()
+    {
+        var directory = PackFixtures.TemporaryDirectory();
+        try
+        {
+            var png = Convert.FromBase64String(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+V8dMAAAAASUVORK5CYII=");
+            GameCoverStore.Save("elden-ring", png, directory);
+            Assert.Throws<InvalidDataException>(() =>
+                GameCoverStore.Save("elden-ring", new byte[GameCoverStore.MaxCoverBytes + 1], directory));
+            Assert.Throws<InvalidDataException>(() =>
+                GameCoverStore.Save("elden-ring", [0xff, 0xd8, 0xff], directory));
+            Assert.Equal(png, File.ReadAllBytes(GameCoverStore.PathFor("elden-ring", directory)!));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+}
