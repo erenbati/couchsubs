@@ -45,12 +45,17 @@
   // Bağlantı kopukken katmanda sağ üstte küçük bir nokta; bağlıyken hiçbir şey görünmez.
   function connection(open) {
     if (!dot) return;
-    clearTimeout(dotTimer);
     if (open) {
+      clearTimeout(dotTimer);
+      dotTimer = null;
       dot.className = 'hidden';
       return;
     }
-    dotTimer = setTimeout(function () { dot.className = ''; }, DOT_AFTER_MS);
+    if (dotTimer !== null || dot.className !== 'hidden') return;
+    dotTimer = setTimeout(function () {
+      dotTimer = null;
+      dot.className = '';
+    }, DOT_AFTER_MS);
   }
 
   function setupOverlay() {
