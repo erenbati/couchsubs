@@ -322,7 +322,12 @@ class TranslationService : Service() {
         pipeline =SubtitlePipeline(translator, subtitleServer).apply {
             // Yarım ya da bozuk okuma hemen çevrilmez; aynı satırın en iyi okuması çevrilir (Windows ve iPhone ile aynı).
             holdReadings = true
-            packLookup = { text -> if (packTitles != null && settings.packsEnabled) PackLookup.match(library, text) else null }
+            packLookup = { text ->
+                if (packTitles != null && settings.packsEnabled) {
+                    library.setDisabled(settings.disabledPacks)
+                    PackLookup.match(library, text)
+                } else null
+            }
             showSpeakerNames = { settings.showSpeakerNames }
             onPackMissed = { text -> linePool.offer(text) }
             onPairShown = { pair ->
@@ -342,7 +347,12 @@ class TranslationService : Service() {
         val areaReader = SubtitleReader().also { regionReader = it }
         regionWatcher = com.couchsubs.mobile.core.RegionWatcher({ crop -> areaReader.read(crop.pixels as RegionPixels) },
             engineTranslator(free.separate()), subtitleServer).apply {
-            packLookup = { text -> if (packTitles != null && settings.packsEnabled) PackLookup.match(library, text) else null }
+            packLookup = { text ->
+                if (packTitles != null && settings.packsEnabled) {
+                    library.setDisabled(settings.disabledPacks)
+                    PackLookup.match(library, text)
+                } else null
+            }
         }
         background.scheduleWithFixedDelay({ linePool.flush() }, LinePool.FLUSH_INTERVAL_MS, LinePool.FLUSH_INTERVAL_MS, TimeUnit.MILLISECONDS)
         // Ücretsiz modelin ilk indirilmesi (yaklaşık 30 MB); oyun paketleri beklemeden çalışır.
