@@ -153,8 +153,19 @@ public sealed class ModelStore
         File.Move(partPath, finalPath, overwrite: true);
     }
 
-    private Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
-        _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+    private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        using var stall = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        stall.CancelAfter(StallTimeout);
+        try
+        {
+            return await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, stall.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new TimeoutException("Model download stalled");
+        }
+    }
 
     private static async Task HashExistingAsync(string path, IncrementalHash hash, CancellationToken ct)
     {
