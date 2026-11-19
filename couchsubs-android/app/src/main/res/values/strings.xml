@@ -35,7 +35,11 @@
     <string name="error_native">Bu cihazda Remote Play kütüphanesi yüklenemedi.</string>
     <string name="error_port">Altyazı sunucusu açılamadı (8787 kullanımda).</string>
     <string name="error_translation">Çeviri şu an yapılamıyor; yeniden deneniyor.</string>
-    <string name="error_model">Ücretsiz çeviri modeli indirilemedi. İnternet bağlantını kontrol et.</string>
+    <string name="error_model">Ücretsiz çeviri modeli indirilemedi. Yeniden dene; sorun sürerse hata kaydını paylaş.</string>
+    <string name="error_model_network">Çeviri modeli ağ hatası nedeniyle indirilemedi. Bağlantını ve DNS/VPN ayarlarını kontrol edip yeniden dene.</string>
+    <string name="error_model_storage">Çeviri modeli için telefonda yeterli boş alan yok. Yer açıp yeniden dene.</string>
+    <string name="error_model_unavailable">Çeviri modeli hizmeti şu anda kullanılamıyor. Google Play Hizmetleri güncellemelerini kontrol edip yeniden dene.</string>
+    <string name="error_model_timeout">Çeviri modeli indirmesi zaman aşımına uğradı. Bağlantını kontrol edip yeniden dene.</string>
     <string name="screen_translate">Ekranı çevir</string>
     <string name="screen_working">Ekran çevriliyor…</string>
     <string name="screen_remove">Çevirileri kaldır</string>

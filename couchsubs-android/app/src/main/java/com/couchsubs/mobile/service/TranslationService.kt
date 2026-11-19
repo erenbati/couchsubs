@@ -53,6 +53,8 @@ import com.couchsubs.mobile.translation.AiTranslator
 import com.couchsubs.mobile.translation.DeepLTranslator
 import com.couchsubs.mobile.translation.Glossary
 import com.couchsubs.mobile.translation.MlKitTranslator
+import com.couchsubs.mobile.translation.ModelDownloadProblem
+import com.couchsubs.mobile.translation.ModelDownloadRecovery
 import com.couchsubs.mobile.translation.TranslationCache
 import com.couchsubs.mobile.ui.MainActivity
 import com.couchsubs.mobile.xbox.XboxError
@@ -352,7 +354,16 @@ class TranslationService : Service() {
             } catch (error: Exception) {
                 Log.w(TAG, "ML Kit model", error)
                 // Deneme modu model olmadan da hazır çeviriyle sürer; uyarı gösterilmez.
-                if (!demo) LiveState.update { it.copy(error = getString(R.string.error_model)) }
+                if (!demo) {
+                    val message = when (ModelDownloadRecovery.classify(error)) {
+                        ModelDownloadProblem.NETWORK -> R.string.error_model_network
+                        ModelDownloadProblem.STORAGE -> R.string.error_model_storage
+                        ModelDownloadProblem.UNAVAILABLE -> R.string.error_model_unavailable
+                        ModelDownloadProblem.TIMEOUT -> R.string.error_model_timeout
+                        ModelDownloadProblem.UNKNOWN -> R.string.error_model
+                    }
+                    LiveState.update { it.copy(error = getString(message)) }
+                }
             }
         }
 

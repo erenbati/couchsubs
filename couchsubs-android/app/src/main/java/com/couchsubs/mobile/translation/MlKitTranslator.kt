@@ -35,7 +35,7 @@ class MlKitTranslator(
     /** Model yoksa indirir (bloklar). [wifiOnly]: hücresel veride indirme. */
     fun prepare(wifiOnly: Boolean = false, timeoutSeconds: Long = 300) {
         val conditions = DownloadConditions.Builder().apply { if (wifiOnly) requireWifi() }.build()
-        await(translator.downloadModelIfNeeded(conditions), timeoutSeconds)
+        ModelDownloadRecovery.retryOnce { await(translator.downloadModelIfNeeded(conditions), timeoutSeconds) }
     }
 
     override fun translate(text: String): String = line.translate(text)
