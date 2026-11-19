@@ -200,12 +200,24 @@ public struct LocalAIServer: Equatable, Sendable {
         }
     }
 
-    /// Önbellekteki motor adı: sunucu (makine ve kapı) ve model girer; farklı yerel modellerin çevirileri karışmaz.
-    /// Ör. "local:localhost:11434/qwen2.5:7b".
+    /// Önbellekteki motor adı sunucu adresini ve modeli içerir; farklı yerel uç noktaların çevirileri karışmaz.
     public var engineID: String {
+        let scheme = baseURL.scheme?.lowercased() ?? ""
         let host = baseURL.host?.lowercased() ?? ""
-        let port = baseURL.port.map { ":\($0)" } ?? ""
-        return "\(AIProvider.local.rawValue):\(host)\(port)/\(model)"
+        let port = baseURL.port.map { String($0) } ?? ""
+        let path = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)?.percentEncodedPath ?? baseURL.path
+
+        // Standart HTTP /v1 adresinin mevcut önbellek anahtarını koru.
+        if scheme == "http", path == "/v1" {
+            let legacyPort = baseURL.port.map { ":\($0)" } ?? ""
+            return "\(AIProvider.local.rawValue):\(host)\(legacyPort)/\(model)"
+        }
+
+        // Alan uzunlukları yol ve model ayraçlarının yeni bir önbellek çakışması oluşturmasını engeller.
+        let endpoint = [scheme, host, port, path, model]
+            .map { "\($0.utf8.count):\($0)" }
+            .joined(separator: "|")
+        return "\(AIProvider.local.rawValue):endpoint-v2:\(endpoint)"
     }
 }
 
