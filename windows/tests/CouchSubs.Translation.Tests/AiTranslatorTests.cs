@@ -1089,6 +1089,23 @@ public class AiTranslatorTests
 
     /// <summary>Kayan bir dakikalık pencere: hak bitince istek verilmez, en eski istek pencereden çıkınca yeniden verilir.</summary>
     [Fact]
+    public void GeminiPaidKeysSkipTheFreeTierBudgetAndFreeKeysStayIsolated()
+    {
+        var model = AiProvider.Gemini.DefaultModel();
+        var free = RequestBudget.Shared(AiProvider.Gemini, model, apiKey: "free-key-one");
+        Assert.NotNull(free);
+        Assert.Same(free, RequestBudget.Shared(AiProvider.Gemini, model, apiKey: "free-key-one"));
+        Assert.NotSame(free, RequestBudget.Shared(AiProvider.Gemini, model, apiKey: "free-key-two"));
+        var paid = RequestBudget.Shared(AiProvider.Gemini, model, apiKey: "paid-key", paidTier: true);
+        Assert.NotNull(paid);
+        Assert.NotSame(paid, RequestBudget.Shared(AiProvider.Gemini, model, apiKey: "paid-key"));
+        Assert.Equal(int.MaxValue, paid.PerMinute);
+        paid.Lower(7); // the provider's real 429 limit still applies
+        Assert.Equal(7, paid.PerMinute);
+        Assert.Same(paid, RequestBudget.Shared(AiProvider.Gemini, model, apiKey: "paid-key", paidTier: true));
+    }
+
+    [Fact]
     public void RequestBudgetSlidingWindow()
     {
         var time = new DateTimeOffset(2026, 11, 11, 12, 0, 0, TimeSpan.Zero);

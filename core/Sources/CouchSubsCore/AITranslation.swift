@@ -625,7 +625,7 @@ public final class AITranslationCore: @unchecked Sendable {
     /// `instruction`: Ayarlardaki "Ek talimat"; sistem talimatının sonuna eklenir, boşsa hiçbir şey değişmez.
     public init(provider: AIProvider, key: String, model: String? = nil, server: LocalAIServer? = nil, session: URLSession? = nil,
                 cache: TranslationCache = TranslationCache(), budget: RequestBudget? = nil, game: (@Sendable () -> String?)? = nil,
-                instruction: String? = nil) {
+                instruction: String? = nil, paidTier: Bool = false) {
         self.provider = provider
         errorPause = provider.isLocal ? Self.localRetryAfter : Self.retryAfter
         self.game = game
@@ -638,7 +638,7 @@ public final class AITranslationCore: @unchecked Sendable {
         self.session = session ?? Self.makeSession(provider: provider)
         screenSession = session ?? Self.makeSession(timeout: provider.isLocal ? Self.localTestTimeout : Self.screenTimeout)
         self.cache = cache
-        self.budget = budget ?? RequestBudget.shared(provider: provider, model: resolved)
+        self.budget = budget ?? RequestBudget.shared(provider: provider, model: resolved, apiKey: self.key, paidTier: paidTier)
     }
 
     /// Bulut hizmetinde beklenen en uzun süre.

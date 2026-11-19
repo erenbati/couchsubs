@@ -23,9 +23,9 @@ public final class AITranslator: TextTranslator, OnlineTranslating {
     /// `instruction`: Ayarlardaki "Ek talimat"; sistem talimatının sonuna eklenir, boşsa hiçbir şey değişmez.
     public init(provider: AIProvider, key: String, model: String?, server: LocalAIServer? = nil, fallback: TextTranslator,
                 session: URLSession? = nil, cache: TranslationCache = TranslationCache(), budget: RequestBudget? = nil,
-                game: (@Sendable () -> String?)? = nil, instruction: String? = nil) {
+                game: (@Sendable () -> String?)? = nil, instruction: String? = nil, paidTier: Bool = false) {
         core = AITranslationCore(provider: provider, key: key, model: model, server: server, session: session, cache: cache,
-                                 budget: budget, game: game, instruction: instruction)
+                                 budget: budget, game: game, instruction: instruction, paidTier: paidTier)
         self.fallback = fallback
     }
 

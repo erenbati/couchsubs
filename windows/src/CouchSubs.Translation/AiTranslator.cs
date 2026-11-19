@@ -500,7 +500,7 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
     /// <param name="instruction">Ayarlardaki "Ek talimat": sistem talimatının sonuna eklenir; boşsa hiçbir şey değişmez.</param>
     public AiTranslator(AiProvider provider, string key, string? model, ITextTranslator? fallback, HttpClient? http = null,
                         TranslationCache? cache = null, RequestBudget? budget = null, LocalAiServer? server = null,
-                        Func<string?>? game = null, string? instruction = null)
+                        Func<string?>? game = null, string? instruction = null, bool paidTier = false)
     {
         _game = game;
         _instruction = AiRequest.Instruction(instruction);
@@ -514,7 +514,7 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
         _http = http ?? ClientFor(provider);
         _screenHttp = http ?? (provider.IsLocal() ? LocalTestClient.Value : ScreenClient.Value);
         _cache = cache ?? new TranslationCache();
-        _budget = budget ?? RequestBudget.Shared(provider, Model);
+        _budget = budget ?? RequestBudget.Shared(provider, Model, _key, paidTier);
     }
 
     public AiProvider Provider { get; }

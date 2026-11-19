@@ -262,6 +262,8 @@ public sealed record UserSettings
     public TranslationEngine OnlineEngine { get; init; } = TranslationEngine.DeepL;
     /// <summary>Seçili yapay zekâ modelleri (listedeki kimlikler; bkz. <see cref="AiProviders.Models"/>).</summary>
     public string GeminiModel { get; init; } = AiProvider.Gemini.DefaultModel().Id;
+    /// <summary>Explicit opt-in: bypass the free-tier client-side Gemini RPM for a billed key.</summary>
+    public bool GeminiPaidTier { get; init; }
     public string OpenAiModel { get; init; } = AiProvider.OpenAi.DefaultModel().Id;
     public string ClaudeModel { get; init; } = AiProvider.Claude.DefaultModel().Id;
     /// <summary>
@@ -626,7 +628,7 @@ public interface IAppServices
     /// </summary>
     /// <paramref name="instruction"/>: Ayarlardaki "Ek talimat"; boşsa sistem talimatı değişmez.
     ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback, Func<string?>? game,
-                                      string? instruction = null) => null;
+                                      string? instruction = null, bool paidTier = false) => null;
     /// <summary>Yapay zekâ anahtarını örnek bir satırı çevirerek dener.</summary>
     Task<AiTestResult> TestAiKeyAsync(AiProvider provider, string key, string model) => Task.FromResult(new AiTestResult(OnlineKeyState.Unreachable));
     /// <summary>Yerel model (Ollama, LM Studio) çevirmeni; anahtar boş olabilir. Bu derlemede yoksa null.</summary>

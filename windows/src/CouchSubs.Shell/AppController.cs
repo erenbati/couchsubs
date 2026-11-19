@@ -421,7 +421,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
                                               TaskContinuationOptions.OnlyOnFaulted);
             }
             var translationChanged = old.OnlineTranslation != value.OnlineTranslation || old.OnlineEngine != value.OnlineEngine
-                                     || old.GeminiModel != value.GeminiModel || old.OpenAiModel != value.OpenAiModel
+                                     || old.GeminiModel != value.GeminiModel || old.GeminiPaidTier != value.GeminiPaidTier
+                                     || old.OpenAiModel != value.OpenAiModel
                                      || old.ClaudeModel != value.ClaudeModel
                                      || old.LocalAiBaseUrl != value.LocalAiBaseUrl || old.LocalAiModel != value.LocalAiModel
                                      || old.AiInstruction != value.AiInstruction
@@ -2116,7 +2117,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         {
             if (store.Load<string>(storeKey) is not { Length: > 0 } key) return local;
             online = engine.Provider() is { } provider
-                ? services.MakeAiTranslator(provider, key, provider.Model(settings.ModelFor(provider)).Id, fallback, game, settings.AiInstruction)
+                ? services.MakeAiTranslator(provider, key, provider.Model(settings.ModelFor(provider)).Id, fallback, game, settings.AiInstruction,
+                    settings.GeminiPaidTier && provider == AiProvider.Gemini)
                 : services.MakeOnlineTranslator(key, fallback);
         }
         if (online is null) return local;

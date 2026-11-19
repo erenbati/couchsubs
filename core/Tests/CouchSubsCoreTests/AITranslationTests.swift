@@ -965,6 +965,30 @@ final class AITranslationTests: XCTestCase {
     }
 
     /// Kayan bir dakikalık pencere: hak bitince istek verilmez, en eski istek pencereden çıkınca yeniden verilir.
+    func testGeminiPaidTierDefaultsOffAndSurvivesSettingsSerialization() throws {
+        let legacy = try JSONDecoder().decode(UserSettings.self, from: Data("{}".utf8))
+        XCTAssertFalse(legacy.geminiPaidTier)
+        var enabled = legacy
+        enabled.geminiPaidTier = true
+        let restored = try JSONDecoder().decode(UserSettings.self, from: JSONEncoder().encode(enabled))
+        XCTAssertTrue(restored.geminiPaidTier)
+    }
+
+    func testGeminiPaidKeysSkipFreeTierBudgetAndFreeKeysStayIsolated() {
+        let model = AIProvider.gemini.defaultModel
+        let free = RequestBudget.shared(provider: .gemini, model: model, apiKey: "free-key-one")
+        XCTAssertNotNil(free)
+        XCTAssertTrue(free === RequestBudget.shared(provider: .gemini, model: model, apiKey: "free-key-one"))
+        XCTAssertFalse(free === RequestBudget.shared(provider: .gemini, model: model, apiKey: "free-key-two"))
+        let paid = RequestBudget.shared(provider: .gemini, model: model, apiKey: "paid-key", paidTier: true)
+        XCTAssertNotNil(paid)
+        XCTAssertFalse(paid === RequestBudget.shared(provider: .gemini, model: model, apiKey: "paid-key"))
+        XCTAssertEqual(paid?.perMinute, Int.max)
+        paid?.lower(to: 7) // the provider's actual 429 limit still applies
+        XCTAssertEqual(paid?.perMinute, 7)
+        XCTAssertTrue(paid === RequestBudget.shared(provider: .gemini, model: model, apiKey: "paid-key", paidTier: true))
+    }
+
     func testRequestBudgetSlidingWindow() {
         var time = Date(timeIntervalSince1970: 1000)
         let budget = RequestBudget(perMinute: 3) { time }

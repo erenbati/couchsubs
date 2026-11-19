@@ -28,9 +28,9 @@ public sealed class LiveServices : IAppServices
     // Her model kendi önbelleğini kullanır ("gemini:gemini-3.5-flash-lite"); model değişince eski çeviriler karışmaz.
     // Ek talimat aynı önbellekte kalır; anahtar talimatın etiketiyle ayrılır (bkz. AiTranslator.CacheKey).
     public ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback, Func<string?>? game,
-                                             string? instruction = null) =>
+                                             string? instruction = null, bool paidTier = false) =>
         new AiTranslator(provider, key, model, fallback, cache: TranslationCache.Shared(AppPaths.Translations, provider.EngineId(model), "en", "tr"),
-                         game: game, instruction: instruction);
+                         game: game, instruction: instruction, paidTier: paidTier);
 
     public Task<AiTestResult> TestAiKeyAsync(AiProvider provider, string key, string model) => AiTranslator.TestAsync(provider, key, model);
 

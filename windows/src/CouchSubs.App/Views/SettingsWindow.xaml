@@ -161,9 +161,13 @@
                                 <TextBlock Text="{t:T 'For better translation, get a free Gemini key.'}" TextWrapping="Wrap" VerticalAlignment="Center" />
                             </DockPanel>
                             <StackPanel x:Name="FreeGeminiNotes" Visibility="Collapsed">
+                                <CheckBox x:Name="GeminiPaidTier" Content="{t:T 'I use a paid Gemini API key'}"
+                                          Checked="OnGeminiPaidTier" Unchecked="OnGeminiPaidTier" Margin="0,8,0,0" />
+                                <TextBlock Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,4,0,0"
+                                           Text="{t:T 'Paid API keys may incur charges. Google still enforces quotas.'}" />
                                 <TextBlock Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,8,0,0"
                                            Text="{t:T 'Subtitle text is sent to Google. With a free key, Google may use it to improve its products, and people at Google may read it. Only the game\'s subtitles are sent.'}" />
-                                <TextBlock Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,8,0,0"
+                                <TextBlock x:Name="FreeGeminiLimit" Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,8,0,0"
                                            Text="{t:T 'The free key has a per-minute limit. When it is reached, that line is translated by the free translation.'}" />
                             </StackPanel>
                             <StackPanel x:Name="KeyPanel" Margin="0,12,0,0">

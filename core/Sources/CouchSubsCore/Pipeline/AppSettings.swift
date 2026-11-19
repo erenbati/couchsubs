@@ -125,6 +125,8 @@ public struct UserSettings: Codable, Equatable {
     public var onlineEngine = TranslationEngine.deepL
     /// Seçili yapay zekâ modelleri (listedeki kimlikler; bkz. `AIProvider.models`).
     public var geminiModel = AIProvider.gemini.defaultModel.id
+    /// Explicit opt-in for API keys billed by Google. Free keys keep the conservative local RPM.
+    public var geminiPaidTier = false
     public var openAIModel = AIProvider.openAI.defaultModel.id
     public var claudeModel = AIProvider.claude.defaultModel.id
     /// Yerel model sunucusunun adresi (Ollama: http://127.0.0.1:11434/v1, LM Studio: http://localhost:1234/v1) ve
@@ -183,6 +185,7 @@ public struct UserSettings: Codable, Equatable {
         let engine = (try? values.decodeIfPresent(TranslationEngine.self, forKey: .onlineEngine)) ?? defaults.onlineEngine
         onlineEngine = engine == .free ? defaults.onlineEngine : engine
         geminiModel = try values.decodeIfPresent(String.self, forKey: .geminiModel) ?? defaults.geminiModel
+        geminiPaidTier = try values.decodeIfPresent(Bool.self, forKey: .geminiPaidTier) ?? defaults.geminiPaidTier
         openAIModel = try values.decodeIfPresent(String.self, forKey: .openAIModel) ?? defaults.openAIModel
         claudeModel = try values.decodeIfPresent(String.self, forKey: .claudeModel) ?? defaults.claudeModel
         localAIBaseURL = try values.decodeIfPresent(String.self, forKey: .localAIBaseURL) ?? defaults.localAIBaseURL

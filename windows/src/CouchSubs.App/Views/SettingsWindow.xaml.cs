@@ -45,6 +45,7 @@ public partial class SettingsWindow : Window
         InitializeComponent();
         var settings = controller.Settings;
         DataContext = controller;
+        GeminiPaidTier.IsChecked = settings.GeminiPaidTier;
         TextSize.Value = Math.Clamp(settings.Style.FontSize, TextSize.Minimum, TextSize.Maximum);
         TextSizeValue.Text = ((int)TextSize.Value).ToString();
         Position.Value = settings.Style.BottomPercent;
@@ -528,6 +529,13 @@ public partial class SettingsWindow : Window
     private TranslationEngine SelectedEngine =>
         Engine.SelectedItem is ComboBoxItem { Tag: string tag } ? Enum.Parse<TranslationEngine>(tag) : TranslationEngine.Free;
 
+    private void OnGeminiPaidTier(object sender, RoutedEventArgs e)
+    {
+        if (loading) return;
+        Update(s => s with { GeminiPaidTier = GeminiPaidTier.IsChecked == true });
+        ShowEngine();
+    }
+
     private void ShowEngine()
     {
         var text = Localizer.Current;
@@ -545,6 +553,7 @@ public partial class SettingsWindow : Window
         KeyPanel.Visibility = engine == TranslationEngine.Free ? Visibility.Collapsed : Visibility.Visible;
         FreeGeminiOffer.Visibility = engine == TranslationEngine.Free ? Visibility.Visible : Visibility.Collapsed;
         FreeGeminiNotes.Visibility = engine == TranslationEngine.Gemini ? Visibility.Visible : Visibility.Collapsed;
+        FreeGeminiLimit.Visibility = controller.Settings.GeminiPaidTier ? Visibility.Collapsed : Visibility.Visible;
         KeyStatus.Visibility = Visibility.Collapsed;
         KeyError.Visibility = Visibility.Collapsed;
         if (engine == TranslationEngine.Free) return;

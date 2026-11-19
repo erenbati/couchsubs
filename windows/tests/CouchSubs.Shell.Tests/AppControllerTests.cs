@@ -151,7 +151,7 @@ internal sealed class FakeServices : IAppServices
         return Task.FromResult(AiTest);
     }
     public ITextTranslator? MakeAiTranslator(AiProvider provider, string key, string model, ITextTranslator? fallback, Func<string?>? game,
-                                             string? instruction = null)
+                                             string? instruction = null, bool paidTier = false)
     {
         AiTranslators.Add((provider, key, model));
         AiInstructions.Add(instruction);
@@ -359,6 +359,17 @@ public class AppControllerTests
 
     internal static AppController Make(FakeServices? services = null, MemoryStore? store = null, MemorySettings? settings = null, FakeSleep? sleep = null) =>
         new(services ?? new FakeServices(), store ?? new MemoryStore(), settings ?? new MemorySettings(), sleep ?? new FakeSleep(), Localizer.ForLanguage("en"), action => action());
+
+    [Fact]
+    public void PaidGeminiOptInIsOffByDefaultAndSurvivesSettingsSerialization()
+    {
+        var legacy = System.Text.Json.JsonSerializer.Deserialize<UserSettings>("{}")!;
+        Assert.False(legacy.GeminiPaidTier);
+        var optedIn = legacy with { GeminiPaidTier = true };
+        var restored = System.Text.Json.JsonSerializer.Deserialize<UserSettings>(
+            System.Text.Json.JsonSerializer.Serialize(optedIn))!;
+        Assert.True(restored.GeminiPaidTier);
+    }
 
     [Fact]
     public void FreshInstallStartsAtWelcome() => Assert.Equal(OnboardingStep.Welcome, Make().Step);

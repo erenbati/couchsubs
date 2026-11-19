@@ -489,6 +489,7 @@ final class AppModel: ObservableObject {
             }
             let translationChanged = settings.onlineTranslation != oldValue.onlineTranslation
                 || settings.onlineEngine != oldValue.onlineEngine || settings.geminiModel != oldValue.geminiModel
+                || settings.geminiPaidTier != oldValue.geminiPaidTier
                 || settings.openAIModel != oldValue.openAIModel || settings.claudeModel != oldValue.claudeModel
                 || settings.localAIBaseURL != oldValue.localAIBaseURL || settings.localAIModel != oldValue.localAIModel
                 || settings.aiInstruction != oldValue.aiInstruction
@@ -1629,7 +1630,8 @@ final class AppModel: ObservableObject {
             let model = provider.model(settings.model(for: provider)).id
             online = AITranslator(provider: provider, key: key, model: model, fallback: local,
                                   cache: Self.translationCache(engine: provider.engineID(model: model), source: source, target: target),
-                                  game: game, instruction: settings.aiInstruction)
+                                  game: game, instruction: settings.aiInstruction,
+                                  paidTier: provider == .gemini && settings.geminiPaidTier)
         } else if let key = store.load(String.self, for: storeKey) {
             online = DeepLTranslator(key: key, fallback: local,
                                      cache: Self.translationCache(engine: DeepLTranslator.engineID, source: source, target: target))

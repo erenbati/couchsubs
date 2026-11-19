@@ -935,8 +935,12 @@ struct TranslationCard: View {
             // Ek talimat (#306) yalnız yapay zekâ motorlarında (Gemini, OpenAI, Claude, yerel model); DeepL'de yoktur.
             if engine.aiProvider != nil { AIInstructionSection() }
             if engine == .gemini {
+                Toggle("I use a paid Gemini API key", isOn: $model.settings.geminiPaidTier)
+                HintText(text: "Paid API keys may incur charges. Google still enforces quotas.")
                 HintText(text: FreeGemini.privacy)
-                HintText(text: FreeGemini.limit)
+                if !model.settings.geminiPaidTier {
+                    HintText(text: FreeGemini.limit)
+                }
             }
         }
         Card(title: "Advanced") {
