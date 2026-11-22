@@ -15,6 +15,8 @@ paketlere dayanan testler kendini atlar. Yalnız standart kitaplık (SigV4 imzas
 """
 
 import datetime
+import gzip
+import json
 import hashlib
 import hmac
 import os
@@ -128,6 +130,18 @@ def main(argv):
             except urllib.error.URLError as error:
                 print(f"✗ {key} indirilemedi: {getattr(error, 'code', '') or error.__class__.__name__}", file=sys.stderr)
                 return 1
+            # A successful HTTP response does not guarantee a usable archive. Validate
+            # bundled game packs before replacing an existing, working copy.
+            if prefix == "bundled/" and name.endswith(".json.gz"):
+                try:
+                    pack = json.loads(gzip.decompress(data))
+                    if not (isinstance(pack, dict) and pack.get("format") == 2
+                            and isinstance(pack.get("entries"), dict)
+                            and isinstance(pack.get("segments", {}), dict)):
+                        raise ValueError("invalid format-2 pack structure")
+                except (OSError, EOFError, UnicodeError, ValueError) as error:
+                    print(f"✗ {key} geçersiz paket: {error.__class__.__name__}", file=sys.stderr)
+                    return 1
             temporary = dest.with_name("." + name + ".download")
             temporary.write_bytes(data)
             temporary.replace(dest)
