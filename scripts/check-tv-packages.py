@@ -17,6 +17,7 @@ Kullanım: check-tv-packages.py <klasör> [--allow-missing apk,ipk,wgt]
 import json
 import re
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,10 +25,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def source_versions(root: Path = ROOT) -> dict:
     webos = json.loads((root / "tv-webos" / "appinfo.json").read_text(encoding="utf-8"))["version"]
-    config = (root / "tv-tizen" / "config.xml").read_text(encoding="utf-8")
-    tizen = re.search(r'\sversion="([0-9.]+)"\s+viewmodes', config).group(1)
+    # XML attributes are unordered: version need not precede viewmodes.
+    tizen = ET.parse(root / "tv-tizen" / "config.xml").getroot().attrib["version"]
     gradle = (root / "tv-android" / "app" / "build.gradle").read_text(encoding="utf-8")
-    android = re.search(r"versionName '([0-9.]+)'", gradle).group(1)
+    # Gradle accepts both single- and double-quoted versionName declarations.
+    android = re.search(r"""\bversionName\s+['"]([0-9.]+)['"]""", gradle).group(1)
     return {"ipk": webos, "wgt": tizen, "apk": android}
 
 
