@@ -34,6 +34,13 @@ const packs = readdirSync(dir)
     const source = parsed.entries ?? parsed;
     if (!record(source)) throw new Error("Invalid pack entries");
     const entries = Object.keys(source).length;
+    // The API rejects zero-entry metadata, and clients cannot load blank or
+    // non-string subtitle values. Fail the release build before upload rather
+    // than publishing an index that invalidates the entire pack listing.
+    if (parsed.format === 2 && (!entries ||
+      !Object.values(source).every((value) => typeof value === "string" && value.trim()))) {
+      throw new Error("Invalid format 2 subtitle translations");
+    }
     return { id, title, version, sha256: createHash("sha256").update(data).digest("hex"), size: data.length, entries };
   });
 

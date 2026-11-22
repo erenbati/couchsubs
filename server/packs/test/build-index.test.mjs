@@ -73,6 +73,24 @@ it("refuses an index whose advertised pack ID does not match its downloadable fi
 });
 
 it.each([
+  ["no translated entries", {}],
+  ["non-string translated entry", { abc: 42 }],
+  ["blank translated entry", { abc: "   " }],
+])("refuses format-2 archives with unusable translations (%s)", (_label, entries) => {
+  const dir = mkdtempSync(join(tmpdir(), "couchsubs-invalid-archive-"));
+  try {
+    writeFileSync(join(dir, "game.json.gz"), gzipSync(Buffer.from(JSON.stringify({
+      format: 2, id: "game", title: "Game", entries,
+    }))));
+    expect(() => execFileSync(process.execPath, [script, dir, "7"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    })).toThrow();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it.each([
   ["invalid characters in package ID", "invalid_name", { format: 2, id: "invalid_name", title: "Game", entries: { abc: "Text" } }],
   ["blank package title", "valid-game", { format: 2, id: "valid-game", title: " ", entries: { abc: "Text" } }],
   ["non-object subtitle entries", "valid-game", { format: 2, id: "valid-game", title: "Game", entries: "not a map" }],
