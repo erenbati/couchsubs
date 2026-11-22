@@ -996,7 +996,9 @@ class AiTranslator(
     private val instruction: (() -> String?)? = null,
     // Yerel model sunucusu (yalnız LOCAL).
     private val server: LocalAiServer? = null,
-) : SentenceTranslator<List<AiRequest.ContextLine>>(fallback, cache, clock, budget ?: RequestBudget.shared(provider, model)) {
+) : SentenceTranslator<List<AiRequest.ContextLine>>(
+    fallback, cache, clock, budget ?: RequestBudget.shared(provider, model, key)
+) {
     companion object {
         /** Kalıcı önbellek dosyasındaki motor adı (iPhone ile aynı: "gemini:<model>"). */
         fun engineId(provider: AiProvider, model: AiModel) = "${provider.id}:${model.id}"

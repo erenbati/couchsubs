@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.couchsubs.mobile.translation
 
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -35,10 +36,16 @@ class RequestBudget(perMinute: Int, private val now: () -> Long = System::curren
 
         private val registry = ConcurrentHashMap<String, RequestBudget>()
 
-        /** Modelin uygulama genelindeki ortak hakkı (Google sınırı proje ve model başına sayar); modelin sınırı yoksa null. */
-        fun shared(provider: AiProvider, model: AiModel): RequestBudget? {
+        /** API anahtarı ve model için ortak hak (Google sınırı proje ve model başına sayar); sınır yoksa null. */
+        fun shared(provider: AiProvider, model: AiModel, apiKey: String = ""): RequestBudget? {
             val perMinute = model.requestsPerMinute ?: return null
-            return registry.getOrPut(AiTranslator.engineId(provider, model)) { RequestBudget(perMinute) }
+            // Different keys may belong to different projects. Never keep the raw secret in the registry.
+            val keyHash = MessageDigest.getInstance("SHA-256")
+                .digest(apiKey.trim().toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            return registry.getOrPut("${AiTranslator.engineId(provider, model)}:$keyHash") {
+                RequestBudget(perMinute)
+            }
         }
     }
 }
