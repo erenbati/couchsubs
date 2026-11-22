@@ -48,14 +48,12 @@ const SHA256_HEX = /^[a-f0-9]{64}$/i;
 function validPack(value: unknown): value is IndexedPack {
   if (!value || typeof value !== "object") return false;
   const pack = value as Record<string, unknown>;
-  const r2Key = pack.r2Key;
   return typeof pack.id === "string" && PACK_ID.test(pack.id)
     && typeof pack.title === "string" && pack.title.trim().length > 0
     && Number.isSafeInteger(pack.version) && (pack.version as number) >= 0
     && typeof pack.sha256 === "string" && SHA256_HEX.test(pack.sha256)
     && Number.isSafeInteger(pack.size) && (pack.size as number) > 0
-    && Number.isSafeInteger(pack.entries) && (pack.entries as number) > 0
-    && (r2Key === undefined || r2Key === `packs/${pack.id}/${pack.sha256}.json.gz`);
+    && Number.isSafeInteger(pack.entries) && (pack.entries as number) > 0;
 }
 
 /** Bir IP'nin bir saatte indirebileceği paket dosyası. */
@@ -170,7 +168,8 @@ async function list(env: Env): Promise<Response> {
 async function download(request: Request, env: Env, id: string, rate: RateLimiter, now: number): Promise<Response> {
   if (!PACK_ID.test(id)) return json({ error: "not_found" }, 404);
   const indexed = (await readIndex(env))?.find((pack) => pack.id === id);
-  const object = await env.PACKS.get(indexed?.r2Key ?? `packs/${id}.json.gz`);
+  const r2Key = indexed && indexed.r2Key === `packs/${id}/${indexed.sha256}.json.gz` ? indexed.r2Key : undefined;
+  const object = await env.PACKS.get(r2Key ?? `packs/${id}.json.gz`);
   if (!object || !object.body) return json({ error: "not_found" }, 404);
   const headers: Record<string, string> = {
     "content-type": "application/gzip",

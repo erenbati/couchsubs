@@ -578,7 +578,8 @@ async function readIndex(env) {
     if (pack.r2Key !== undefined && (typeof pack.sha256 !== "string"
       || !/^[a-f0-9]{64}$/i.test(pack.sha256)
       || pack.r2Key !== `packs/${pack.id}/${pack.sha256}.json.gz`)) {
-      throw new Error("autopack index contains an invalid R2 pack key");
+      // A stale internal pointer must not take down the whole list/index. Readers fall back to the stable key.
+      delete pack.r2Key;
     }
     ids.add(pack.id);
   }

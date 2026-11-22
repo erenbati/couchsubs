@@ -82,7 +82,8 @@ satırlardan oyun başına `pool-<oyun kimliği>` paketini Claude ile (secret yo
 günceller (bkz. `server/pool/src/autopack.js`). Elle hazırlanmış paketlerin anahtarları `auto/known-keys.bin`'dedir;
 yeni elle paket yüklenince `cd server/pool && node scripts/build-known.mjs > known-keys.bin` ile yeniden üretilip
 `npx wrangler r2 object put couchsubs-packs/auto/known-keys.bin --file known-keys.bin --remote` ile yüklenir.
-Elle paket `index.json`'a eklenirken var olan `pool-*` girdileri korunmalıdır (build-index.mjs yalnız klasördekileri yazar).
+Elle paket `index.json`'a eklenirken var olan `pool-*` girdileri ve varsa `r2Key` alanları korunmalıdır (build-index.mjs yalnız klasördekileri yazar).
+Bir girdinin `sha256` değeri değiştirildiğinde ona ait eski `r2Key` de güncellenmeli ya da silinmelidir; Worker eşleşmeyen iç anahtarı kullanmaz ve `packs/<id>.json.gz` sabit anahtarına döner.
 
 ## Kurulum (sahibin hesabıyla; 2026-11-15'te yapıldı)
 
