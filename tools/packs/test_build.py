@@ -33,6 +33,13 @@ class BuildPackTests(unittest.TestCase):
                 self.assertNotEqual(proc.returncode, 0, "misaligned translations must stop package generation")
                 self.assertIsNone(pack, "do not write a pack with wrong sentence alignment")
 
+    def test_no_valid_translations_cannot_publish_an_unusable_pack(self):
+        for translations in (["", ""], ["We should leave now.", "Stay behind."]):
+            with self.subTest(translations=translations):
+                proc, pack = self.run_build(translations)
+                self.assertNotEqual(proc.returncode, 0, "a pack without full translations is rejected by clients")
+                self.assertIsNone(pack, "do not emit a zero-entry package")
+
     def test_valid_aligned_subtitles_still_build(self):
         proc, pack = self.run_build(["Now we leave.", "Wait here."])
         self.assertEqual(proc.returncode, 0, proc.stderr)

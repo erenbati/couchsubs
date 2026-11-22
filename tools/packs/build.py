@@ -56,5 +56,9 @@ for k in list(segments):
     if k in entries:
         del segments[k]
 print("demoted (taken by older packs)", sum(1 for k in segments if k in taken))
+# Every client rejects an archive without full-line entries, even if it has
+# fragments: never publish a successfully generated but unloadable pack.
+if not entries:
+    raise SystemExit("no complete translated subtitles remain; refusing empty game pack")
 c.write_pack(out, pack_id, title, source, entries, segments, english)
 print(pack_id, "entries", len(entries), "segments", len(segments), "signed", sum(1 for k in english if c.signature(english[k], c.fuzzy_min_len(title))))
