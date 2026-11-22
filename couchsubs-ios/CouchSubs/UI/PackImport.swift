@@ -83,7 +83,7 @@ struct ImportedPacksSection: View {
                     defer { if access { url.stopAccessingSecurityScopedResource() } }
                     let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                     guard size <= GamePackImporter.maxFileBytes else { throw GamePackImporter.ImportError.fileTooLarge }
-                    let data = try Data(contentsOf: url)
+                    let data = try GamePackImporter.read(fileAt: url)
                     let preview = try GamePackImporter.parse(data, fileName: url.lastPathComponent)
                     return PackImportSelection(fileName: url.lastPathComponent, preview: preview)
                 }.value
