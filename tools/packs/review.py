@@ -65,7 +65,11 @@ def run(start):
         warn = f"  [warning: {', '.join(flag[iid])}]" if flag[iid] else ""
         body.append(f"{iid}\t[{sp or '-'}] EN: {en}\n\tTR: {tr}{warn}")
     res = llm.call(SYSTEM, "\n".join(body), SCHEMA, f"{game}-review", max_tokens=32000, effort=__import__("os").environ.get("EFFORT", "medium"))
-    return (res or {}).get("fixes", [])
+    # Like translation, review runs in parallel batches. Ignore model IDs from
+    # other batches so a late/hallucinated correction cannot rewrite them.
+    allowed = {iid for iid, _, _, _ in chunk}
+    return [fix for fix in (res or {}).get("fixes", [])
+            if isinstance(fix, dict) and fix.get("id") in allowed]
 
 
 fixes = []
