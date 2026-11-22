@@ -49,7 +49,7 @@ export const BATCH = 40;
  *  toplar (durum + sonuç dosyası, batch başına 2 alt istek). Aynı anda en çok MAX_PENDING_BATCHES batch bekler.
  *  Maliyet sınırı (claude-opus-5-5, effort low, Batches: $2 / $10 MTok): 2026-11-21 ölçümünde (150 GTA 6 satırı) satır
  *  başına ~0,00047 $ (giriş ~50 jeton: sistem metni + satır, çıkış ~37 jeton: düşünme dahil). Gecelik 5500 satır ~2,6 $;
- *  NIGHT_BUDGET_USD (3 $) toplanan yanıtların usage'ıyla ayrıca durdurur. Dev oyun (GTA 6) gecede en çok 4000 satır alır. */
+ *  NIGHT_BUDGET_USD (3 $) toplanan usage ve bekleyen istek rezervleriyle ayrıca durdurur. Dev oyun (GTA 6) gecede en çok 4000 satır alır. */
 export const CLAUDE_LIMITS = Object.freeze({
   linesPerRun: 1000, nightly: 5500, jobNightly: 4000, maxLook: 1500, batch: 100,
 });
@@ -62,6 +62,10 @@ export const BATCH_WAIT_MS = 45 * 60 * 1000;
 export const NIGHT_BUDGET_USD = 3;
 /** claude-opus-5-5 Batches fiyatı ($/MTok): giriş, çıkış, önbellekten okuma, önbelleğe yazma. */
 const BATCH_PRICE = Object.freeze({ in: 2, out: 10, cacheRead: 0.1, cacheWrite: 2.5 });
+// Typical 100-line requests reserve about 4k output tokens; long source lines raise the cap up to the old 32k limit.
+const CLAUDE_MIN_TOKENS = 512;
+const LEGACY_CLAUDE_MAX_TOKENS = 32000;
+const RESERVATION_INPUT_TOKEN_OVERHEAD = 256;
 const AI_LIMITS = Object.freeze({
   linesPerRun: LINES_PER_RUN, nightly: NIGHTLY_LIMIT, jobNightly: JOB_NIGHTLY, maxLook: MAX_LOOK, batch: BATCH,
 });
@@ -274,12 +278,17 @@ const claudeHeaders = (env) => ({
   "anthropic-version": "2023-06-01",
 });
 
+function claudeMaxTokens(items) {
+  const estimate = items.length * 24 + items.reduce((sum, item) => sum + String(item?.en ?? "").length * 0.4, 0);
+  return Math.min(LEGACY_CLAUDE_MAX_TOKENS, Math.max(CLAUDE_MIN_TOKENS, Math.ceil(estimate)));
+}
+
 /** Bir çeviri isteğinin gövdesi (Messages API; Batches'te `params`). Opus 5.5 düşünmeyi kapatamaz: `thinking`
  *  gönderilmez, effort low; temperature yok. */
-export function claudeParams(items, game) {
+export function claudeParams(items, game, maxTokens = claudeMaxTokens(items)) {
   return {
     model: CLAUDE_MODEL,
-    max_tokens: 32000,
+    max_tokens: maxTokens,
     system: [{ type: "text", text: CLAUDE_SYSTEM(game), cache_control: { type: "ephemeral" } }],
     output_config: { effort: CLAUDE_EFFORT, format: { type: "json_schema", schema: CLAUDE_SCHEMA } },
     messages: [{ role: "user", content: items.map((it, i) => `${i}\t${it.en}`).join("\n") }],
@@ -305,13 +314,72 @@ export function batchCost(usage) {
     + n(u.cache_read_input_tokens) * BATCH_PRICE.cacheRead + n(u.cache_creation_input_tokens) * BATCH_PRICE.cacheWrite) / 1e6;
 }
 
+/** Bir batch'in üst sınır maliyeti: en yüksek input (cache write) ve output fiyatını kullanır. */
+function batchReservation(reqs, game, maxTokens = null) {
+  const encoder = new TextEncoder();
+  let usd = 0;
+  for (const items of Object.values(reqs ?? {})) {
+    if (!Array.isArray(items) || items.length === 0) continue;
+    const params = claudeParams(items, game, maxTokens ?? claudeMaxTokens(items));
+    // Parametre gövdesi sistem istemini, şemayı ve satırları içerir; 2 UTF-8 bayt/token tahmini ek payla kullanılır.
+    const inputTokens = Math.ceil(encoder.encode(JSON.stringify(params)).length / 2) + RESERVATION_INPUT_TOKEN_OVERHEAD;
+    usd += (inputTokens * BATCH_PRICE.cacheWrite + params.max_tokens * BATCH_PRICE.out) / 1e6;
+  }
+  return usd;
+}
+
+function reservationAmount(value) {
+  const usd = Number.isFinite(value) ? value : value?.usd;
+  return Number.isFinite(usd) && usd >= 0 ? usd : 0;
+}
+
+function reservedUsd(state) {
+  return Object.values(state?.reservations ?? {}).reduce((sum, value) => sum + reservationAmount(value), 0);
+}
+
+function reservationJob(job) {
+  const ref = { game: job.game ?? null };
+  if (job.titleId) ref.titleId = job.titleId;
+  else ref.gameKey = job.gameKey;
+  return ref;
+}
+
+function requestsFor(todo, size) {
+  const reqs = {};
+  for (let i = 0; i < todo.length; i += size) reqs[`c${i}`] = todo.slice(i, i + size);
+  return reqs;
+}
+
+function affordablePrefixLength(todo, game, size, availableUsd) {
+  let accepted = 0;
+  let reserved = 0;
+  for (let offset = 0; offset < todo.length; offset += size) {
+    const part = todo.slice(offset, offset + size);
+    const fullCost = batchReservation({ c0: part }, game);
+    if (reserved + fullCost <= availableUsd) {
+      reserved += fullCost;
+      accepted += part.length;
+      continue;
+    }
+    let low = 0;
+    let high = part.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (reserved + batchReservation({ c0: part.slice(0, mid) }, game) <= availableUsd) low = mid;
+      else high = mid - 1;
+    }
+    return accepted + low;
+  }
+  return accepted;
+}
+
 /** Satırları Claude ile (Anthropic Messages API, eşzamanlı) çevirir; id → Türkçe. Hata ya da bozuk yanıtta boş. Gece işi
  *  Batches kullanır (submitBatch / collectBatches); bu yol elle denemeler içindir. */
 export async function translateClaude(env, items, game) {
   let reply;
   try {
     const res = await fetch(CLAUDE_URL, {
-      method: "POST", headers: claudeHeaders(env), body: JSON.stringify(claudeParams(items, game)),
+      method: "POST", headers: claudeHeaders(env), body: JSON.stringify(claudeParams(items, game, LEGACY_CLAUDE_MAX_TOKENS)),
     });
     if (!res.ok) {
       console.log("autopack: Claude hatası", res.status, (await res.text()).slice(0, 300));
@@ -325,37 +393,36 @@ export async function translateClaude(env, items, game) {
   return claudeReply(reply, items);
 }
 
-/** Satırları 100'lük isteklere bölüp tek Message Batch olarak gönderir. Bekleyen batch kaydı ya da hata halinde null. */
+/** Satırları 100'lük isteklere bölüp tek Message Batch olarak gönderir. Belirsiz ağ/5xx sonuçlarında başarısızlık işaretlenir. */
 export async function submitBatch(env, todo, game, size, now) {
-  const reqs = {};
+  const reqs = requestsFor(todo, size);
   const requests = [];
-  for (let i = 0; i < todo.length; i += size) {
-    const id = `c${i}`;
-    const part = todo.slice(i, i + size);
-    reqs[id] = part;
+  for (const [id, part] of Object.entries(reqs)) {
     requests.push({ custom_id: id, params: claudeParams(part, game) });
   }
+  const reservation = batchReservation(reqs, game);
   try {
     const res = await fetch(CLAUDE_BATCHES_URL, {
       method: "POST", headers: claudeHeaders(env), body: JSON.stringify({ requests }),
     });
     if (!res.ok) {
       console.log("autopack: Claude batch hatası", res.status, (await res.text()).slice(0, 300));
-      return null;
+      // Anthropic 529 is an explicit overload rejection; other 5xx responses may follow an accepted POST.
+      return { failure: true, ambiguous: res.status >= 500 && res.status !== 529, status: res.status };
     }
     const batch = await res.json();
-    if (typeof batch?.id !== "string" || !batch.id) return null;
+    if (typeof batch?.id !== "string" || !batch.id) return { failure: true, ambiguous: true };
     console.log("autopack: Claude batch", batch.id, todo.length, "satır");
-    return { id: batch.id, at: now.getTime(), reqs };
+    return { id: batch.id, at: now.getTime(), reqs, reservedUsd: reservation };
   } catch (e) {
     console.log("autopack: Claude batch gönderilemedi", String(e?.message || e));
-    return null;
+    return { failure: true, ambiguous: true };
   }
 }
 
-/** Bekleyen batch'lerden bitenlerin sonuçlarını önbelleğe yazar. Döner: { lines: çevrilen satır, usd, usage }. */
+/** Bekleyen batch'lerden bitenleri önbelleğe yazar; settled, rezervi kapanan batch ID'lerini döner. */
 export async function collectBatches(env, cache) {
-  const out = { lines: 0, usd: 0, input: 0, output: 0 };
+  const out = { lines: 0, usd: 0, input: 0, output: 0, settled: [] };
   const keep = [];
   for (const b of cache.batches ?? []) {
     let status;
@@ -364,6 +431,8 @@ export async function collectBatches(env, cache) {
       if (res.status === 404) {
         // Silinmiş/süresi geçmiş batch: satırlar bir başarısızlık sayar, sonraki geçişte yeniden denenir.
         failLines(cache, Object.values(b.reqs).flat());
+        out.usd += Number.isFinite(b.reservedUsd) && b.reservedUsd >= 0 ? b.reservedUsd : 0;
+        out.settled.push(b.id);
         continue;
       }
       if (!res.ok) { keep.push(b); continue; }
@@ -377,6 +446,8 @@ export async function collectBatches(env, cache) {
       text = await res.text();
     } catch { keep.push(b); continue; }
     const seen = new Set();
+    let batchUsd = 0;
+    let unknownCost = false;
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
       let row;
@@ -385,16 +456,26 @@ export async function collectBatches(env, cache) {
       if (!Array.isArray(part) || seen.has(row.custom_id)) continue;
       seen.add(row.custom_id);
       const message = row.result?.type === "succeeded" ? row.result.message : null;
-      if (message?.usage) {
-        out.usd += batchCost(message.usage);
-        out.input += (message.usage.input_tokens ?? 0) + (message.usage.cache_read_input_tokens ?? 0)
-          + (message.usage.cache_creation_input_tokens ?? 0);
-        out.output += message.usage.output_tokens ?? 0;
-      }
+      const usage = message?.usage;
+      if (Number.isFinite(usage?.input_tokens) && usage.input_tokens >= 0
+        && Number.isFinite(usage?.output_tokens) && usage.output_tokens >= 0) {
+        batchUsd += batchCost(usage);
+        out.input += usage.input_tokens + (usage.cache_read_input_tokens ?? 0)
+          + (usage.cache_creation_input_tokens ?? 0);
+        out.output += usage.output_tokens;
+      } else unknownCost = true;
       out.lines += applyTranslations(cache, part, message ? claudeReply(message, part) : new Map());
     }
     // Sonuç dosyasında olmayan istekler (hata) de bir başarısızlık sayar.
-    for (const [id, part] of Object.entries(b.reqs)) if (!seen.has(id)) failLines(cache, part);
+    for (const [id, part] of Object.entries(b.reqs)) {
+      if (!seen.has(id)) {
+        failLines(cache, part);
+        unknownCost = true;
+      }
+    }
+    const reservation = Number.isFinite(b.reservedUsd) && b.reservedUsd >= 0 ? b.reservedUsd : 0;
+    out.usd += unknownCost ? Math.max(batchUsd, reservation) : batchUsd;
+    out.settled.push(b.id);
   }
   cache.batches = keep;
   return out;
@@ -722,6 +803,79 @@ export async function runAutopack(env, now = new Date()) {
     && Array.isArray(state.done) && Number.isSafeInteger(state.translated) && state.translated >= 0
     && (state.namedGames == null || (Array.isArray(state.namedGames)
       && state.namedGames.every((game) => typeof game === "string")));
+  const reservationsFromCaches = async (previous) => {
+    const reservations = {};
+    if (previous?.reservations && typeof previous.reservations === "object" && !Array.isArray(previous.reservations)) {
+      for (const [id, amount] of Object.entries(previous.reservations)) {
+        const usd = Number.isFinite(amount) ? amount : amount?.usd;
+        if (typeof id === "string" && Number.isFinite(usd) && usd >= 0) reservations[id] = amount;
+      }
+    }
+    const jobs = [
+      ...(Array.isArray(previous?.titles) ? previous.titles : []),
+      ...(Array.isArray(previous?.queue) ? previous.queue : []),
+      ...(Array.isArray(previous?.done) ? previous.done : []),
+    ]
+      .filter(validJob);
+    const unique = new Map(jobs.map((job) => [cacheFile(job), job]));
+    const caches = await Promise.all([...unique.values()].map(async (job) => [job, await getJson(env, cacheFile(job))]));
+    for (const [job, cache] of caches) {
+      for (const batch of Array.isArray(cache?.batches) ? cache.batches : []) {
+        if (!batch || typeof batch.id !== "string") continue;
+        const entry = reservations[batch.id];
+        const amount = Number.isFinite(entry) ? entry : entry?.usd;
+        if (Number.isFinite(amount) && entry?.id === batch.id && validJob(entry?.job)) continue;
+        const cachedUsd = Number.isFinite(batch.reservedUsd) && batch.reservedUsd >= 0
+          ? batch.reservedUsd : batchReservation(batch.reqs, job.game, LEGACY_CLAUDE_MAX_TOKENS);
+        reservations[batch.id] = {
+          usd: Number.isFinite(amount) && amount >= 0 ? amount : cachedUsd,
+          at: batch.at,
+          id: batch.id,
+          job: reservationJob(job),
+        };
+      }
+      const pending = cache?.pendingBatch;
+      if (pending?.attemptKey) {
+        const tracked = reservations[pending.attemptKey]
+          ?? Object.values(reservations).find((entry) => entry?.attemptKey === pending.attemptKey);
+        if (!tracked) {
+          // No durable state intent means the provider call was never made; retry from the saved cursor.
+          if (pending.before && typeof pending.before === "object") Object.assign(cache, pending.before);
+          delete cache.pendingBatch;
+          await putJson(env, cacheFile(job), cache);
+        }
+      }
+    }
+    return reservations;
+  };
+  const withPendingJobs = (queue, reservations) => {
+    const seen = new Set(queue.filter(validJob).map((job) => cacheFile(job)));
+    const collectOnly = [];
+    for (const reservation of Object.values(reservations ?? {})) {
+      const job = reservation?.job;
+      if (!validJob(job)) continue;
+      const file = cacheFile(job);
+      if (seen.has(file)) continue;
+      seen.add(file);
+      collectOnly.push({ ...job, collectOnly: true });
+    }
+    return queue.concat(collectOnly);
+  };
+  const reservationMapValid = state?.reservations && typeof state.reservations === "object"
+    && !Array.isArray(state.reservations) && Object.values(state.reservations).every((entry) => {
+      const usd = Number.isFinite(entry) ? entry : entry?.usd;
+      return Number.isFinite(usd) && usd >= 0;
+    });
+  // İlk dağıtımda eski batch kayıtları da hesaba katılır. Rezerv defteri sonraki gecelere taşınır.
+  if (state && (state.reservationVersion !== 1 || !reservationMapValid
+    || state.night !== night || !validState)) {
+    state.reservations = await reservationsFromCaches(state);
+    state.reservationVersion = 1;
+    if (state.night === night && validState) {
+      state.queue = withPendingJobs(state.queue, state.reservations);
+      await putJson(env, STATE, state);
+    }
+  }
   if (state?.night !== night || !validState) {
     const { results } = await env.DB.prepare(
       "SELECT title_id, MAX(game) AS game, COUNT(*) AS lines FROM lines WHERE title_id IS NOT NULL AND installs>=? " +
@@ -755,7 +909,11 @@ export async function runAutopack(env, now = new Date()) {
       return listed?.auto && listed.title !== packTitle(t, packs);
     });
     queue = retitle.map((t) => ({ ...t, retitle: true })).concat(queue.filter((t) => !retitle.includes(t)));
-    state = { night, titles, queue, namedGames, translated: 0, done: [] };
+    queue = withPendingJobs(queue, state?.reservations);
+    state = {
+      night, titles, queue, namedGames, translated: 0, done: [], usd: 0,
+      reservationVersion: 1, reservations: state?.reservations ?? {},
+    };
     await putJson(env, STATE, state);
     // Plan yazıldıktan sonra gecelik özet: ağır sorgu çevirinin önüne geçmez, hatası geceyi düşürmez.
     let summary = null;
@@ -770,26 +928,138 @@ export async function runAutopack(env, now = new Date()) {
   const known = await loadKnown(env);
   if (!known) return { phase: "waiting", reason: "auto/known-keys.bin yok" };
   const cache = await loadCache(env, job);
-  if (!cache) return { phase: "waiting", reason: "auto/translation cache invalid" };
+  const releaseMissingJobReservations = () => {
+    let usd = 0;
+    for (const [id, entry] of Object.entries(state.reservations ?? {})) {
+      if (!validJob(entry?.job) || cacheFile(entry.job) !== cacheFile(job)) continue;
+      usd += reservationAmount(entry);
+      delete state.reservations[id];
+    }
+    state.usd = (state.usd ?? 0) + usd;
+    return usd;
+  };
+  if (!cache) {
+    const usd = releaseMissingJobReservations();
+    if (!job.collectOnly) {
+      if (usd) await putJson(env, STATE, state);
+      return { phase: "waiting", reason: "auto/translation cache invalid" };
+    }
+    state.queue.shift();
+    state.done.push({ ...job, collectedOnly: true, missingCache: true });
+    await putJson(env, STATE, state);
+    return { phase: "settled", titleId: job.titleId, game: job.gameKey, usd };
+  }
   cache.fail ??= {};
   cache.batches ??= [];
+  state.reservations ??= {};
+  let reservationChanged = false;
+
+  const pending = cache.pendingBatch;
+  if (pending?.attemptKey) {
+    const matches = Object.entries(state.reservations).find(([id, entry]) =>
+      id === pending.attemptKey || entry?.attemptKey === pending.attemptKey);
+    const entry = matches?.[1];
+    if (!entry) {
+      // The state intent was not durable, so submitBatch was never called.
+      if (pending.before && typeof pending.before === "object") Object.assign(cache, pending.before);
+      delete cache.pendingBatch;
+      reservationChanged = true;
+    } else if (entry.id) {
+      if (!cache.batches.some((batch) => batch.id === entry.id)) {
+        cache.batches.push({ id: entry.id, at: pending.at, reqs: pending.reqs, reservedUsd: reservationAmount(entry) });
+      }
+      delete cache.pendingBatch;
+      reservationChanged = true;
+    } else if (entry.attempt) {
+      // POST outcome is unknown and Anthropic has no idempotency key; count the reserve and never resend it.
+      const usd = Math.max(reservationAmount(entry), reservationAmount(pending.reservedUsd));
+      const attemptedLines = Object.values(pending.reqs ?? {}).reduce((sum, lines) =>
+        sum + (Array.isArray(lines) ? lines.length : 0), 0);
+      state.usd = (state.usd ?? 0) + usd;
+      for (const lines of Object.values(pending.reqs ?? {})) if (Array.isArray(lines)) failLines(cache, lines);
+      if (!job.collectOnly && Number.isFinite(entry.at) && new Date(entry.at).toISOString().slice(0, 10) === night) {
+        state.translated += attemptedLines;
+        job.did = (job.did ?? 0) + attemptedLines;
+      }
+      delete state.reservations[matches[0]];
+      delete cache.pendingBatch;
+      reservationChanged = true;
+    }
+  }
+
+  for (const batch of cache.batches) {
+    const existing = state.reservations[batch.id];
+    const existingUsd = reservationAmount(existing);
+    const cachedUsd = Number.isFinite(batch.reservedUsd) && batch.reservedUsd >= 0
+      ? batch.reservedUsd : batchReservation(batch.reqs, job.game, LEGACY_CLAUDE_MAX_TOKENS);
+    const amount = existingUsd > 0 ? existingUsd : cachedUsd;
+    if (!validJob(existing?.job) || existing.id !== batch.id) {
+      state.reservations[batch.id] = { usd: amount, at: batch.at, id: batch.id, job: reservationJob(job) };
+      reservationChanged = true;
+    }
+    if (batch.reservedUsd !== amount) {
+      batch.reservedUsd = amount;
+      reservationChanged = true;
+    }
+  }
+
+  const cacheBatchIds = new Set(cache.batches.map((batch) => batch.id));
+  for (const [id, entry] of Object.entries(state.reservations)) {
+    if (!validJob(entry?.job) || cacheFile(entry.job) !== cacheFile(job)) continue;
+    if (entry.attempt) {
+      // Without the marker, a completed-but-unpersisted ambiguous attempt cannot be distinguished from a pre-POST failure.
+      state.usd = (state.usd ?? 0) + reservationAmount(entry);
+      delete state.reservations[id];
+      reservationChanged = true;
+    } else if (!entry.id || !cacheBatchIds.has(entry.id)) {
+      // Cache was saved but the matching state update failed; settle conservatively to release the reservation.
+      state.usd = (state.usd ?? 0) + reservationAmount(entry);
+      delete state.reservations[id];
+      reservationChanged = true;
+    }
+  }
   // Claude: önce bekleyen batch'lerden bitenleri topla (çeviri Batches ile gider, sonuç sonraki tetiklemelerde gelir).
   const claude = Boolean(env.ANTHROPIC_API_KEY);
   let collected = null;
+  if (!claude && cache.batches.length) {
+    let usd = 0;
+    for (const batch of cache.batches) {
+      usd += reservationAmount(state.reservations[batch.id] ?? batch.reservedUsd);
+      failLines(cache, Object.values(batch.reqs).flat());
+      delete state.reservations[batch.id];
+    }
+    state.usd = (state.usd ?? 0) + usd;
+    cache.batches = [];
+    reservationChanged = true;
+  }
   if (claude && cache.batches.length) {
     collected = await collectBatches(env, cache);
     state.usd = (state.usd ?? 0) + collected.usd;
+    for (const id of collected.settled) {
+      if (Object.hasOwn(state.reservations, id)) {
+        delete state.reservations[id];
+        reservationChanged = true;
+      }
+    }
     state.claudeIn = (state.claudeIn ?? 0) + collected.input;
     state.claudeOut = (state.claudeOut ?? 0) + collected.output;
     state.collected = (state.collected ?? 0) + collected.lines;
     if (collected.lines) cache.touched = night;
   }
-  const overBudget = claude && (state.usd ?? 0) >= NIGHT_BUDGET_USD;
+  const overBudget = claude && (state.usd ?? 0) + reservedUsd(state) >= NIGHT_BUDGET_USD;
   const saveCollected = async () => {
-    if (!collected) return;
+    if (!collected && !reservationChanged) return;
     await putJson(env, cacheFile(job), cache);
     await putJson(env, STATE, state);
   };
+  if (job.collectOnly && cache.batches.length === 0) {
+    const usd = releaseMissingJobReservations();
+    await saveCollected();
+    state.queue.shift();
+    state.done.push({ ...job, collectedOnly: true, usd });
+    await putJson(env, STATE, state);
+    return { phase: "settled", titleId: job.titleId, game: job.gameKey, usd };
+  }
   // Exclude named rows only when their individual pack was actually published or
   // confirmed unchanged. An unbuilt named pack must fall back into the general pool.
   const published = new Set(state.done
@@ -802,7 +1072,7 @@ export async function runAutopack(env, now = new Date()) {
   let scanned = 0;
   // Gezinti ya da gecelik pay bitti, gecenin son tetiklemesi (bu gece çevrilen paket kurulur) ya da yalnız yeniden
   // adlandırma: çeviri yok, paket kurulur.
-  let exhausted = job.retitle || cache.passNight === night || want <= 0 || overBudget
+  let exhausted = job.retitle || job.collectOnly || cache.passNight === night || want <= 0 || overBudget
     || (isFinalTick(now) && cache.touched === night);
   // Bekleyen batch sınırı doluysa bu tetiklemede yeni satır gönderilmez (gezinti de ilerlemez).
   const full = claude && cache.batches.length >= MAX_PENDING_BATCHES;
@@ -821,7 +1091,7 @@ export async function runAutopack(env, now = new Date()) {
       const clean = cleanLine(r.text);
       const k = clean ? (clean.labelled ? await key(clean.body) : r.key) : "";
       if (!clean || !k || isKnown(known, k) || isKnown(known, r.key)) continue;
-      todo.push({ pool: r.key, k, en: clean.body });
+      todo.push({ pool: r.key, k, en: clean.body, cursor: { n: r.installs, k: r.key } });
     }
     // Sayfa dolu değilse ve hepsi işlendiyse imleç sona ulaştı: gezinti bitti, sonraki geçiş baştan başlar.
     if (!stopped && rows.length < PAGE) {
@@ -833,18 +1103,62 @@ export async function runAutopack(env, now = new Date()) {
   }
 
   if (todo.length > 0 && claude) {
-    const batch = await submitBatch(env, todo, job.game, limits.batch, now);
-    if (!batch) {
-      // Gönderilemedi: gezinti geri alınır, satırlar sonraki tetiklemede yeniden alınır.
-      Object.assign(cache, before);
-      await saveCollected();
-      return { phase: "error", titleId: job.titleId, game: job.gameKey, collected: collected?.lines ?? 0 };
+    const available = NIGHT_BUDGET_USD - (state.usd ?? 0) - reservedUsd(state);
+    const affordable = affordablePrefixLength(todo, job.game, limits.batch, available);
+    if (affordable < todo.length) {
+      // Bütçeye sığan ön eki gönder; cursor geri kalan satırları sonraki tetiklemeye bırakır.
+      if (affordable > 0) {
+        todo.length = affordable;
+        cache.cursor = todo[affordable - 1].cursor;
+        cache.skip = before.skip;
+        cache.passNight = before.passNight;
+      } else {
+        // Bütçeye sığan satır yok; cursor ilerleyip satırları atlamasın.
+        Object.assign(cache, before);
+        exhausted = true;
+        todo.length = 0;
+      }
     }
-    cache.batches.push(batch);
-    state.translated += todo.length;
-    job.did = (job.did ?? 0) + todo.length;
+  }
+
+  if (todo.length > 0 && claude) {
+    const attemptKey = `attempt:${crypto.randomUUID()}`;
+    const reqs = requestsFor(todo, limits.batch);
+    const reservation = batchReservation(reqs, job.game);
+    cache.pendingBatch = { attemptKey, at: now.getTime(), reqs, reservedUsd: reservation, before };
+    state.reservations[attemptKey] = {
+      usd: reservation, at: now.getTime(), job: reservationJob(job), attempt: true, attemptKey,
+    };
+    // Hem cursor hem rezerv POST'tan önce kalıcı olmalı; aksi halde R2 hatası aynı batch'i tekrar gönderebilir.
     await putJson(env, cacheFile(job), cache);
     await putJson(env, STATE, state);
+
+    const batch = await submitBatch(env, todo, job.game, limits.batch, now);
+    if (batch?.failure) {
+      if (batch.ambiguous) {
+        // POST kabul edilmiş olabilir; intent ve rezerv kalsın, sonraki çağrı tekrar göndermesin.
+        await putJson(env, STATE, state);
+        return { phase: "error", titleId: job.titleId, game: job.gameKey, collected: collected?.lines ?? 0 };
+      }
+      // Kesin ret: cursor'ı geri al ve rezervi bırak.
+      delete state.reservations[attemptKey];
+      delete cache.pendingBatch;
+      Object.assign(cache, before);
+      await putJson(env, cacheFile(job), cache);
+      await putJson(env, STATE, state);
+      return { phase: "error", titleId: job.titleId, game: job.gameKey, collected: collected?.lines ?? 0 };
+    }
+    delete state.reservations[attemptKey];
+    state.reservations[batch.id] = {
+      usd: batch.reservedUsd, at: batch.at, id: batch.id, attemptKey, job: reservationJob(job),
+    };
+    state.translated += todo.length;
+    job.did = (job.did ?? 0) + todo.length;
+    // ID'yi cache'i değiştirmeden önce yaz: sonradan cache PUT başarısız olursa pending intent'ten onarılabilir.
+    await putJson(env, STATE, state);
+    delete cache.pendingBatch;
+    cache.batches.push(batch);
+    await putJson(env, cacheFile(job), cache);
     return { phase: "submit", titleId: job.titleId, game: job.gameKey, looked, submitted: todo.length,
       batch: batch.id, collected: collected?.lines ?? 0 };
   }
@@ -866,12 +1180,23 @@ export async function runAutopack(env, now = new Date()) {
   // Yeni çevrilecek satır çıkmadı ama gezinti sürüyor (önbellekte olanlar atlandı): imleci kaydet, paket kurma.
   if (!exhausted && !full && scanned > 0 && cache.cursor) {
     await putJson(env, cacheFile(job), cache);
-    if (collected) await putJson(env, STATE, state);
+    if (collected || reservationChanged) await putJson(env, STATE, state);
     return { phase: "scan", titleId: job.titleId, game: job.gameKey, scanned, collected: collected?.lines ?? 0 };
   }
 
   // Bekleyen batch var: gezinti sürüyorsa (yer açılmasını bekliyor) ya da bitti ama batch henüz taze ise beklenir.
   // Gecenin son tetiklemesinde paket kurulur; geç kalan batch ertesi gece toplanır.
+  if (job.collectOnly && cache.batches.length) {
+    await saveCollected();
+    if (state.queue.length > 1) {
+      state.queue.shift();
+      state.queue.push(job);
+      await putJson(env, STATE, state);
+    }
+    return { phase: "wait", titleId: job.titleId, game: job.gameKey, pending: cache.batches.length,
+      collected: collected?.lines ?? 0 };
+  }
+
   if (cache.batches.length && !isFinalTick(now)) {
     const oldest = Math.min(...cache.batches.map((b) => b.at));
     if (!exhausted || now.getTime() - oldest < BATCH_WAIT_MS) {
@@ -887,6 +1212,9 @@ export async function runAutopack(env, now = new Date()) {
   const result = await buildPack(env, job, cache, known);
   state.queue.shift();
   state.done.push({ ...job, ...result });
+  if (cache.batches.length && !state.queue.some((queued) => validJob(queued) && cacheFile(queued) === cacheFile(job))) {
+    state.queue.push({ ...reservationJob(job), collectOnly: true });
+  }
   await putJson(env, STATE, state);
   return { phase: "build", titleId: job.titleId, game: job.gameKey, ...result, collected: collected?.lines ?? 0 };
 }
