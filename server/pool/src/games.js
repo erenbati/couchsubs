@@ -29,7 +29,12 @@ export function gameKey(value) {
   t = t.replace(/[^\p{L}\p{N}]+/gu, " ");
   // "gta6" → "gta 6" (harf ve rakam ayrılır).
   t = t.replace(/(\p{L})(\p{N})/gu, "$1 $2").replace(/(\p{N})(\p{L})/gu, "$1 $2");
-  let words = t.split(" ").filter(Boolean).map((w) => ROMAN[w] ?? w);
+  const rawWords = t.split(" ").filter(Boolean);
+  // Single-letter V/X can be part of a franchise name (X-Men, V-Rally, Mega Man X).
+  // Treat them as sequel numbers only at the end, except for the literal Mega Man X title.
+  const literalMegaManX = rawWords.join(" ") === "mega man x";
+  let words = rawWords.map((w, i) =>
+    ((w === "v" || w === "x") && (i !== rawWords.length - 1 || literalMegaManX)) ? w : (ROMAN[w] ?? w));
   if (words[0] === "the" && words.length > 1) words = words.slice(1);
   let joined = ` ${words.join(" ")} `;
   for (const [long, short] of ALIASES) joined = joined.split(` ${long} `).join(short ? ` ${short} ` : " ");

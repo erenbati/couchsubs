@@ -197,7 +197,12 @@ object GameName {
             text.appendCodePoint(cp)
             previous = cp
         }
-        var words = text.split(' ').filter { it.isNotEmpty() }.map { ROMAN[it] ?: it }
+        val rawWords = text.split(' ').filter { it.isNotEmpty() }
+        // V/X may be literal franchise names (X-Men, V-Rally, Mega Man X).
+        val literalMegaManX = rawWords == listOf("mega", "man", "x")
+        var words = rawWords.mapIndexed { i, w ->
+            if ((w == "v" || w == "x") && (i != rawWords.lastIndex || literalMegaManX)) w else ROMAN[w] ?: w
+        }
         if (words.size > 1 && words.first() == "the") words = words.drop(1)
         var joined = " " + words.joinToString(" ") + " "
         for ((long, short) in ALIASES) joined = joined.replace(" $long ", if (short.isEmpty()) " " else " $short ")

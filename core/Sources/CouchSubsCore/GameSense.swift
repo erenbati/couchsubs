@@ -197,7 +197,13 @@ public enum GameName {
             text.append(character)
             previous = character
         }
-        var words = text.split(separator: " ").map { roman[String($0)] ?? String($0) }
+        let rawWords = text.split(separator: " ").map(String.init)
+        // V/X may be literal franchise names (X-Men, V-Rally, Mega Man X).
+        let literalMegaManX = rawWords == ["mega", "man", "x"]
+        var words = rawWords.enumerated().map { index, word in
+            if (word == "v" || word == "x") && (index != rawWords.count - 1 || literalMegaManX) { return word }
+            return roman[word] ?? word
+        }
         if words.first == "the", words.count > 1 { words.removeFirst() }
         var joined = " " + words.joined(separator: " ") + " "
         for (long, short) in aliases {

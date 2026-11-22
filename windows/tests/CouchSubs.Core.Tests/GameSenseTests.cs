@@ -17,6 +17,13 @@ public class GameSenseTests
     [InlineData("Marvel's Spider-Man 2", "marvels spider man 2")]
     [InlineData("The Witcher 3: Wild Hunt", "witcher 3 wild hunt")]
     [InlineData("Call of Duty: Black Ops 7", "cod black ops 7")]
+    [InlineData("Mega Man X", "mega man x")]
+    [InlineData("Mega Man 10", "mega man 10")]
+    [InlineData("X-Men", "x men")]
+    [InlineData("V-Rally", "v rally")]
+    [InlineData("Mega Man X2", "mega man x 2")]
+    [InlineData("GTA V", "gta 5")]
+    [InlineData("Final Fantasy X", "final fantasy 10")]
     [InlineData("Ghost of Yōtei", "ghost of yotei")]
     [InlineData("", "")]
     public void GameNameKeyMatchesTheServer(string name, string key) => Assert.Equal(key, GameName.Key(name));

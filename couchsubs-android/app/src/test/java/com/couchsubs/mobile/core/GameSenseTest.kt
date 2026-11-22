@@ -49,6 +49,13 @@ class GameSenseTest {
         assertEquals("witcher 3 wild hunt", GameName.key("The Witcher 3: Wild Hunt"))
         assertEquals("cod black ops 7", GameName.key("Call of Duty: Black Ops 7"))
         assertEquals("ghost of yotei", GameName.key("Ghost of Yōtei"))
+        assertEquals("mega man x", GameName.key("Mega Man X"))
+        assertFalse(GameName.key("Mega Man X") == GameName.key("Mega Man 10"))
+        assertEquals("x men", GameName.key("X-Men"))
+        assertEquals("v rally", GameName.key("V-Rally"))
+        assertEquals("mega man x 2", GameName.key("Mega Man X2"))
+        assertEquals("gta 5", GameName.key("GTA V"))
+        assertEquals("final fantasy 10", GameName.key("Final Fantasy X"))
         assertEquals("", GameName.key(""))
     }
 
