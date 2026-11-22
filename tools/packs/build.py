@@ -21,6 +21,8 @@ def put(table, en, tr):
     k = c.key(en)
     if not k or not tr:
         return
+    if k in table and table[k] != tr:
+        raise SystemExit(f"conflicting reviewed translations for subtitle key {k}; review source data")
     table[k] = tr
     english.setdefault(k, en)
 

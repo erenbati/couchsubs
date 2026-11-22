@@ -10,12 +10,12 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name("build.py")
 
 class BuildPackTests(unittest.TestCase):
-    def run_build(self, translations):
+    def run_build(self, translations, rows=None):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             source = base / "reviewed.json"
             output = base / "built.json.gz"
-            source.write_text(json.dumps([{
+            source.write_text(json.dumps(rows if rows is not None else [{
                 "text": "We should leave now. Stay behind.",
                 "sents": ["We should leave now.", "Stay behind."],
                 "tr": translations,
@@ -39,6 +39,29 @@ class BuildPackTests(unittest.TestCase):
                 proc, pack = self.run_build(translations)
                 self.assertNotEqual(proc.returncode, 0, "a pack without full translations is rejected by clients")
                 self.assertIsNone(pack, "do not emit a zero-entry package")
+
+    def test_conflicting_reviewed_translations_for_same_subtitle_key_are_rejected(self):
+        # Two reviewed subtitles canonicalize to the same key but disagree on
+        # Turkish translation: a silent last-row-wins overwrite is unsafe.
+        rows = [{
+            "text": "We should leave now.",
+            "sents": ["We should leave now."],
+            "tr": ["Şimdi gitmeliyiz."],
+        }, {
+            "text": "We should leave now!",
+            "sents": ["We should leave now!"],
+            "tr": ["Şimdi kalmalıyız."],
+        }]
+        proc, pack = self.run_build([], rows=rows)
+        self.assertNotEqual(proc.returncode, 0, "ambiguous reviewed translations require human resolution")
+        self.assertIsNone(pack, "do not publish an arbitrarily chosen translation")
+
+    def test_duplicate_reviewed_rows_with_identical_translations_are_safe(self):
+        row = {"text": "We should leave now.", "sents": ["We should leave now."],
+               "tr": ["Şimdi gitmeliyiz."]}
+        proc, pack = self.run_build([], rows=[row, row])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(pack["entries"]), 1)
 
     def test_valid_aligned_subtitles_still_build(self):
         proc, pack = self.run_build(["Now we leave.", "Wait here."])
