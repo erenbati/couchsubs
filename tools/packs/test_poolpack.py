@@ -53,6 +53,20 @@ class PoolPackTests(unittest.TestCase):
         self.assertEqual(out[1]["raw"], "LUCIA: Get in the car, Jason.")
         self.assertEqual(dropped, {"bozuk": 1, "türkçe": 1, "kısa": 1, "pakette": 1})
 
+    def test_clean_discards_turkish_lines_with_shared_accents(self):
+        # ü/ö/ç alone can appear in foreign names, but multiple such letters
+        # are already considered Turkish by the server's pool filter.
+        rows = [
+            {"text": "Çözümleri kontrol et.", "installs": 5},
+            {"text": "Bölümü tekrar dene.", "installs": 4},
+            {"text": "Herr Müller will see you now.", "installs": 2},
+            {"text": "Please get in the car.", "installs": 3},
+        ]
+        cleaned, dropped = pp.clean(rows)
+        self.assertEqual([r["text"] for r in cleaned],
+                         ["Please get in the car.", "Herr Müller will see you now."])
+        self.assertEqual(dropped["türkçe"], 2)
+
     def test_reads_wrangler_and_export_formats(self):
         with tempfile.TemporaryDirectory() as d:
             a, b = Path(d) / "a.json", Path(d) / "b.json"

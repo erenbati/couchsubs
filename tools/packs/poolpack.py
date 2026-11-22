@@ -22,6 +22,7 @@ PACKS = ROOT / "core/Sources/CouchSubsCore/Resources/packs"
 TITLE_ID = re.compile(r"^[A-Z]{4}\d{5}(_\d{2})?$")
 LABEL = re.compile(r"^[-•\s]*([A-Z][A-Za-z .'’-]{1,28}?)\s*[•:]\s+(?=\S)")
 TURKISH = re.compile(r"[ğĞşŞıİ]")
+TURKISH_SHARED = re.compile(r"[üÜöÖçÇ]")
 OCR_JUNK = re.compile(r"[$#@|\\{}<>~^_=]|\w[%&*]\w")
 CHUNK = 40  # translate.py ile aynı parça boyu
 
@@ -114,7 +115,9 @@ def clean(rows, known=frozenset()):
         if m:
             speaker, body = m.group(1).strip(), raw[m.end():].strip()
         letters = sum(ch.isalpha() for ch in body)
-        if TURKISH.search(body):
+        # Mirror server/pool/src/filter.js: one shared accented letter may
+        # occur in a foreign name, but multiple such letters signal Turkish.
+        if TURKISH.search(body) or len(TURKISH_SHARED.findall(body)) >= 2:
             dropped["türkçe"] += 1
             continue
         if OCR_JUNK.search(body) or letters * 2 < len(body.replace(" ", "")):
