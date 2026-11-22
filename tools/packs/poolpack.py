@@ -169,8 +169,7 @@ def estimate(rows, system_chars):
 
 
 def system_prompt(glossary):
-    base = (HERE / "translate.py").read_text(encoding="utf-8")
-    rules = base[base.index("Rules:"):base.index('- Output only the requested JSON.')] + "- Output only the requested JSON."
+    from translate_rules import RULES
     head = "You translate video game subtitles from English into Turkish for CouchSubs, an app that shows Turkish\n" \
            "subtitles on the TV while people play."
     if glossary:
@@ -178,7 +177,7 @@ def system_prompt(glossary):
         head += "\n" + gta6glossary.prompt_block(glossary)
     head += ("\nThese lines were read from the TV screen with OCR by players; if a line is clearly damaged, translate the "
              "most likely original.")
-    return head + "\n\n" + rules
+    return head + "\n\n" + RULES
 
 
 def translate(rows, system, tag, out):

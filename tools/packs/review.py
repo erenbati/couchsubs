@@ -39,7 +39,7 @@ SCHEMA = {"type": "object", "properties": {"fixes": {"type": "array", "items": {
     "required": ["fixes"], "additionalProperties": False}
 
 SYSTEM = f"""You are a senior Turkish subtitle editor checking machine translations of video game subtitles.
-{GLOSSARY[game]}
+{GLOSSARY.get(game, f'Game: {game}.')}
 {RULES}
 You get numbered English sentences with their Turkish translation (sometimes marked with automatic warnings).
 Return a fix ONLY for translations that are actually wrong: wrong meaning, a sentence translated as a neighbouring
