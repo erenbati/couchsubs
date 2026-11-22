@@ -434,17 +434,17 @@ public sealed class ProcessRunner : ICommandRunner
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
 
-        using var process = new Process { StartInfo = start };
+        Process? started;
         try
         {
-            process.Start();
-            ChildProcessGuard.Attach(process);
+            started = ChildProcessGuard.Start(start);
         }
         catch (Win32Exception)
         {
             // Windows'un OpenSSH istemcisi (ssh-keygen) kaldırılmış olabilir.
             throw new DevModeException(DevModeError.ToolMissing);
         }
+        using var process = started ?? throw new DevModeException(DevModeError.InstallFailed, "CouchSubs is shutting down for an update");
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         if (inputFile is not null)

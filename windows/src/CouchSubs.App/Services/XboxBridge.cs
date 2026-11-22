@@ -44,9 +44,7 @@ internal sealed class XboxBridge : IDisposable
             StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
         };
         info.ArgumentList.Add(script);
-        process = Process.Start(info) ?? throw new InvalidOperationException(Localizer.Current["The Xbox streaming component couldn't start."]);
-        // CouchSubs kapanınca (güncellemede de) node.exe kurulum klasörünü kilitli bırakmasın.
-        ChildProcessGuard.Attach(process);
+        process = ChildProcessGuard.Start(info) ?? throw new InvalidOperationException(Localizer.Current["The Xbox streaming component couldn't start."]);
         _ = ReadRepliesAsync(process);
         _ = WatchExitAsync(process);
         loadedToken = null;

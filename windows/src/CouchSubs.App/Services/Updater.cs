@@ -49,9 +49,16 @@ internal sealed class Updater : IUpdater
         beforeRestart?.Invoke();
         // Update.exe kurulum klasörünü değiştirir; açık kalan yardımcı süreç (CTranslate2 python.exe, Xbox köprüsü
         // node.exe, seslendirme motoru) klasörü kilitlerse güncelleme uygulanamaz ve eski sürüm yeniden açılır.
-        var running = ChildProcessGuard.StopAll(TimeSpan.FromSeconds(5));
-        SubtitleLog.Write($"Güncelleme uygulanıyor: {pending.TargetFullRelease.Version}" +
-                          (running > 0 ? $"; {running} yardımcı süreç kapanmadı" : ""));
+        var running = ChildProcessGuard.StopAllForUpdate(TimeSpan.FromSeconds(5));
+        if (running > 0)
+        {
+            var message = Localizer.Current["The update was postponed because CouchSubs couldn't confirm that all helper processes have exited. Restart CouchSubs and try again."];
+            SubtitleLog.Write($"Güncelleme ertelendi: {running} yardımcı süreç kapanışı doğrulanamadı; " +
+                              $"{pending.TargetFullRelease.Version} sürümü uygulanmadı.");
+            SubtitleLog.Flush();
+            throw new InvalidOperationException(message);
+        }
+        SubtitleLog.Write($"Güncelleme uygulanıyor: {pending.TargetFullRelease.Version}");
         SubtitleLog.Flush();
         manager.ApplyUpdatesAndRestart(pending);
     }
