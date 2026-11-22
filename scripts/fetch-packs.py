@@ -136,9 +136,10 @@ def main(argv):
                 try:
                     pack = json.loads(gzip.decompress(data))
                     if not (isinstance(pack, dict) and pack.get("format") == 2
-                            and isinstance(pack.get("entries"), dict)
-                            and isinstance(pack.get("segments", {}), dict)):
-                        raise ValueError("invalid format-2 pack structure")
+                            and isinstance(pack.get("entries"), dict) and pack["entries"]
+                            and isinstance(pack.get("segments", {}), dict)
+                            and pack.get("id", name.removesuffix(".json.gz")) == name.removesuffix(".json.gz")):
+                        raise ValueError("invalid format-2 pack structure, ID or empty entries")
                 except (OSError, EOFError, UnicodeError, ValueError) as error:
                     print(f"✗ {key} geçersiz paket: {error.__class__.__name__}", file=sys.stderr)
                     return 1

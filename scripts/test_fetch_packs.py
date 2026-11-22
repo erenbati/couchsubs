@@ -54,6 +54,20 @@ class FetchPacksTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(saved, original)
 
+    def test_wrong_embedded_id_cannot_replace_another_games_pack(self):
+        value = {"format": 2, "id": "different-game", "entries": {"b": "Wrong game"}, "segments": {}}
+        result, saved, original, files = self.download(archive(value))
+        self.assertEqual(result, 1)
+        self.assertEqual(saved, original)
+        self.assertEqual(len(files), 1)
+
+    def test_zero_entry_pack_cannot_replace_a_working_pack(self):
+        value = {"format": 2, "id": "example", "entries": {}, "segments": {"b": "Only fragment"}}
+        result, saved, original, files = self.download(archive(value))
+        self.assertEqual(result, 1)
+        self.assertEqual(saved, original)
+        self.assertEqual(len(files), 1)
+
     def test_valid_pack_replaces_existing_archive(self):
         valid = archive({"format": 2, "entries": {"b": "Replacement"}, "segments": {}})
         result, saved, _, files = self.download(valid)
