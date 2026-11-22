@@ -932,24 +932,26 @@ object AiRequest {
      * google.rpc.QuotaFailure (violations[].quotaId, ör. "GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
      * quotaValue "15") ve google.rpc.RetryInfo (retryDelay "37s") bulunur (Windows ve iPhone ile aynı).
      */
-    private fun isTemporaryOpenAIRateLimit(body: String): Boolean {
+    private fun isTemporaryProviderRateLimit(body: String): Boolean {
         val error = try {
             JSONObject(body).optJSONObject("error")
         } catch (_: JSONException) {
             null
         } ?: return false
         val code = error.optString("code").lowercase(Locale.ROOT)
+        val detailCode = error.optJSONObject("details")?.optString("error_code")?.lowercase(Locale.ROOT)
         val type = error.optString("type").lowercase(Locale.ROOT)
-        if (code in setOf(
-                "insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "organization_spend_limit_exceeded",
-                "project_spend_limit_exceeded", "organization_usage_limit_exceeded"
-            )) return false
+        val billingCodes = setOf(
+            "insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "organization_spend_limit_exceeded",
+            "project_spend_limit_exceeded", "organization_usage_limit_exceeded", "enforced_spend_limit_reached"
+        )
+        if (code in billingCodes || detailCode != null && detailCode in billingCodes) return false
         return type == "rate_limit_error" || code == "slow_down" || code == "rate_limit_exceeded"
     }
 
     fun rateLimit(status: Int, body: String): AiRateLimit? {
         if (status != 429) return null
-        if (isTemporaryOpenAIRateLimit(body)) return AiRateLimit()
+        if (isTemporaryProviderRateLimit(body)) return AiRateLimit()
         val details = try {
             JSONObject(body).optJSONObject("error")?.optJSONArray("details")
         } catch (error: JSONException) {
@@ -983,7 +985,7 @@ object AiRequest {
         val message = body.lowercase(Locale.ROOT)
         return when {
             status == 401 || status == 403 -> OnlineKeyState.INVALID
-            status == 429 && isTemporaryOpenAIRateLimit(body) -> OnlineKeyState.BUSY
+            status == 429 && isTemporaryProviderRateLimit(body) -> OnlineKeyState.BUSY
             status == 402 || status == 429 -> OnlineKeyState.QUOTA_EXCEEDED
             status == 400 && ("api_key_invalid" in message || "api key not valid" in message) -> OnlineKeyState.INVALID
             status == 400 && ("credit balance" in message || "insufficient_quota" in message) -> OnlineKeyState.QUOTA_EXCEEDED

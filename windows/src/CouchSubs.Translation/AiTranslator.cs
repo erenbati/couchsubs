@@ -344,7 +344,7 @@ public static class AiRequest
     }
 
     /// <summary>Başarısız HTTP yanıtının anlamı. Gövde yalnız tanınan hata kodları için okunur, hiçbir yere yazılmaz.</summary>
-    private static bool IsTemporaryOpenAIRateLimit(string body)
+    private static bool IsTemporaryProviderRateLimit(string body)
     {
         JsonObject? error;
         try { error = JsonNode.Parse(body)?["error"] as JsonObject; }
@@ -358,9 +358,15 @@ public static class AiRequest
         }
 
         var code = Field("code")?.ToLowerInvariant();
+        var details = error["details"] as JsonObject;
+        var detailCode = details?["error_code"] is JsonValue detailValue && detailValue.GetValueKind() == JsonValueKind.String
+            ? detailValue.GetValue<string>().ToLowerInvariant()
+            : null;
         var type = Field("type")?.ToLowerInvariant();
         if (code is "insufficient_quota" or "billing_hard_limit_reached" or "credit_balance_exhausted" or "organization_spend_limit_exceeded"
-            or "project_spend_limit_exceeded" or "organization_usage_limit_exceeded") return false;
+            or "project_spend_limit_exceeded" or "organization_usage_limit_exceeded" or "enforced_spend_limit_reached"
+            || detailCode is "insufficient_quota" or "billing_hard_limit_reached" or "credit_balance_exhausted" or "organization_spend_limit_exceeded"
+                or "project_spend_limit_exceeded" or "organization_usage_limit_exceeded" or "enforced_spend_limit_reached") return false;
         return type == "rate_limit_error" || code is "slow_down" or "rate_limit_exceeded";
     }
 
@@ -370,7 +376,7 @@ public static class AiRequest
         return (int)status switch
         {
             401 or 403 => OnlineKeyState.Invalid,
-            429 when IsTemporaryOpenAIRateLimit(body) => OnlineKeyState.Busy,
+            429 when IsTemporaryProviderRateLimit(body) => OnlineKeyState.Busy,
             402 or 429 => OnlineKeyState.QuotaExceeded,
             400 when message.Contains("api_key_invalid") || message.Contains("api key not valid") => OnlineKeyState.Invalid,
             400 when message.Contains("credit balance") || message.Contains("insufficient_quota") => OnlineKeyState.QuotaExceeded,
@@ -390,7 +396,7 @@ public static class AiRequest
     public static AiRateLimit? RateLimit(HttpStatusCode status, string body)
     {
         if ((int)status != 429) return null;
-        if (IsTemporaryOpenAIRateLimit(body)) return new AiRateLimit();
+        if (IsTemporaryProviderRateLimit(body)) return new AiRateLimit();
         JsonArray? details;
         try { details = JsonNode.Parse(body)?["error"]?["details"] as JsonArray; }
         catch (JsonException) { return null; }
