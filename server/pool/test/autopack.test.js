@@ -7,6 +7,9 @@ import {
   BATCH_WAIT_MS, batchCost, claudeParams, limitsFor, translateClaude,
 } from "../src/autopack.js";
 
+// Successful fake known-key reads use an 8-byte zero key, which cannot match
+// the synthetic nonzero subtitle keys; a zero-byte payload is a corrupt index.
+
 test("malformed current-night state is rebuilt instead of stopping the scheduler", async () => {
   const now = new Date("2026-11-20T04:00:00Z");
   for (const invalid of [
@@ -82,7 +85,7 @@ test("general pool scans past separated game rows before applying the row limit"
     },
     PACKS: {
       get: async (name) => name === "auto/known-keys.bin"
-        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        ? { arrayBuffer: async () => new ArrayBuffer(8) }
         : stored.has(name) ? { text: async () => stored.get(name) } : null,
       put: async (name, value) => { stored.set(name, value); },
     },
@@ -159,7 +162,7 @@ test("autopack never replaces an absent or unreadable pack index", async () => {
       AI: {},
       PACKS: {
         get: async (name) => name === "auto/known-keys.bin"
-          ? { arrayBuffer: async () => new ArrayBuffer(0) }
+          ? { arrayBuffer: async () => new ArrayBuffer(8) }
           : stored.has(name) ? { text: async () => stored.get(name) } : null,
         put: async (name, value) => { writes.push(name); stored.set(name, value); },
       },
@@ -196,7 +199,7 @@ test("autopack must not publish an empty pack when an existing translation cache
       AI: {},
       PACKS: {
         get: async (name) => name === "auto/known-keys.bin"
-          ? { arrayBuffer: async () => new ArrayBuffer(0) }
+          ? { arrayBuffer: async () => new ArrayBuffer(8) }
           : stored.has(name) ? { text: async () => stored.get(name) } : null,
         put: async (name, value) => { writes.push(name); stored.set(name, value); },
       },
@@ -230,7 +233,7 @@ test("an empty but valid auto cache cannot overwrite a previously published work
     AI: {},
     PACKS: {
       get: async (name) => name === "auto/known-keys.bin"
-        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        ? { arrayBuffer: async () => new ArrayBuffer(8) }
         : stored.has(name) ? { text: async () => stored.get(name) } : null,
       put: async (name, bytes) => { writes.push(name); stored.set(name, bytes); },
     },
@@ -253,7 +256,9 @@ test("autopack waits rather than using a truncated manual-key index", async () =
     queue: [{ titleId: GENERAL, game: null, lines: 350 }],
     translated: 0, done: [],
   };
-  const malformed = [new Uint8Array(9).buffer];
+  // Both a truncated index and a zero-byte index are corrupt: the latter
+  // otherwise disables the manual-translation exclusion for every key.
+  const malformed = [new Uint8Array(0).buffer, new Uint8Array(9).buffer];
   for (const bytes of malformed) {
     const stored = new Map([["auto/state.json", JSON.stringify(state)]]);
     const writes = [];
@@ -271,6 +276,8 @@ test("autopack waits rather than using a truncated manual-key index", async () =
     };
     const result = await runAutopack(env, now);
     assert.equal(result.phase, "waiting");
+    assert.equal(result.reason, "auto/known-keys.bin yok",
+      "invalid known-key indices must block before loading caches or translating");
     assert.deepEqual(writes, []);
     assert.deepEqual(JSON.parse(stored.get("auto/state.json")), state);
   }
@@ -290,7 +297,7 @@ test("autopack preserves published translations when their R2 cache is missing",
     AI: {},
     PACKS: {
       get: async (name) => name === "auto/known-keys.bin"
-        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        ? { arrayBuffer: async () => new ArrayBuffer(8) }
         : stored.has(name) ? { text: async () => stored.get(name) } : null,
       put: async (name, data) => { writes.push(name); stored.set(name, data); },
     },
@@ -354,7 +361,7 @@ test("general fallback includes named-game subtitles if that game's pack did not
   const env = {
     PACKS: {
       get: async (name) => name === "auto/known-keys.bin"
-        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        ? { arrayBuffer: async () => new ArrayBuffer(8) }
         : stored.has(name) ? { text: async () => stored.get(name) } : null,
       put: async (name, value) => { stored.set(name, value); },
     },
@@ -398,7 +405,7 @@ test("long ASCII game names keep separate translation caches when their pack IDs
   const env = {
     PACKS: {
       get: async (name) => name === "auto/known-keys.bin"
-        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        ? { arrayBuffer: async () => new ArrayBuffer(8) }
         : stored.has(name) ? { text: async () => stored.get(name) } : null,
       put: async (name, value) => { stored.set(name, value); },
     },
@@ -448,7 +455,7 @@ test("unchanged cache re-publishes a pack whose R2 object disappeared", async ()
     AI: {},
     PACKS: {
       get: async (name) => name === "auto/known-keys.bin"
-        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        ? { arrayBuffer: async () => new ArrayBuffer(8) }
         : stored.has(name) ? { text: async () => stored.get(name) } : null,
       head: async (name) => stored.has(name) ? { key: name } : null,
       put: async (name, data) => { written.push(name); stored.set(name, data); },
@@ -530,7 +537,7 @@ test("unchanged extra pack is re-published with the new title once its main pack
     AI: {},
     PACKS: {
       get: async (name) => name === "auto/known-keys.bin"
-        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        ? { arrayBuffer: async () => new ArrayBuffer(8) }
         : stored.has(name) ? { text: async () => stored.get(name) } : null,
       head: async (name) => stored.has(name) ? { key: name } : null,
       put: async (name, data) => { stored.set(name, data); },
@@ -567,7 +574,7 @@ test("night plan retitles a listed extra pack first, without translating", async
     AI: { run: async () => { throw new Error("retitle must not translate"); } },
     PACKS: {
       get: async (name) => name === "auto/known-keys.bin"
-        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        ? { arrayBuffer: async () => new ArrayBuffer(8) }
         : stored.has(name) ? { text: async () => stored.get(name) } : null,
       head: async (name) => stored.has(name) ? { key: name } : null,
       put: async (name, data) => { stored.set(name, data); },
@@ -625,7 +632,7 @@ function pagedEnv({ rows, state, cache, packs = [], queries = [] }) {
     },
     PACKS: {
       get: async (name) => name === "auto/known-keys.bin"
-        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        ? { arrayBuffer: async () => new ArrayBuffer(8) }
         : stored.has(name) ? {
           text: async () => String(stored.get(name)),
           arrayBuffer: async () => stored.get(name),
