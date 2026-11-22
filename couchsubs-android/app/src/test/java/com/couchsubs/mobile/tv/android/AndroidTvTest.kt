@@ -23,9 +23,14 @@ import kotlin.concurrent.thread
 class AndroidTvTest {
     private val apk = ByteArray(300_000) { (it * 31).toByte() }
 
-    private fun dumpsys(version: String?, installer: String = "null") =
+    private fun dumpsys(
+        version: String?,
+        installer: String = "null",
+        signatureHash: String? = AndroidTvInstaller.SIGNATURE_HASH
+    ) =
         if (version == null) "Unable to find package: com.couchsubs.tv\n"
-        else "Packages:\n  Package [com.couchsubs.tv] (abc):\n    versionCode=21 minSdk=21 targetSdk=34\n    versionName=$version\n    installerPackageName=$installer\n"
+        else "Packages:\n  Package [com.couchsubs.tv] (abc):\n    versionCode=21 minSdk=21 targetSdk=34\n    versionName=$version\n    installerPackageName=$installer\n" +
+            signatureHash?.let { "    signatures=PackageSignatures{a1b2c3 version:2, signatures:[$it], past signatures:[]}\n" }.orEmpty()
 
     private fun installer(adbd: FakeAdbd, key: AdbKey, steps: MutableList<InstallStep> = mutableListOf(), pairing: AndroidTvInstaller.Pairing? = null,
                           pairer: (AdbKey, AndroidTvInstaller.Pairing) -> Unit = { _, _ -> }) =
@@ -116,6 +121,7 @@ class AndroidTvTest {
             versionCode=918 minSdk=24 targetSdk=34
             versionName=0.9.18
             installerPackageName=null
+            signatures=PackageSignatures{a1b2c3 version:2, signatures:[32d37cf9], past signatures:[]}
             User 0: ceDataInode=0 installed=false hidden=false suspended=false distractionFlags=0 stopped=true notLaunched=true enabled=0 instant=false virtual=false
             User 10: ceDataInode=48213 installed=true hidden=false suspended=false distractionFlags=0 stopped=false notLaunched=false enabled=0 instant=false virtual=false
     """.trimIndent()
@@ -247,9 +253,9 @@ class AndroidTvTest {
         assertFalse(AndroidTvInstaller.isForeign(dumpsys("0.9.74") + newFormat))
         assertFalse(AndroidTvInstaller.isForeign(dumpsys("0.9.74") + oldFormat.replace("32d37cf9", "32D37CF9")))
         assertTrue(AndroidTvInstaller.isOurs(dumpsys("0.9.74") + newFormat))
-        assertTrue(AndroidTvInstaller.isForeign(dumpsys("2.0.0") + other))
+        assertTrue(AndroidTvInstaller.isForeign(dumpsys("2.0.0", signatureHash = null) + other))
         // İmza satırı yok ya da uygulama yok: bilinmiyor, başka uygulama sayılmaz.
-        assertFalse(AndroidTvInstaller.isForeign(dumpsys("2.0.0")))
+        assertFalse(AndroidTvInstaller.isForeign(dumpsys("2.0.0", signatureHash = null)))
         assertFalse(AndroidTvInstaller.isForeign(dumpsys(null) + other))
     }
 
@@ -261,7 +267,7 @@ class AndroidTvTest {
         val adbd = FakeAdbd(services = { service, _ ->
             when {
                 // Sürümü bizimkinden yeni: eskiden "güncel" sayılıp o uygulama açılıyordu.
-                service.startsWith("shell:dumpsys") -> if (removed) dumpsys(null) else dumpsys("9.9.9") + other
+                service.startsWith("shell:dumpsys") -> if (removed) dumpsys(null) else dumpsys("9.9.9", signatureHash = null) + other
                 service.startsWith("exec:cmd package install") -> "Success\n"
                 service == "shell:pm uninstall com.couchsubs.tv" -> { removed = true; "Success\n" }
                 else -> ""

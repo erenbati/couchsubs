@@ -196,7 +196,12 @@ public class AdbConnectionTests
     {
         var dir = Directory.CreateTempSubdirectory().FullName;
         using var key = AndroidTvInstaller.LoadOrCreateKey(dir);
-        await using var tv = new FakeAdbd { TrustedKey = key, Reply = "  versionName=0.7.0\n  versionCode=1" };
+        await using var tv = new FakeAdbd
+        {
+            TrustedKey = key,
+            Reply = "  versionName=0.7.0\n  versionCode=1\n" +
+                    "  signatures=PackageSignatures{a1b2c3 version:2, signatures:[32d37cf9], past signatures:[]}\n"
+        };
         tv.Serve();
         var installer = new AndroidTvInstaller("127.0.0.1", dir, tv.Port);
         var (version, installed) = await installer.EnsureInstalledAsync("yok.apk", "0.7.0");
@@ -394,7 +399,13 @@ public class AdbConnectionTests
     {
         var dir = Directory.CreateTempSubdirectory().FullName;
         using var key = AndroidTvInstaller.LoadOrCreateKey(dir);
-        await using var tv = new FakeAdbd { TrustedKey = key, Reply = "  versionName=0.9.11\nError: Unknown operation string: SYSTEM_ALERT_WINDOW" };
+        await using var tv = new FakeAdbd
+        {
+            TrustedKey = key,
+            Reply = "  versionName=0.9.11\n" +
+                    "  signatures=PackageSignatures{a1b2c3 version:2, signatures:[32d37cf9], past signatures:[]}\n" +
+                    "Error: Unknown operation string: SYSTEM_ALERT_WINDOW"
+        };
         tv.Serve();
         var installer = new AndroidTvInstaller("127.0.0.1", dir, tv.Port);
         var (version, installed) = await installer.EnsureInstalledAsync("yok.apk", "0.9.11");
