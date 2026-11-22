@@ -301,7 +301,7 @@ public final class SubtitlePipeline {
             }
             guard session == startedSession else {
                 log("eski okuma \(now() - started) ms sonra bitti, hat sıfırlanmıştı; atıldı")
-                return
+                return false
             }
             lastReadMs = now() - started
             onReadResult?(result.failure)
