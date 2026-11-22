@@ -232,8 +232,8 @@ public sealed class LinePool : IDisposable
             File.WriteAllText(temporary, JsonSerializer.Serialize(state));
             File.Move(temporary, file, overwrite: true);
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (IOException) { return; }
+        catch (UnauthorizedAccessException) { return; }
         dirty = false;
         lastSave = clock();
     }

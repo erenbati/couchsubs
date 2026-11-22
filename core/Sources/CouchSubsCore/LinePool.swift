@@ -170,10 +170,15 @@ public actor LinePool {
     /// Kuyruğu diske yazar (uygulama kapanırken de çağrılır).
     public func save() {
         guard dirty else { return }
-        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .secondsSince1970
-        if let data = try? encoder.encode(state) { try? data.write(to: file, options: .atomic) }
+        do {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .secondsSince1970
+            try encoder.encode(state).write(to: file, options: .atomic)
+        } catch {
+            // Kirli durumu koru; sonraki save veya offer başarısız yazımı yeniden denesin.
+            return
+        }
         dirty = false
         lastSave = clock()
     }
