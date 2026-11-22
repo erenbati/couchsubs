@@ -70,40 +70,73 @@ public sealed partial class AndroidTvInstaller(string host, string keyDirectory,
         }
     }
 
-    /// <summary>Bu bilgisayarın ağlarında ADB'si açık cihazları arar (her ağın /24 bölümü).</summary>
+    /// <summary>Bu bilgisayarın yerel IPv4 alt ağlarında ADB'si açık cihazları arar; /22'den geniş ağları atlar.</summary>
     public static async Task<IReadOnlyList<string>> ScanAsync(int port = DefaultPort, CancellationToken cancellationToken = default)
     {
-        var hosts = ScanTargets(LocalAddresses()).ToList();
+        var hosts = ScanTargets(LocalNetworks()).ToList();
         var found = new System.Collections.Concurrent.ConcurrentBag<string>();
         await Parallel.ForEachAsync(hosts, new ParallelOptions { MaxDegreeOfParallelism = 64, CancellationToken = cancellationToken },
             async (candidate, _) =>
             {
                 if (await IsReachableAsync(candidate, port, TimeSpan.FromMilliseconds(700))) found.Add(candidate);
             });
-        return [.. found.OrderBy(h => IPAddress.Parse(h).GetAddressBytes()[3])];
+        return [.. found.OrderBy(h => ToUInt32(IPAddress.Parse(h)))];
     }
 
+    // Geriye dönük uyumluluk: eski çağıranlar yalnızca adres veriyorsa /24 varsayımını korur.
     internal static IEnumerable<string> ScanTargets(IEnumerable<IPAddress> locals)
+        => ScanTargets(locals.Select(local => (local, IPAddress.Parse("255.255.255.0"))));
+
+    internal static IEnumerable<string> ScanTargets(IEnumerable<(IPAddress Address, IPAddress Mask)> networks)
     {
-        var seen = new HashSet<string>();
-        foreach (var local in locals)
+        var seen = new HashSet<uint>();
+        foreach (var (local, mask) in networks)
         {
-            var bytes = local.GetAddressBytes();
-            for (var last = 1; last < 255; last++)
+            if (local.AddressFamily != AddressFamily.InterNetwork || mask.AddressFamily != AddressFamily.InterNetwork)
+                continue;
+            var prefix = PrefixLength(ToUInt32(mask));
+            if (prefix is < 22 or > 30) continue;
+
+            var addressValue = ToUInt32(local);
+            var maskValue = ToUInt32(mask);
+            var subnet = addressValue & maskValue;
+            var broadcast = subnet | ~maskValue;
+            for (var host = subnet + 1; host < broadcast; host++)
             {
-                if (last == bytes[3]) continue;
-                var candidate = $"{bytes[0]}.{bytes[1]}.{bytes[2]}.{last}";
-                if (seen.Add(candidate)) yield return candidate;
+                if (host == addressValue || !seen.Add(host)) continue;
+                yield return new IPAddress([(byte)(host >> 24), (byte)(host >> 16), (byte)(host >> 8), (byte)host]).ToString();
             }
         }
     }
 
-    private static IEnumerable<IPAddress> LocalAddresses() =>
+    private static IEnumerable<(IPAddress Address, IPAddress Mask)> LocalNetworks() =>
         NetworkInterface.GetAllNetworkInterfaces()
             .Where(n => n.OperationalStatus == OperationalStatus.Up && n.NetworkInterfaceType != NetworkInterfaceType.Loopback)
             .SelectMany(n => n.GetIPProperties().UnicastAddresses)
-            .Select(a => a.Address)
-            .Where(a => a.AddressFamily == AddressFamily.InterNetwork && IsPrivate(a));
+            .Where(a => a.Address.AddressFamily == AddressFamily.InterNetwork && IsPrivate(a.Address) && a.IPv4Mask is not null)
+            .Select(a => (a.Address, a.IPv4Mask!));
+
+    private static int PrefixLength(uint mask)
+    {
+        var prefix = 0;
+        var sawZero = false;
+        for (var bit = 31; bit >= 0; bit--)
+        {
+            if ((mask & (1u << bit)) != 0)
+            {
+                if (sawZero) return -1;
+                prefix++;
+            }
+            else sawZero = true;
+        }
+        return prefix;
+    }
+
+    private static uint ToUInt32(IPAddress address)
+    {
+        var bytes = address.GetAddressBytes();
+        return ((uint)bytes[0] << 24) | ((uint)bytes[1] << 16) | ((uint)bytes[2] << 8) | bytes[3];
+    }
 
     internal static bool IsPrivate(IPAddress address)
     {

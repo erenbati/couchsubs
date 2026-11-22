@@ -564,27 +564,31 @@ private suspend fun findSamsungTvs(phoneIp: String?): List<SamsungCandidate> = w
 }
 
 /** Telefonun Wi-Fi'daki IPv4 adresi: TV'nin geliştirici modunda Host PC IP olarak yazılır. */
-internal fun phoneAddress(context: Context): String? = try {
+internal fun networkAddressCandidates(context: Context): List<NetworkAddressCandidate> = try {
     val connectivity = context.getSystemService(ConnectivityManager::class.java)
-    val networks = connectivity.allNetworks.map { network ->
+    connectivity.allNetworks.map { network ->
         val capabilities = connectivity.getNetworkCapabilities(network)
+        val links = connectivity.getLinkProperties(network)?.linkAddresses.orEmpty()
         NetworkAddressCandidate(
             isWifi = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true,
             isEthernet = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true,
             isVpn = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true,
-            addresses = connectivity.getLinkProperties(network)?.linkAddresses?.map { it.address }.orEmpty(),
+            addresses = links.map { it.address },
+            prefixLengths = links.associate { it.address to it.prefixLength },
         )
     }
-    phoneIpv4Address(networks)
 } catch (error: Exception) {
-    null
+    emptyList()
 }
+
+internal fun phoneAddress(context: Context): String? = phoneIpv4Address(networkAddressCandidates(context))
 
 internal data class NetworkAddressCandidate(
     val isWifi: Boolean,
     val isEthernet: Boolean,
     val isVpn: Boolean,
     val addresses: List<InetAddress>,
+    val prefixLengths: Map<InetAddress, Int> = emptyMap(),
 )
 
 internal fun phoneIpv4Address(networks: Iterable<NetworkAddressCandidate>): String? {
@@ -596,6 +600,36 @@ internal fun phoneIpv4Address(networks: Iterable<NetworkAddressCandidate>): Stri
         ?.hostAddress
 
     return addressFor { it.isWifi } ?: addressFor { it.isEthernet }
+}
+
+/** Android TV için fiziksel Wi-Fi/Ethernet alt ağlarını tara; /22'den geniş her alt ağı atla. */
+internal fun phoneScanTargets(networks: Iterable<NetworkAddressCandidate>): List<String> {
+    val physical = networks.filter { !it.isVpn }
+    fun hasScannableIpv4(network: NetworkAddressCandidate) = network.addresses
+        .filterIsInstance<Inet4Address>()
+        .any { address -> !address.isLoopbackAddress && network.prefixLengths[address]?.let { it in 22..30 } == true }
+    val wifi = physical.filter { it.isWifi && hasScannableIpv4(it) }
+    val selected = if (wifi.isNotEmpty()) wifi else physical.filter { it.isEthernet }
+    val targets = linkedSetOf<String>()
+    for (network in selected) {
+        for (address in network.addresses.filterIsInstance<Inet4Address>().filterNot { it.isLoopbackAddress }) {
+            val prefix = network.prefixLengths[address] ?: continue
+            if (prefix !in 22..30) continue
+            val hostBits = 32 - prefix
+            val value = address.address.fold(0L) { result, byte -> (result shl 8) or (byte.toLong() and 0xffL) }
+            val mask = (0xffffffffL shl hostBits) and 0xffffffffL
+            val subnet = value and mask
+            val broadcast = subnet or (mask xor 0xffffffffL)
+            var host = subnet + 1
+            while (host < broadcast) {
+                if (host != value) {
+                    targets += "${(host shr 24) and 0xff}.${(host shr 16) and 0xff}.${(host shr 8) and 0xff}.${host and 0xff}"
+                }
+                host++
+            }
+        }
+    }
+    return targets.toList()
 }
 
 internal fun shareLog(context: Context, file: File) {

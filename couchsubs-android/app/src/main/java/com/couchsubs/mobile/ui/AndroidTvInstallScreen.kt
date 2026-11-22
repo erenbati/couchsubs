@@ -66,7 +66,7 @@ private sealed interface AndroidState {
 internal fun AndroidTvInstallScreen(onBack: () -> Unit, onDone: () -> Unit, brandPicker: @Composable () -> Unit, preset: InstalledTv? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val phoneIp = remember { phoneAddress(context) }
+    var phoneIp by remember { mutableStateOf(phoneAddress(context)) }
     var candidates by remember { mutableStateOf<List<AndroidCandidate>?>(null) }
     val known = preset ?: Services.settings.installedTv?.takeIf { it.brand == TvBrand.ANDROID_TV }
     var address by remember {
@@ -80,7 +80,11 @@ internal fun AndroidTvInstallScreen(onBack: () -> Unit, onDone: () -> Unit, bran
     val logFile = remember { File(context.filesDir, "tvinstall.log") }
 
     LaunchedEffect(Unit) {
-        val found = withContext(Dispatchers.IO) { findAndroidTvs(phoneIp) }
+        val (networkAddresses, found) = withContext(Dispatchers.IO) {
+            val currentNetworks = networkAddressCandidates(context)
+            currentNetworks to findAndroidTvs(currentNetworks)
+        }
+        phoneIp = phoneIpv4Address(networkAddresses)
         candidates = found
         if (address.isEmpty()) {
             // 5555'i açık TV yoksa ağda bulunan ilk TV seçilir ve kablosuz hata ayıklama sekmesi açılır (GitHub #478).
@@ -281,16 +285,13 @@ private fun androidFailureText(failure: AndroidState.Failed): String {
 private fun mustRemoveOnTv(failure: AndroidState.Failed) =
     failure.error == AndroidInstallError.INSTALL_FAILED && AndroidTvInstaller.needsReplace(failure.detail.orEmpty())
 
-/** Ağdaki Android TV'ler: SSDP'de DIAL ile görünenler ve ağın /24 bölümünde TCP 5555'i yanıtlayanlar. */
-private suspend fun findAndroidTvs(phoneIp: String?): List<AndroidCandidate> = withContext(Dispatchers.IO) {
+/** Ağdaki Android TV'ler: SSDP'de DIAL ile görünenler ve yerel IPv4 alt ağında TCP 5555'i yanıtlayanlar. */
+private suspend fun findAndroidTvs(networks: List<NetworkAddressCandidate>): List<AndroidCandidate> = withContext(Dispatchers.IO) {
     val dial = runCatching { TvDiscovery.search() }.getOrDefault(emptyList()).filter { it.brand == TvBrand.ANDROID_TV }
     val gate = Semaphore(32)
-    val open = if (phoneIp == null) emptySet() else {
-        val prefix = phoneIp.substringBeforeLast('.')
-        (1..254).map { "$prefix.$it" }.filter { it != phoneIp }
-            .map { address -> async { gate.withPermit { address.takeIf { AndroidTvInstaller.isReachable(it) } } } }
-            .awaitAll().filterNotNull().toSet()
-    }
+    val open = phoneScanTargets(networks)
+        .map { address -> async { gate.withPermit { address.takeIf { AndroidTvInstaller.isReachable(it) } } } }
+        .awaitAll().filterNotNull().toSet()
     val named = dial.associate { it.host to it.name }
     (named.keys + open).distinct().map { AndroidCandidate(it, named[it] ?: "Android TV", it in open) }
         .sortedByDescending { it.legacyAdbReachable }
