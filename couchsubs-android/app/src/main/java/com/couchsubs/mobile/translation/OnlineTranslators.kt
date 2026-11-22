@@ -1032,12 +1032,31 @@ class AiTranslator(
 
     override val logName: String get() = provider.id
 
+    /** Tek çeviri çağrısında istek ve tüm önbellek işlemleri aynı talimat anlık görüntüsünü kullanır. */
+    override fun translate(text: String): String {
+        val previous = enterInstructionScope()
+        return try {
+            super.translate(text)
+        } finally {
+            leaveInstructionScope(previous)
+        }
+    }
+
     /**
      * "Ekranı çevir": birbirinden bağımsız parçalar (menü satırı, görev yazısı...) tek istekte, aynı sırada çevrilir
      * (parça başına istek dakikalık hakkı bitirirdi; Mac/iPhone AITranslationCore.translateAll ile aynı). Önbellekteki
      * parçalar gönderilmez. Hata olursa kalan parçalar yerel motorla çevrilir; o da yoksa hata yukarı çıkar.
      */
     override fun translateAll(texts: List<String>): List<String> {
+        val previous = enterInstructionScope()
+        return try {
+            translateAllInCurrentScope(texts)
+        } finally {
+            leaveInstructionScope(previous)
+        }
+    }
+
+    private fun translateAllInCurrentScope(texts: List<String>): List<String> {
         val game = game()
         val results = texts.map { cache.get(cacheKey(it, game)) }.toMutableList()
         val missing = texts.indices.filter { results[it] == null }
@@ -1074,8 +1093,21 @@ class AiTranslator(
     /** Geçerli ek talimat ve önbellek etiketi; etiket yalnız talimat değişince yeniden hesaplanır. */
     private class InstructionScope(val instruction: String?, val tag: String?)
     @Volatile private var lastScope = InstructionScope(null, null)
+    private val activeInstructionScope = ThreadLocal<InstructionScope?>()
+
+    private fun enterInstructionScope(): InstructionScope? {
+        val previous = activeInstructionScope.get()
+        activeInstructionScope.set(scope)
+        return previous
+    }
+
+    private fun leaveInstructionScope(previous: InstructionScope?) {
+        if (previous == null) activeInstructionScope.remove() else activeInstructionScope.set(previous)
+    }
+
     private val scope: InstructionScope
         get() {
+            activeInstructionScope.get()?.let { return it }
             val current = AiRequest.instruction(instruction?.invoke())
             val last = lastScope
             if (last.instruction == current) return last
@@ -1122,7 +1154,8 @@ class AiTranslator(
 
     override fun request(sentences: List<String>, context: List<AiRequest.ContextLine>, game: String?, names: List<String>): List<String> {
         val timeout = if (provider == AiProvider.LOCAL) LocalAiServer.TIMEOUT_MS else 5000
-        fun send() = AiRequest.build(provider, key, model, sentences, context, game = game, names = names, instruction = scope.instruction,
+        val callScope = scope
+        fun send() = AiRequest.build(provider, key, model, sentences, context, game = game, names = names, instruction = callScope.instruction,
             server = server, thinkingOff = thinkingOff).let { http.send("POST", it.url, it.headers, it.body, timeout) }
         var (status, body) = send()
         if (status == 400 && thinkingOff && server?.disablesThinking == true) {
