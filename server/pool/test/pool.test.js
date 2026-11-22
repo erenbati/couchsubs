@@ -428,6 +428,27 @@ test("kimliksiz oyun adı kurulum başına bir oy yazar", async () => {
   assert.deepEqual(votes, [["gta 6", install(1)]]);
 });
 
+test("a failed optional game vote must not reject already committed subtitle sightings", async () => {
+  const DB = fakeDB();
+  const original = DB.batch;
+  let voteAttempts = 0;
+  DB.batch = async (stmts) => {
+    if (stmts.some((s) => s.sql.startsWith("INSERT OR IGNORE INTO game_votes"))) {
+      voteAttempts++;
+      throw new Error("D1_ERROR: transient game_votes write failure");
+    }
+    return original(stmts);
+  };
+  const text = "Get in the car, Lucia.";
+  const response = await postLines({ DB }, install(1), [{ text, game: "GTA 6" }]);
+  assert.equal(response.status, 200, "the line transaction has already committed");
+  assert.deepEqual(await response.json(), { accepted: 1, recorded: 1, saturated: [] });
+  assert.equal(voteAttempts, 1);
+  const second = await postLines({ DB }, install(2), [{ text, titleId: "PPSA01234" }]);
+  assert.equal(second.status, 200);
+  assert.equal(DB.lines.size, 1, "the original sighting must be available to a second player");
+});
+
 test("export rejects negative and non-integer pagination before issuing SQL", async () => {
   const DB = fakeDB();
   const env = { DB, ADMIN_TOKEN: "t" };

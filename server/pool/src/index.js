@@ -309,7 +309,16 @@ async function submit(req, env) {
     if (appId) await releaseQuota(env, appId, day, room);
     throw error;
   }
-  await vote(env, install, entries);
+  // The subtitle batch is already committed. A best-effort game vote must
+  // not turn that success into a retryable error (and charge quota again).
+  try {
+    await vote(env, install, entries);
+  } catch (error) {
+    console.error(JSON.stringify({
+      error: "game_vote_write",
+      message: String(error?.message || error).slice(0, 200),
+    }));
+  }
   return json({ accepted: fresh.size, recorded, saturated });
 }
 
