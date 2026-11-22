@@ -197,7 +197,11 @@ def translate(rows, system, tag, out):
             parts.append(f"[{l['speaker'] or 'text'}]")
             parts += [f"  {start + i}.{j}\t{s}" for j, s in enumerate(l["sents"])]
         res = llm.call(system, "\n".join(parts), schema, tag, max_tokens=32000)
-        return {it["id"]: it["tr"].strip() for it in (res or {}).get("items", [])}
+        # Ignore hallucinated IDs outside this prompt's chunk, or parallel
+        # responses can silently overwrite an unrelated reviewed subtitle.
+        valid = {f"{start + i}.{j}" for i, l in enumerate(chunk) for j in range(len(l["sents"]))}
+        return {it["id"]: it["tr"].strip() for it in (res or {}).get("items", [])
+                if it["id"] in valid}
 
     got = {}
     for attempt in range(2):
