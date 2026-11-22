@@ -76,7 +76,12 @@ def run(start):
         for j, s in enumerate(l["sents"]):
             parts.append(f"  {start + i}.{j}\t{s}")
     res = llm.call(SYSTEM, "\n".join(parts), SCHEMA, f"{game}-translate", max_tokens=32000)
-    return start, {it["id"]: it["tr"].strip() for it in (res or {}).get("items", [])}
+    # LLM responses may contain hallucinated IDs from the preceding context
+    # or other chunks. Only allow this chunk's requested sentence IDs to
+    # update translations, or a later chunk could overwrite an earlier one.
+    valid = {f"{start + i}.{j}" for i, l in enumerate(chunk) for j in range(len(l["sents"]))}
+    return start, {it["id"]: it["tr"].strip() for it in (res or {}).get("items", [])
+                   if it["id"] in valid}
 
 
 got = {}
