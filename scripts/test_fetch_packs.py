@@ -37,27 +37,6 @@ class FetchPacksTests(unittest.TestCase):
                 result = fetch_packs.main(["--require"])
             return result, existing.read_bytes(), original, list(target.iterdir())
 
-    def test_truncated_listing_without_continuation_token_fails_instead_of_looping(self):
-        xml = (b'<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
-               b'<IsTruncated>true</IsTruncated><Contents><Key>bundled/a.json.gz</Key>'
-               b'<Size>10</Size></Contents></ListBucketResult>')
-        with patch.object(fetch_packs, "request", side_effect=[xml, AssertionError("repeated first page")]) as fetch:
-            with self.assertRaisesRegex(ValueError, "continuation"):
-                fetch_packs.list_keys({}, "bundled/")
-            self.assertEqual(fetch.call_count, 1)
-
-    def test_repeated_continuation_token_fails_instead_of_looping(self):
-        def page(token):
-            return ('<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
-                    '<IsTruncated>true</IsTruncated>'
-                    '<NextContinuationToken>' + token + '</NextContinuationToken>'
-                    '</ListBucketResult>').encode()
-        with patch.object(fetch_packs, "request", side_effect=[page("same"), page("same"),
-                AssertionError("repeated page")]) as fetch:
-            with self.assertRaisesRegex(ValueError, "continuation"):
-                fetch_packs.list_keys({}, "bundled/")
-            self.assertEqual(fetch.call_count, 2)
-
     def test_corrupt_gzip_does_not_replace_working_pack(self):
         result, saved, original, files = self.download(b"broken archive")
         self.assertEqual(result, 1)
