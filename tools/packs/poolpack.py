@@ -16,6 +16,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import common as c
+from atomic_json import dump_atomic
 
 ROOT = HERE.parents[1]
 PACKS = ROOT / "core/Sources/CouchSubsCore/Resources/packs"
@@ -211,7 +212,7 @@ def translate(rows, system, tag, out):
         print("deneme", attempt, "parça", len(todo), "toplam harcama $%.4f" % llm.spent())
     for i, l in enumerate(lines):
         l["tr"] = [got.get(f"{i}.{j}") for j in range(len(l["sents"]))]
-    Path(out).write_text(json.dumps(lines, ensure_ascii=False, indent=0), encoding="utf-8")
+    dump_atomic(lines, out, ensure_ascii=False, indent=0)
     print("çeviri:", out, "eksik cümle", sum(1 for l in lines for t in l["tr"] if not t))
 
 
