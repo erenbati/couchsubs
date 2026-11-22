@@ -62,7 +62,7 @@ export const BATCH_WAIT_MS = 45 * 60 * 1000;
 export const NIGHT_BUDGET_USD = 3;
 /** claude-opus-5-5 Batches fiyatı ($/MTok): giriş, çıkış, önbellekten okuma, önbelleğe yazma. */
 const BATCH_PRICE = Object.freeze({ in: 2, out: 10, cacheRead: 0.1, cacheWrite: 2.5 });
-// Typical 100-line requests reserve about 4k output tokens; long source lines raise the cap up to the old 32k limit.
+// Typical 100-line requests reserve about 5.6k output tokens, leaving headroom over measured usage; long lines raise it.
 const CLAUDE_MIN_TOKENS = 512;
 const LEGACY_CLAUDE_MAX_TOKENS = 32000;
 const RESERVATION_INPUT_TOKEN_OVERHEAD = 256;
@@ -279,7 +279,7 @@ const claudeHeaders = (env) => ({
 });
 
 function claudeMaxTokens(items) {
-  const estimate = items.length * 24 + items.reduce((sum, item) => sum + String(item?.en ?? "").length * 0.4, 0);
+  const estimate = items.length * 32 + items.reduce((sum, item) => sum + String(item?.en ?? "").length * 0.6, 0);
   return Math.min(LEGACY_CLAUDE_MAX_TOKENS, Math.max(CLAUDE_MIN_TOKENS, Math.ceil(estimate)));
 }
 
@@ -321,8 +321,8 @@ function batchReservation(reqs, game, maxTokens = null) {
   for (const items of Object.values(reqs ?? {})) {
     if (!Array.isArray(items) || items.length === 0) continue;
     const params = claudeParams(items, game, maxTokens ?? claudeMaxTokens(items));
-    // Parametre gövdesi sistem istemini, şemayı ve satırları içerir; 2 UTF-8 bayt/token tahmini ek payla kullanılır.
-    const inputTokens = Math.ceil(encoder.encode(JSON.stringify(params)).length / 2) + RESERVATION_INPUT_TOKEN_OVERHEAD;
+    // Parametre gövdesi istemi, şemayı ve satırları içerir; 1.5 UTF-8 bayt/token tahmini ek payla kullanılır.
+    const inputTokens = Math.ceil(encoder.encode(JSON.stringify(params)).length / 1.5) + RESERVATION_INPUT_TOKEN_OVERHEAD;
     usd += (inputTokens * BATCH_PRICE.cacheWrite + params.max_tokens * BATCH_PRICE.out) / 1e6;
   }
   return usd;
@@ -455,15 +455,18 @@ export async function collectBatches(env, cache) {
       const part = b.reqs[row?.custom_id];
       if (!Array.isArray(part) || seen.has(row.custom_id)) continue;
       seen.add(row.custom_id);
-      const message = row.result?.type === "succeeded" ? row.result.message : null;
+      const outcome = row.result?.type;
+      const message = outcome === "succeeded" ? row.result.message : null;
       const usage = message?.usage;
-      if (Number.isFinite(usage?.input_tokens) && usage.input_tokens >= 0
-        && Number.isFinite(usage?.output_tokens) && usage.output_tokens >= 0) {
-        batchUsd += batchCost(usage);
-        out.input += usage.input_tokens + (usage.cache_read_input_tokens ?? 0)
-          + (usage.cache_creation_input_tokens ?? 0);
-        out.output += usage.output_tokens;
-      } else unknownCost = true;
+      if (outcome === "succeeded") {
+        if (Number.isFinite(usage?.input_tokens) && usage.input_tokens >= 0
+          && Number.isFinite(usage?.output_tokens) && usage.output_tokens >= 0) {
+          batchUsd += batchCost(usage);
+          out.input += usage.input_tokens + (usage.cache_read_input_tokens ?? 0)
+            + (usage.cache_creation_input_tokens ?? 0);
+          out.output += usage.output_tokens;
+        } else unknownCost = true;
+      } else if (!["errored", "canceled", "expired"].includes(outcome)) unknownCost = true;
       out.lines += applyTranslations(cache, part, message ? claudeReply(message, part) : new Map());
     }
     // Sonuç dosyasında olmayan istekler (hata) de bir başarısızlık sayar.
