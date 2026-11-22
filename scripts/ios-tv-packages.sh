@@ -20,7 +20,11 @@ PY=$(command -v python3 || command -v python)
 mkdir -p "$OUT/samsung-ca" "$CACHE"
 
 # Samsung: sıkıştırmasız (telefondaki imzalayıcı yalnız "stored" kayıtları okur).
-"$PY" - "$ROOT" "$OUT/couchsubs-samsung.wgt" <<'PYEOF'
+# Build off to the side: a failed ZIP must not truncate the last good WGT
+# already bundled in a reused Xcode output directory.
+SAMSUNG_STAGE=$(mktemp "$OUT/.couchsubs-samsung-XXXXXX")
+trap 'rm -f "$SAMSUNG_STAGE"' EXIT
+"$PY" - "$ROOT" "$SAMSUNG_STAGE" <<'PYEOF'
 import sys, zipfile
 root, dst = sys.argv[1], sys.argv[2]
 web, tizen = root + '/tv-webos/', root + '/tv-tizen/'
@@ -43,6 +47,8 @@ with zipfile.ZipFile(dst, 'w', zipfile.ZIP_STORED) as z:
             z.writestr(info, f.read())
     z.writestr(zipfile.ZipInfo('index.html', (1980, 1, 1, 0, 0, 0)), '\n'.join(lines).encode('utf-8'))
 PYEOF
+mv -f "$SAMSUNG_STAGE" "$OUT/couchsubs-samsung.wgt"
+trap - EXIT
 cp "$ROOT"/couchsubs-android/app/src/main/resources/samsung-ca/*.pem "$OUT/samsung-ca/"
 # XML attributes are unordered; use the same parser as check-tv-packages.py.
 SAMSUNG_VERSION=$("$PY" -c 'import sys, xml.etree.ElementTree as ET; print(ET.parse(sys.argv[1]).getroot().attrib["version"])' "$ROOT/tv-tizen/config.xml")

@@ -49,6 +49,9 @@ class IosTvPackageCacheTests(unittest.TestCase):
         cache.mkdir(parents=True)
         mock.mkdir()
         output.mkdir()
+        if extra and extra.get("IOS_TV_WGT_FAIL"):
+            (output / "tv").mkdir()
+            (output / "tv/couchsubs-samsung.wgt").write_bytes(b"previous good Samsung installer")
 
         (cache / "couchsubs-androidtv.apk").write_bytes(b"previous-apk")
         (cache / "couchsubs-lg.ipk").write_bytes(b"previous-ipk")
@@ -100,6 +103,15 @@ def fixture(request, timeout=60):
         return Response(ipk)
     raise AssertionError(url)
 urllib.request.urlopen = fixture
+if os.environ.get('IOS_TV_WGT_FAIL'):
+    OriginalZip = zipfile.ZipFile
+    class FailingWgtZip(OriginalZip):
+        def __init__(self, file, mode='r', *args, **kwargs):
+            if isinstance(file, (str, bytes, os.PathLike)) and 'couchsubs-samsung' in os.fspath(file) and mode == 'w':
+                with open(file, 'wb') as output: output.write(b'partial zip bytes')
+                raise OSError('simulated Samsung archive write failure')
+            super().__init__(file, mode, *args, **kwargs)
+    zipfile.ZipFile = FailingWgtZip
 ''',
             encoding="utf-8",
         )
@@ -138,6 +150,13 @@ urllib.request.urlopen = fixture
         self.assertEqual((output / "couchsubs-lg.ipk").read_bytes(), b"previous-ipk")
         output_properties = (output / "tv-packages.properties").read_text(encoding="utf-8")
         self.assertIn(expected_properties, output_properties)
+
+    def test_failed_samsung_zip_build_preserves_previous_iphone_installer(self) -> None:
+        _, output, result = self.run_build(extra={"IOS_TV_WGT_FAIL": "1"})
+        self.assertNotEqual(result.returncode, 0, "injected ZIP failure should stop bundling")
+        self.assertEqual((output / "couchsubs-samsung.wgt").read_bytes(),
+                         b"previous good Samsung installer",
+                         "a failed new ZIP must not corrupt the last working iPhone-bundled WGT")
 
     def test_ipk_download_failure_keeps_previous_release_pair(self) -> None:
         cache, output, result = self.run_build("download")
