@@ -21,10 +21,17 @@ sed -e 's/src="icon.png"/src="panel-icon.png"/' \
     -e 's|  <script src="platform.js"></script>|  <script src="$WEBAPIS/webapis/webapis.js"></script>\n  <script src="platform.js"></script>|' \
     tv-webos/index.html > "$OUT/index.html"
 # Masaüstü uygulamalarına gömülen imzasız paket: CouchSubs kurarken TV'ye özel sertifikayla imzalar.
-VERSION=$(sed -n 's/.* version="\([0-9.]*\)" viewmodes.*/\1/p' tv-tizen/config.xml | head -1)
+# XML attributes are unordered. Read the widget's version rather than assuming
+# it is immediately followed by the viewmodes attribute.
+PY=$(command -v python3 || command -v python)
+VERSION=$("$PY" - tv-tizen/config.xml <<'PYEOF'
+import sys
+import xml.etree.ElementTree as ET
+print(ET.parse(sys.argv[1]).getroot().attrib["version"])
+PYEOF
+)
 mkdir -p "$DIST/tv-app"
 rm -f "$DIST"/tv-app/couchsubs-samsung_*.wgt
-PY=$(command -v python3 || command -v python)
 "$PY" - "$OUT" "$DIST/tv-app/couchsubs-samsung_$VERSION.wgt" <<'PYEOF'
 import os, sys, zipfile
 src, dst = sys.argv[1], sys.argv[2]
