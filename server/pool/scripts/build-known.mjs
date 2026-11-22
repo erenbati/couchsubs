@@ -15,6 +15,12 @@ for (const name of readdirSync(dir).filter((n) => n.endsWith(".json.gz") && !n.s
   const pack = JSON.parse(gunzipSync(readFileSync(join(dir, name))).toString("utf8"));
   const entries = pack.entries ?? {};
   const segments = pack.segments ?? {};
+  // Format-2 clients require at least one full-line subtitle. If a manually
+  // built archive has fragments only, no client loads it; excluding those
+  // keys would incorrectly block the nightly auto pack from translating them.
+  if (pack.format === 2 && Object.keys(entries).length === 0) {
+    throw new Error("Manual pack has no complete subtitle translations: " + name);
+  }
   // Keys with unusable manual translations must not enter the exclusion
   // index: that would prevent the nightly pool from filling their subtitles.
   for (const [section, translations] of [["entries", entries], ["segments", segments]]) {

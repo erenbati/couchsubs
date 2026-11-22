@@ -69,6 +69,7 @@ test("build-known rejects invalid manual translations rather than suppressing au
     ["numeric entry", { "0000000000000001": 42 }, {}],
     ["blank entry", { "0000000000000001": "  " }, {}],
     ["null segment", { "0000000000000001": "Valid" }, { "0000000000000002": null }],
+    ["format-2 fragments without a full line", {}, { "0000000000000002": "Orphan fragment" }],
   ]) {
     const dir = mkdtempSync(join(tmpdir(), "couchsubs-known-bad-value-"));
     try {
