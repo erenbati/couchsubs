@@ -49,6 +49,31 @@ class TVPackageVersionTests(unittest.TestCase):
             self.assertEqual(len(issues), 1, issues)
             self.assertIn("birden fazla", issues[0], "a release must not silently choose one of two TV installers")
 
+    def test_empty_desktop_tv_installers_are_rejected_even_if_versions_match(self):
+        for kind, name in [
+            ("ipk", "com.couchsubs.tv_0.9.77_all.ipk"),
+            ("wgt", "couchsubs-samsung_0.9.77.wgt"),
+            ("apk", "couchsubs-androidtv_0.9.77.apk"),
+        ]:
+            with self.subTest(platform=kind), tempfile.TemporaryDirectory() as temp:
+                folder = Path(temp)
+                (folder / name).write_bytes(b"")
+                with patch.object(mod, "source_versions", return_value={kind: "0.9.77"}):
+                    issues = mod.problems(folder)
+                self.assertEqual(len(issues), 1, issues)
+                self.assertIn("boş", issues[0], "correctly named zero-byte installer is not installable")
+
+    def test_empty_iphone_tv_installer_is_rejected_even_if_properties_match(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            (folder / "couchsubs-samsung.wgt").write_bytes(b"")
+            (folder / "tv-packages.properties").write_text(
+                "couchsubs-samsung.wgt.version=0.9.77\n", encoding="utf-8")
+            with patch.object(mod, "source_versions", return_value={"wgt": "0.9.77"}):
+                issues = mod.problems(folder)
+            self.assertEqual(len(issues), 1, issues)
+            self.assertIn("boş", issues[0])
+
     def test_current_single_release_package_still_passes(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)

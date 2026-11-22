@@ -72,8 +72,26 @@ def problems(directory: Path, allow_missing=(), root: Path = ROOT) -> list:
             if len(names) > 1:
                 duplicates.add(kind)
                 result.append(f"{NAMES[kind]} paketinden birden fazla dosya var: {', '.join(names)}")
-    for kind, want in expected.items():
+    # A matching filename/metadata version says nothing about whether the
+    # installer has bytes. Catch incomplete copies before app store packaging.
+    iphone_names = {
+        "ipk": "couchsubs-lg.ipk",
+        "wgt": "couchsubs-samsung.wgt",
+        "apk": "couchsubs-androidtv.apk",
+    }
+    empty = set()
+    for kind in expected:
         if kind in duplicates:
+            continue
+        files = ([directory / iphone_names[kind]]
+                 if (directory / "tv-packages.properties").is_file()
+                 else directory.glob("*." + kind))
+        names = [path.name for path in files if path.is_file() and path.stat().st_size == 0]
+        if names:
+            empty.add(kind)
+            result.append(f"{NAMES[kind]} paketi boş: {', '.join(names)}")
+    for kind, want in expected.items():
+        if kind in duplicates or kind in empty:
             continue
         have = bundled.get(kind)
         if have is None:
