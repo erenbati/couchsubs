@@ -1795,7 +1795,12 @@
     }
     if (eventSource) eventSource.close();
     eventSource = null;
-    if (address !== server) failures = 0;
+    if (address !== server) {
+      failures = 0;
+      // Never replay an old server's subtitle when the newly selected stream opens.
+      lastLine = null;
+      hideSubtitle('server-change');
+    }
     server = address;
     pairRequest('GET', address, '/hello', function (hello) {
       if (generation !== connectionGeneration) return;

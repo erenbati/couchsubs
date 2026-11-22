@@ -89,3 +89,25 @@ test('kayıtlı eski adrese bağlı kalan TV altyazı almaz; adres bildirilince 
     live.close();
   }
 });
+
+test('switching TV servers clears the previous server subtitle before the new server speaks', async () => {
+  const first = await couchsubs();
+  const next = await couchsubs();
+  const page = startPage({ params: { server: first.address, key: KEY }, android8: true, port: 2 });
+  try {
+    await until(() => first.tvs() === 1 && page.status() === 'bağlı', 'initial stream');
+    first.subtitle('Önceki sunucunun altyazısı');
+    await until(() => page.shown() === 'Önceki sunucunun altyazısı', 'initial subtitle');
+
+    // Same CouchSubs identity, but a new server address/stream: the old subtitle is no longer current.
+    page.relaunch({ server: next.address });
+    await until(() => next.tvs() === 1 && page.status() === 'bağlı', 'next stream');
+    assert.equal(page.shown(), '', 'a new server must not replay an old server subtitle');
+    next.subtitle('Yeni sunucunun altyazısı');
+    await until(() => page.shown() === 'Yeni sunucunun altyazısı', 'next subtitle');
+  } finally {
+    page.close();
+    first.close();
+    next.close();
+  }
+});
