@@ -615,12 +615,20 @@ async function buildPack(env, job, cache, known) {
   const contentSha = await sha256Hex(new TextEncoder().encode(body));
   if (previous && cache.contentSha === contentSha) {
     // The index may outlive an R2 object removed independently.
-    // An unchanged source hash is only enough when the published file exists.
+    // An unchanged source hash is only enough when both the indexed object and legacy key exist.
     const packKey = previous.r2Key ?? `packs/${id}.json.gz`;
     const published = env.PACKS.head
       ? await env.PACKS.head(packKey)
       : await env.PACKS.get(packKey);
-    if (published) return { id, built: false, unchanged: true, entries: count };
+    const stableKey = `packs/${id}.json.gz`;
+    const stable = packKey === stableKey ? published : env.PACKS.head
+      ? await env.PACKS.head(stableKey)
+      : await env.PACKS.get(stableKey);
+    const indexedObjectMatches = published && (!previous.r2Key
+      || published.customMetadata?.sha256 === previous.sha256);
+    const stableObjectMatches = stable && (!previous.r2Key
+      || stable.customMetadata?.sha256 === previous.sha256);
+    if (indexedObjectMatches && stableObjectMatches) return { id, built: false, unchanged: true, entries: count };
   }
   const data = await gzip(body);
   const sha256 = await sha256Hex(data);
