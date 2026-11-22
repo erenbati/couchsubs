@@ -180,6 +180,29 @@ urllib.request.urlopen = fixture
         self.assertIn("warning: TV paketleri kaynaktaki TV uygulamasıyla aynı değil", result.stdout)
 
 
+class SamsungSourceVersionTests(unittest.TestCase):
+    def test_iphone_bundle_reads_samsung_version_with_reordered_xml_attributes(self):
+        # Execute the same shell assignment as ios-tv-packages.sh against an
+        # isolated config. XML attributes are unordered, unlike the old sed.
+        assignment = next(line for line in SCRIPT.read_text(encoding="utf-8").splitlines()
+                          if line.startswith("SAMSUNG_VERSION="))
+        with tempfile.TemporaryDirectory(prefix="couchsubs-tizen-version-") as tmp:
+            root = Path(tmp)
+            (root / "tv-tizen").mkdir()
+            (root / "tv-tizen" / "config.xml").write_text(
+                '<widget xmlns="http://www.w3.org/ns/widgets" '
+                'viewmodes="fullscreen" version="0.9.74"></widget>',
+                encoding="utf-8")
+            env = os.environ.copy()
+            env["ROOT"] = posix_path(root)
+            env["PY"] = posix_path(Path(sys.executable))
+            result = subprocess.run(
+                [bash_executable(), "-c", 'set -e; ' + assignment + '; printf "%s" "$SAMSUNG_VERSION"'],
+                env=env, capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "0.9.74")
+
+
 class CheckTvPackagesTests(unittest.TestCase):
     def setUp(self) -> None:
         import importlib.util

@@ -44,7 +44,8 @@ with zipfile.ZipFile(dst, 'w', zipfile.ZIP_STORED) as z:
     z.writestr(zipfile.ZipInfo('index.html', (1980, 1, 1, 0, 0, 0)), '\n'.join(lines).encode('utf-8'))
 PYEOF
 cp "$ROOT"/couchsubs-android/app/src/main/resources/samsung-ca/*.pem "$OUT/samsung-ca/"
-SAMSUNG_VERSION=$(sed -n 's/.* version="\([0-9.]*\)" viewmodes.*/\1/p' "$ROOT/tv-tizen/config.xml" | head -1)
+# XML attributes are unordered; use the same parser as check-tv-packages.py.
+SAMSUNG_VERSION=$("$PY" -c 'import sys, xml.etree.ElementTree as ET; print(ET.parse(sys.argv[1]).getroot().attrib["version"])' "$ROOT/tv-tizen/config.xml")
 
 # Android TV ve LG: kaynaktaki TV sürümünü taşıyan en yeni GitHub sürümü.
 WEBOS_VERSION=$(sed -n 's/.*"version": *"\([0-9.]*\)".*/\1/p' "$ROOT/tv-webos/appinfo.json" | head -1)
