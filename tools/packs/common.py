@@ -1,5 +1,5 @@
 # Python port of CouchSubsCore PackKey / PackFuzzy / SubtitleSegmenter (sentence split) for building packs.
-import base64, gzip, hashlib, json, re, unicodedata
+import base64, gzip, hashlib, json, os, re, tempfile, unicodedata
 
 KEEP = {"Lu", "Ll", "Lt", "Lm", "Lo", "Nd", "Nl", "No"}
 MARKS = {"Mn", "Mc", "Me"}
@@ -145,5 +145,17 @@ def write_pack(path, pack_id, title, source, entries, segments, english):
            "entries": dict(sorted(entries.items())), "segments": dict(sorted(segments.items())),
            "fuzzy": fuzzy_index(order, eng, fuzzy_min_len(title))}
     data = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    with gzip.GzipFile(path, "wb", compresslevel=9, mtime=0) as f:
-        f.write(data)
+    # Write in the same directory so a failed compression/disk write cannot
+    # truncate the last good published pack. Replace only after gzip closes.
+    output = os.fspath(path)
+    directory = os.path.dirname(os.path.abspath(output))
+    fd, staged = tempfile.mkstemp(prefix="." + os.path.basename(output) + ".", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            # Keep the original gzip filename header, not the random staging name.
+            with gzip.GzipFile(filename=output, mode="wb", fileobj=stream, compresslevel=9, mtime=0) as f:
+                f.write(data)
+        os.replace(staged, output)
+    finally:
+        if os.path.exists(staged):
+            os.unlink(staged)
