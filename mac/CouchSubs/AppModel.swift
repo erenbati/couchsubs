@@ -1779,10 +1779,17 @@ final class AppModel: ObservableObject {
             }
             // TV'nin adresi bundan sonra sürüm denetimi için kullanılır.
             let located = LGTV(name: tv.name, host: host, brand: .androidTV)
+            let addressChanged = self.tv?.host != located.host
             self.tv = located
             store.save(located, for: StoreKey.tv)
             store.save(version, for: StoreKey.tvAppVersion)
             tvApp = .upToDate(version)
+            if addressChanged {
+                // Çeviri sürerken ADB bekçisi eski adresi tutar; yeni TV kaydıyla yeniden oluştur.
+                keeper?.stop()
+                keeper = nil
+                if isRunning && settings.output.showsOnTV { startKeeper(refreshApp: false) }
+            }
         } catch {
             tvApp = Self.failedState(error)
         }
@@ -2327,7 +2334,7 @@ final class AppModel: ObservableObject {
         tvReconnecting = false
     }
 
-    private func startKeeper() {
+    private func startKeeper(refreshApp: Bool = true) {
         guard keeper == nil, settings.output.showsOnTV, hasTV, let tv else { return }
         let server = self.server
         let keeper = services.makeKeeper(tv: tv, key: store.load(String.self, for: StoreKey.tvKey), params: ["server": serverAddress(for: tv), "key": server.accessKey],
@@ -2336,11 +2343,14 @@ final class AppModel: ObservableObject {
         }, onKey: { [weak self] key in
             Task { @MainActor in self?.store.save(key, for: StoreKey.tvKey) }
         }, consolePort: { server.consolePort }, onOpenResult: { [weak self] problem in
-            Task { @MainActor in self?.openResult(problem, brand: tv.brand) }
+            Task { @MainActor in
+                guard let self, self.tv?.host == tv.host, self.tv?.brand == tv.brand else { return }
+                self.openResult(problem, brand: tv.brand)
+            }
         })
         keeper.start(interval: .seconds(5))
         self.keeper = keeper
-        Task { await refreshTVApp() }
+        if refreshApp { Task { await refreshTVApp() } }
     }
 
     private func openResult(_ problem: TVOpenProblem?, brand: TVBrand) {
