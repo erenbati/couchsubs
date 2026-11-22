@@ -108,6 +108,7 @@ public sealed class PackUpdaterTests : IDisposable
             var failed = await updater.RefreshAsync(force: true);
 
             Assert.Empty(failed.Downloaded);
+            Assert.True(failed.Incomplete, "A failed disk replacement must be reported as incomplete");
             Assert.Equal("one", Content("gta-6"));
             Assert.Equal(installedBefore with { Version = -1 }, Assert.Single(updater.InstalledPacks));
         }
@@ -116,6 +117,31 @@ public sealed class PackUpdaterTests : IDisposable
         Assert.Equal(["gta-6"], retried.Downloaded);
         Assert.Equal("two", Content("gta-6"));
         Assert.Equal(2, Assert.Single(updater.InstalledPacks).Version);
+    }
+
+    [Fact]
+    public async Task FailedFirstDiskWriteDoesNotMarkRefreshSuccessfulOrDelayRetry()
+    {
+        server.Add("gta-6", 1, "one");
+        using var updater = Make();
+        await updater.RefreshAsync();
+
+        server.Add("rdr-2", 1, "two");
+        now += PackUpdater.RefreshInterval + TimeSpan.FromSeconds(1);
+        var staging = Path.Combine(Packs, ".rdr-2.download");
+        Directory.CreateDirectory(staging);
+
+        var failed = await updater.RefreshAsync();
+        Assert.True(failed.Incomplete);
+        Assert.Empty(failed.Downloaded);
+        Assert.Equal("one", Content("gta-6"));
+        Assert.Null(Content("rdr-2"));
+        Directory.Delete(staging);
+
+        now += TimeSpan.FromSeconds(1);
+        var retried = await updater.RefreshAsync();
+        Assert.False(retried.Skipped);
+        Assert.Equal(["rdr-2"], retried.Downloaded);
     }
 
     [Fact]

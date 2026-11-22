@@ -173,6 +173,9 @@ public actor PackUpdater {
                     try FileManager.default.moveItem(at: temporary, to: file)
                 }
             } catch {
+                // A failed write is also an incomplete download: on a first install
+                // there is no -1 entry to force a retry if the check timestamp advances.
+                retry = true
                 try? FileManager.default.removeItem(at: temporary)
                 if let existing, onDisk != nil {
                     kept.append(Installed(id: existing.id, title: existing.title, version: -1, sha256: existing.sha256))

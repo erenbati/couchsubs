@@ -149,6 +149,7 @@ final class PackUpdaterTests: XCTestCase {
         let failed = await updater.refresh(force: true)
 
         XCTAssertEqual(failed.downloaded, [])
+        XCTAssertTrue(failed.incomplete, "Disk write failure should be shown as an incomplete update")
         XCTAssertEqual(content("gta-6"), Data("one".utf8))
         let retained = await updater.installed
         XCTAssertEqual(retained, [
@@ -160,6 +161,29 @@ final class PackUpdaterTests: XCTestCase {
         XCTAssertEqual(content("gta-6"), Data("two".utf8))
         let installedAfter = await updater.installed
         XCTAssertEqual(installedAfter.first?.version, 2)
+    }
+
+    func testFailedFirstDiskWriteReportsIncompleteAndRetriesImmediately() async throws {
+        server.add("gta-6", version: 1, data: Data("one".utf8))
+        let updater = makeUpdater()
+        _ = await updater.refresh()
+
+        server.add("rdr-2", version: 1, data: Data("two".utf8))
+        clock.advance(PackUpdater.refreshInterval + 1)
+        let staging = packs.appendingPathComponent(".rdr-2.download")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+        let failed = await updater.refresh()
+        XCTAssertTrue(failed.incomplete, "Disk failure must not count as a completed refresh")
+        XCTAssertTrue(failed.downloaded.isEmpty)
+        XCTAssertEqual(content("gta-6"), Data("one".utf8))
+        XCTAssertNil(content("rdr-2"))
+
+        // The updater may have removed the blocked staging directory on failure.
+        try? FileManager.default.removeItem(at: staging)
+        clock.advance(1)
+        let retried = await updater.refresh()
+        XCTAssertFalse(retried.skipped)
+        XCTAssertEqual(retried.downloaded, ["rdr-2"])
     }
 
     func testRemovedPackIsDeletedAndUnreachableServerKeepsPacks() async {

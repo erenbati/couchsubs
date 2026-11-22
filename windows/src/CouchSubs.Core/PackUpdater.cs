@@ -185,7 +185,11 @@ public sealed partial class PackUpdater : IDisposable
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException)
                 {
-                    try { File.Delete(temporary); } catch (IOException) { }
+                    // Even when this is a new pack, failed disk writes must remain
+                    // incomplete so the next refresh retries instead of waiting a day.
+                    retry = true;
+                    try { if (File.Exists(temporary)) File.Delete(temporary); }
+                    catch (Exception cleanupError) when (cleanupError is IOException or UnauthorizedAccessException) { }
                     if (existing is not null && onDisk is not null) kept.Add(existing with { Version = -1 });
                     continue;
                 }
