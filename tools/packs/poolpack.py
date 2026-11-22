@@ -201,7 +201,7 @@ def translate(rows, system, tag, out):
         # responses can silently overwrite an unrelated reviewed subtitle.
         valid = {f"{start + i}.{j}" for i, l in enumerate(chunk) for j in range(len(l["sents"]))}
         return {it["id"]: it["tr"].strip() for it in (res or {}).get("items", [])
-                if it["id"] in valid}
+                if it["id"] in valid and it["tr"].strip()}
 
     got = {}
     for attempt in range(2):
