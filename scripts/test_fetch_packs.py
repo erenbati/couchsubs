@@ -37,6 +37,35 @@ class FetchPacksTests(unittest.TestCase):
                 result = fetch_packs.main(["--require"])
             return result, existing.read_bytes(), original, list(target.iterdir())
 
+    def test_require_contrib_must_download_a_bundled_game_pack(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            targets = {"bundled/": root / "bundled", "contrib/": root / "contrib"}
+            cfg = {key: "test" for key in fetch_packs.KEYS}
+            def list_for(_cfg, prefix):
+                return [("contrib/example.json", 3)] if prefix == "contrib/" else []
+            with (patch.object(fetch_packs, "TARGETS", targets),
+                  patch.object(fetch_packs, "ROOT", root),
+                  patch.object(fetch_packs, "config", return_value=cfg),
+                  patch.object(fetch_packs, "list_keys", side_effect=list_for),
+                  patch.object(fetch_packs, "request", return_value=b"abc")):
+                result = fetch_packs.main(["--require", "--contrib"])
+            self.assertEqual(result, 1, "contribution downloads cannot satisfy a required game-pack release")
+            self.assertEqual((targets["contrib/"] / "example.json").read_bytes(), b"abc")
+
+    def test_require_does_not_count_unusable_bundled_metadata_as_a_game_pack(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "bundled"
+            cfg = {key: "test" for key in fetch_packs.KEYS}
+            with (patch.object(fetch_packs, "TARGETS", {"bundled/": target}),
+                  patch.object(fetch_packs, "ROOT", root),
+                  patch.object(fetch_packs, "config", return_value=cfg),
+                  patch.object(fetch_packs, "list_keys", return_value=[("bundled/notes.txt", 3)]),
+                  patch.object(fetch_packs, "request", return_value=b"abc")):
+                result = fetch_packs.main(["--require"])
+            self.assertEqual(result, 1, "only verified game archives satisfy --require")
+
     def test_corrupt_gzip_does_not_replace_working_pack(self):
         result, saved, original, files = self.download(b"broken archive")
         self.assertEqual(result, 1)

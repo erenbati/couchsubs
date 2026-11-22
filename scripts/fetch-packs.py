@@ -111,7 +111,7 @@ def main(argv):
         message = "paket kovasına erişim yok (PACKS_R2_* ya da ~/.config/couchsubs/packs.env); paketler indirilmedi"
         print(("✗ " if require else "! ") + message, file=sys.stderr)
         return 1 if require else 0
-    total = 0
+    bundled_archives = 0
     for prefix in prefixes:
         target = TARGETS[prefix]
         target.mkdir(parents=True, exist_ok=True)
@@ -145,10 +145,12 @@ def main(argv):
             temporary = dest.with_name("." + name + ".download")
             temporary.write_bytes(data)
             temporary.replace(dest)
-            total += 1
+            if prefix == "bundled/" and name.endswith(".json.gz"):
+                bundled_archives += 1
         print(f"✓ {prefix} → {target.relative_to(ROOT)} ({len(keys)} dosya)")
-    if require and total == 0:
-        print("✗ hiç paket inmedi", file=sys.stderr)
+    # Contributions or README-like metadata cannot satisfy a required app build.
+    if require and bundled_archives == 0:
+        print("✗ gerekli oyun paketi arşivi inmedi (bundled/*.json.gz)", file=sys.stderr)
         return 1
     return 0
 
