@@ -133,6 +133,11 @@ def main(argv):
             except urllib.error.URLError as error:
                 print(f"✗ {key} indirilemedi: {getattr(error, 'code', '') or error.__class__.__name__}", file=sys.stderr)
                 return 1
+            # The S3 listing advertises the exact object size. If the GET body
+            # differs, never replace the last good package with untrusted bytes.
+            if len(data) != _size:
+                print(f"✗ {key} boyut uyuşmazlığı: beklenen {_size}, gelen {len(data)}", file=sys.stderr)
+                return 1
             # A successful HTTP response does not guarantee a usable archive. Validate
             # bundled game packs before replacing an existing, working copy.
             if prefix == "bundled/" and name.endswith(".json.gz"):
