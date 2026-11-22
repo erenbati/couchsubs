@@ -36,7 +36,14 @@ def main():
         print("\n".join(sorted(found)))
         return
     catalog = json.loads(CATALOG.read_text())["strings"]
-    missing = sorted(k for k in found if k not in catalog or "tr" not in catalog[k].get("localizations", {}))
+    def has_turkish(key):
+        entry = catalog.get(key, {})
+        localization = entry.get("localizations", {}).get("tr", {})
+        text = localization.get("stringUnit", {}).get("value")
+        return isinstance(text, str) and bool(text.strip())
+
+    # An empty or incomplete tr record is not a usable translation.
+    missing = sorted(k for k in found if not has_turkish(k))
     if missing:
         print("Türkçesi eksik metinler:")
         print("\n".join("  " + k for k in missing))
