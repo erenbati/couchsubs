@@ -248,7 +248,9 @@ public final class SubtitlePipeline {
 
     /// Okuma çeviriyi beklemez; böylece çeviri sürerken gelen satırlar da yakalanır.
     /// `capturedAt`: karenin PS5 akışından geldiği an (`clock` ile aynı saat); verilmezse şimdi.
-    public func process(_ frame: CGImage, region: CropRegion, capturedAt: Int? = nil) async {
+    /// OCR başarısız olup kare atlandıysa true döner; yeni kare gelmediyse çağıran aynı kareyi yeniden deneyebilir.
+    @discardableResult
+    public func process(_ frame: CGImage, region: CropRegion, capturedAt: Int? = nil) async -> Bool {
         let captured = capturedAt ?? now()
         if !sawFrame {
             sawFrame = true
@@ -276,7 +278,7 @@ public final class SubtitlePipeline {
             phone = found
         }
         let handset = findsPhone ? phone : nil
-        guard session == startedSession else { return }
+        guard session == startedSession else { return false }
         var visible = lastOcrReading
         let plan = scheduler.plan(signature: signature)
         if case .read(let deep) = plan {
@@ -290,6 +292,7 @@ public final class SubtitlePipeline {
             } catch {
                 result = .failure(error)
                 if case ReadQueueError.timedOut(let ms) = error { log("okuma \(ms) ms'de bitmedi; kare atlandı") }
+                else { log("okuma başarısız; kare atlandı: \(error)") }
             }
             quiet.reads += 1
             switch result {
@@ -301,9 +304,15 @@ public final class SubtitlePipeline {
                 return
             }
             lastReadMs = now() - started
-            lastOcrReading = (try? result.get()) ?? .empty
-            visible = lastOcrReading
             onReadResult?(result.failure)
+            guard case .success(let reading) = result else {
+                // Başarısız okuma boş ekran kanıtı değildir. Zamanlayıcı bu kareyi zaten temel iz yapmış olabilir;
+                // sıfırlamak sonraki karede yeniden OCR dener ve mevcut altyazı durumu korunur.
+                scheduler.reset()
+                return true
+            }
+            lastOcrReading = reading
+            visible = reading
             scheduler.record(visible.text)
         }
         // Kumanda ipuçları ("R2 Swing") altyazı değildir; çevrilmez, yeri de altyazının yerine katılmaz.
@@ -465,6 +474,7 @@ public final class SubtitlePipeline {
                                        ("sabit satır (görev/HUD)", rows.lines),
                                        ("altyazı bloğu seçilmedi (sahne yazısı, menü ya da başka blok)", reading.lines)],
                      place: place)
+        return false
     }
 
     /// Sessizlik bekçisi (`SilenceWatch`): alanda konuşmaya benzeyen satır 10 sn okunup hiçbir şey gönderilmediyse

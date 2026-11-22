@@ -250,6 +250,8 @@ final class PhoneModel: ObservableObject {
     private var frameGate = FrameGate()
     /// Okuma sürerken atlanan son kare; okuma bitince okunur (bkz. `FrameGate.leave`).
     private var skippedFrame: (frame: CGImage, capturedAt: Int)?
+    /// OCR hatasında yeni kare gelmezse son kareyi yeniden okumak için bekleyen denemenin nesli.
+    private var failedFrameRetryGeneration = 0
     /// Çözücüden gelen son kare (ana iş parçacığında bekleyen en çok bir kare); çeviri sürerken var.
     private var frameMailbox: FrameMailbox<(frame: CGImage, capturedAt: Int)>?
     /// Takılan okuma bu kadar sürdüyse bırakılır, okuma yeni kuyrukta sürer (bkz. `ReadQueue.abandonStall`). Takılan okuma
@@ -1078,6 +1080,7 @@ final class PhoneModel: ObservableObject {
         let wasStreaming = sessionState == .streaming
         // Altyazı günlüğünde durumun türü ve kopmanın nedeni (Mac ile aynı satırlar).
         if state != sessionState {
+            failedFrameRetryGeneration &+= 1
             switch state {
             case .connecting: SubtitleLog.write("\(isXbox ? "Xbox" : "PS5"): bağlanıyor")
             case .streaming: SubtitleLog.write("\(isXbox ? "Xbox" : "PS5"): bağlandı")
@@ -1255,6 +1258,7 @@ final class PhoneModel: ObservableObject {
     /// Kare ana iş parçacığında kısa iş görür (önizleme, ek alanlar) ve hemen döner; altyazı okuması kapıdan geçerse kendi
     /// işinde beklenir. Eskiden kare işi okumayı bekliyordu; sonraki kareler de ayrı işlerde birikiyordu.
     private func handle(_ frame: CGImage, capturedAt: Int) {
+        failedFrameRetryGeneration &+= 1
         framePreview.image = frame
         subtitleOffTip.frameArrived(at: Date(), streaming: sessionState == .streaming)
         updateSubtitleOffTip()
@@ -1296,16 +1300,36 @@ final class PhoneModel: ObservableObject {
             var token = token
             var next = (frame: frame, capturedAt: capturedAt)
             while let model = self {
-                await pipeline.process(next.frame, region: model.settings.region, capturedAt: next.capturedAt)
+                let failedRead = await pipeline.process(next.frame, region: model.settings.region, capturedAt: next.capturedAt)
                 // Okuma sürerken atlanan son kare hemen okunur: altyazı belirirken gelen son kare atlanıp ardından kare
                 // gelmezse yeni satır okunmuyordu (GitHub #1019; Mac ve Windows ile aynı).
-                guard model.frameGate.leave(token), let skipped = model.skippedFrame else { return }
-                model.skippedFrame = nil
-                guard model.pipeline === pipeline, model.screenTextDetector?.inMenu != true,
-                      case .enter(let again) = model.frameGate.enter(now: SubtitleStabilizer.uptimeMs()) else { return }
-                token = again
-                next = skipped
+                guard model.frameGate.leave(token) else { return }
+                if let skipped = model.skippedFrame {
+                    model.skippedFrame = nil
+                    guard model.pipeline === pipeline, model.screenTextDetector?.inMenu != true,
+                          case .enter(let again) = model.frameGate.enter(now: SubtitleStabilizer.uptimeMs()) else { return }
+                    token = again
+                    next = skipped
+                    continue
+                }
+                guard failedRead, model.pipeline === pipeline, model.screenTextDetector?.inMenu != true,
+                      model.demoMode || model.sessionState == .streaming else { return }
+                model.retryFailedFrame(next.frame, capturedAt: next.capturedAt, pipeline: pipeline)
+                return
             }
+        }
+    }
+
+    /// Sabit ekranlarda Remote Play yeni kare göndermeyebilir; başarısız OCR karesini bir saniye sonra yeniden dene.
+    /// Yeni kare, oturum/hat değişikliği veya menü bu denemeyi geçersiz kılar.
+    private func retryFailedFrame(_ frame: CGImage, capturedAt: Int, pipeline: SubtitlePipeline) {
+        let generation = failedFrameRetryGeneration
+        Task { [weak self, weak pipeline] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, let pipeline, self.failedFrameRetryGeneration == generation,
+                  self.pipeline === pipeline, self.screenTextDetector?.inMenu != true,
+                  self.demoMode || self.sessionState == .streaming else { return }
+            self.handle(frame, capturedAt: capturedAt)
         }
     }
 

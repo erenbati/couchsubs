@@ -835,6 +835,8 @@ final class AppModel: ObservableObject {
     private var frameGate = FrameGate()
     /// Okuma sürerken atlanan son kare; okuma bitince okunur (bkz. `FrameGate.leave`).
     private var skippedFrame: (frame: CGImage, capturedAt: Int)?
+    /// OCR hatasında yeni kare gelmezse son kareyi yeniden okumak için bekleyen denemenin nesli.
+    private var failedFrameRetryGeneration = 0
     private var wakeObserver: NSObjectProtocol?
 
     // Oyun paketleri ve ortak havuz
@@ -2436,6 +2438,7 @@ final class AppModel: ObservableObject {
     /// Çeviri sürmüyorsa bir şey yapmaz (Windows: AppController.ToggleSubtitles).
     func toggleSubtitles() {
         guard isRunning else { return }
+        failedFrameRetryGeneration &+= 1
         subtitlesPaused.toggle()
         if subtitlesPaused {
             pipeline?.reset()
@@ -3076,6 +3079,7 @@ final class AppModel: ObservableObject {
         // Altyazı günlüğünde durumun türü ve kopmanın nedeni (adres ve ayrıntı remoteplay.log'da). Neden eskiden
         // yazılmıyordu; yalnız altyazi.log gönderen kullanıcının kopmaları teşhis edilemiyordu (GitHub #456).
         if state != sessionState {
+            failedFrameRetryGeneration &+= 1
             switch state {
             case .connecting: SubtitleLog.write("\(isXbox ? "Xbox" : "PS5"): bağlanıyor")
             case .streaming: SubtitleLog.write("\(isXbox ? "Xbox" : "PS5"): bağlandı")
@@ -3302,6 +3306,7 @@ final class AppModel: ObservableObject {
     }
 
     private func handle(_ frame: CGImage, capturedAt: Int) async {
+        failedFrameRetryGeneration &+= 1
         lastFrame = frame
         subtitleOffTip.frameArrived(at: Date(), streaming: sessionState == .streaming)
         updateSubtitleOffTip()
@@ -3344,15 +3349,35 @@ final class AppModel: ObservableObject {
         skippedFrame = nil
         var next = (frame: frame, capturedAt: capturedAt)
         while true {
-            await pipeline.process(next.frame, region: settings.region, capturedAt: next.capturedAt)
+            let failedRead = await pipeline.process(next.frame, region: settings.region, capturedAt: next.capturedAt)
             // Okuma sürerken atlanan son kare hemen okunur: pencere yakalaması değişmeyen ekranda kare göndermez; altyazı
             // belirirken gelen son kare atlanınca yeni satır kamera oynatılana dek okunmuyordu (GitHub #1019).
-            guard frameGate.leave(token), let skipped = skippedFrame else { return }
-            skippedFrame = nil
-            guard self.pipeline === pipeline, !subtitlesPaused, screenTextDetector?.inMenu != true,
-                  case .enter(let again) = frameGate.enter(now: SubtitleStabilizer.uptimeMs()) else { return }
-            token = again
-            next = skipped
+            guard frameGate.leave(token) else { return }
+            if let skipped = skippedFrame {
+                skippedFrame = nil
+                guard self.pipeline === pipeline, !subtitlesPaused, screenTextDetector?.inMenu != true,
+                      case .enter(let again) = frameGate.enter(now: SubtitleStabilizer.uptimeMs()) else { return }
+                token = again
+                next = skipped
+                continue
+            }
+            guard failedRead, self.pipeline === pipeline, !subtitlesPaused, screenTextDetector?.inMenu != true,
+                  demoMode || sessionState == .streaming else { return }
+            retryFailedFrame(next.frame, capturedAt: next.capturedAt, pipeline: pipeline)
+            return
+        }
+    }
+
+    /// Sabit ekranlarda Remote Play yeni kare göndermeyebilir; başarısız OCR karesini bir saniye sonra yeniden dene.
+    /// Yeni kare, duraklatma, oturum/hat değişikliği veya menü bu denemeyi geçersiz kılar.
+    private func retryFailedFrame(_ frame: CGImage, capturedAt: Int, pipeline: SubtitlePipeline) {
+        let generation = failedFrameRetryGeneration
+        Task { [weak self, weak pipeline] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, let pipeline, self.failedFrameRetryGeneration == generation,
+                  self.pipeline === pipeline, !self.subtitlesPaused, self.screenTextDetector?.inMenu != true,
+                  self.demoMode || self.sessionState == .streaming else { return }
+            await self.handle(frame, capturedAt: capturedAt)
         }
     }
 
