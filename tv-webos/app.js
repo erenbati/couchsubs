@@ -1961,7 +1961,11 @@
   // --- Sunucu bağlantısı (Server-Sent Events) ---
 
   function onEvent(name, handler) {
-    eventSource.addEventListener(name, function (e) {
+    var source = eventSource;
+    source.addEventListener(name, function (e) {
+      // Closed streams may still deliver callbacks already queued by old TV browsers.
+      // Never let an obsolete server replace a newer server's subtitle or state.
+      if (source !== eventSource) return;
       lastActivity = Date.now();
       var data;
       try {
@@ -2164,8 +2168,10 @@
     // bağlanamasa da bununla anlar ve "TV uygulamasını güncelle" der (GitHub #884, #891). 0.9.69'den eski TV
     // uygulamaları v göndermez; CouchSubs v'siz TV'yi eski sayar.
     eventSource = new EventSource(authenticatedUrl(address, '/events?v=' + APP_VERSION + (shownPort ? '&hdmi=' + shownPort : '')));
+    var source = eventSource;
     lastActivity = Date.now();
-    eventSource.onopen = function () {
+    source.onopen = function () {
+      if (source !== eventSource) return;
       lastActivity = Date.now();
       failures = 0;
       clearTimeout(pairingTimer);
@@ -2176,7 +2182,8 @@
       learnServer(address);
       restoreLastLine();
     };
-    eventSource.onerror = function () {
+    source.onerror = function () {
+      if (source !== eventSource) return;
       var failedGeneration = connectionGeneration;
       clearTimeout(pairingTimer);
       pairingTimer = setTimeout(function () { if (failedGeneration === connectionGeneration) connect(address); }, 5000);
@@ -2197,7 +2204,8 @@
     };
     // Bilgisayar 15 sn'de bir "ping" gönderir; gelmezse bağlantı yarı kopmuştur (bkz. watchConnection).
     linkId = null;
-    eventSource.addEventListener('ping', function () {
+    source.addEventListener('ping', function () {
+      if (source !== eventSource) return;
       lastActivity = Date.now();
       pingSeen = true;
       sendAck();
