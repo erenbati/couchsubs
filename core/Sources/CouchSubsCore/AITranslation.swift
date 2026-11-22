@@ -542,7 +542,7 @@ public enum AIRequest {
               let error = root["error"] as? [String: Any] else { return false }
         let code = (error["code"] as? String)?.lowercased()
         let type = (error["type"] as? String)?.lowercased()
-        if let code, ["insufficient_quota", "credit_balance_exhausted", "organization_spend_limit_exceeded",
+        if let code, ["insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "organization_spend_limit_exceeded",
                       "project_spend_limit_exceeded", "organization_usage_limit_exceeded"].contains(code) {
             return false
         }

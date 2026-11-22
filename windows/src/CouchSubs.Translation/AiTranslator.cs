@@ -359,7 +359,7 @@ public static class AiRequest
 
         var code = Field("code")?.ToLowerInvariant();
         var type = Field("type")?.ToLowerInvariant();
-        if (code is "insufficient_quota" or "credit_balance_exhausted" or "organization_spend_limit_exceeded"
+        if (code is "insufficient_quota" or "billing_hard_limit_reached" or "credit_balance_exhausted" or "organization_spend_limit_exceeded"
             or "project_spend_limit_exceeded" or "organization_usage_limit_exceeded") return false;
         return type == "rate_limit_error" || code is "slow_down" or "rate_limit_exceeded";
     }

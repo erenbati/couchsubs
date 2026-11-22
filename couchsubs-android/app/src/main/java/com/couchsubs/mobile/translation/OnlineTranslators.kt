@@ -941,7 +941,7 @@ object AiRequest {
         val code = error.optString("code").lowercase(Locale.ROOT)
         val type = error.optString("type").lowercase(Locale.ROOT)
         if (code in setOf(
-                "insufficient_quota", "credit_balance_exhausted", "organization_spend_limit_exceeded",
+                "insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "organization_spend_limit_exceeded",
                 "project_spend_limit_exceeded", "organization_usage_limit_exceeded"
             )) return false
         return type == "rate_limit_error" || code == "slow_down" || code == "rate_limit_exceeded"
