@@ -211,6 +211,41 @@ test("autopack must not publish an empty pack when an existing translation cache
   }
 });
 
+test("an empty but valid auto cache cannot overwrite a previously published working pack", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const existing = { id: "pool-genel", version: 4, title: GENERAL_TITLE, entries: 350, sha256: "a".repeat(64) };
+  const index = { packs: [existing] };
+  const originalBytes = new Uint8Array([31, 139, 8, 0]);
+  const stored = new Map([
+    ["auto/state.json", JSON.stringify({
+      night: "2026-11-20", queue: [{ titleId: GENERAL, game: null, lines: 350 }], translated: 0, done: [],
+    })],
+    // This is valid JSON and passes loadCache; previous corruption tests only covered malformed JSON.
+    ["auto/tr/GENEL.json", JSON.stringify({ lines: {}, skip: {}, fail: {} })],
+    ["index.json", JSON.stringify(index)],
+    ["packs/pool-genel.json.gz", originalBytes],
+  ]);
+  const writes = [];
+  const env = {
+    AI: {},
+    PACKS: {
+      get: async (name) => name === "auto/known-keys.bin"
+        ? { arrayBuffer: async () => new ArrayBuffer(0) }
+        : stored.has(name) ? { text: async () => stored.get(name) } : null,
+      put: async (name, bytes) => { writes.push(name); stored.set(name, bytes); },
+    },
+    DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) }) },
+  };
+
+  const result = await runAutopack(env, now);
+  assert.equal(result.phase, "build");
+  assert.equal(result.built, false, "an empty new version must not replace a working release");
+  assert.equal(result.preserved, true);
+  assert.equal(stored.get("packs/pool-genel.json.gz"), originalBytes);
+  assert.deepEqual(JSON.parse(stored.get("index.json")), index);
+  assert.ok(!writes.some((name) => name === "index.json" || name.startsWith("packs/")));
+});
+
 test("autopack waits rather than using a truncated manual-key index", async () => {
   const now = new Date("2026-11-20T04:00:00Z");
   const state = {

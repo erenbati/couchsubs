@@ -602,6 +602,10 @@ async function buildPack(env, job, cache, known) {
   const title = packTitle(job, packs);
   const { body, count } = packBody(id, title, cache, known, job.titleId === GENERAL ? null : job.titleId);
   const previous = packs.find((p) => p.id === id);
+  // A syntactically valid but empty translation cache (or lines filtered into
+  // segments only) can produce a pack clients reject: GamePack requires entries.
+  // Never replace an already published working pack with that empty result.
+  if (previous && count === 0) return { id, built: false, preserved: true, entries: count };
   if (!previous && count < MIN_LINES) return { id, built: false, entries: count };
   const contentSha = await sha256Hex(new TextEncoder().encode(body));
   if (previous && cache.contentSha === contentSha) {
