@@ -135,7 +135,14 @@ actor PackStore {
         for entry in manifest.packs {
             let file = packFile(entry.id)
             let old = previous?.packs.first { $0.id == entry.id }
-            let unchanged = old?.sha256 == entry.sha256 && manager.fileExists(atPath: file.path)
+            let unchanged: Bool
+            if old?.sha256 == entry.sha256, manager.fileExists(atPath: file.path),
+               let cached = try? Data(contentsOf: file) {
+                // The manifest can still match after the cached archive is corrupted or truncated.
+                unchanged = Self.sha256(cached) == entry.sha256.lowercased()
+            } else {
+                unchanged = false
+            }
             if unchanged {
                 saved.append(entry)
                 continue
