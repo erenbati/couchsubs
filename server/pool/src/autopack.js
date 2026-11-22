@@ -369,7 +369,23 @@ export async function collectBatches(env, cache) {
       if (!res.ok) { keep.push(b); continue; }
       status = await res.json();
     } catch { keep.push(b); continue; }
-    if (status?.processing_status !== "ended" || typeof status.results_url !== "string") { keep.push(b); continue; }
+    if (status?.processing_status !== "ended") { keep.push(b); continue; }
+    if (typeof status.results_url !== "string" || !status.results_url) {
+      // A terminal batch with all requests errored/expired/canceled cannot
+      // produce translations. Release its queue slot instead of polling forever.
+      // Preserve batches claiming successes: their result URL may be delayed.
+      const counts = status.request_counts;
+      const failures = [counts?.errored, counts?.expired, counts?.canceled];
+      const requested = Object.keys(b.reqs).length;
+      if (counts?.succeeded === 0 && counts?.processing === 0
+        && failures.every((count) => Number.isSafeInteger(count) && count >= 0)
+        && failures.reduce((sum, count) => sum + count, 0) === requested) {
+        failLines(cache, Object.values(b.reqs).flat());
+        continue;
+      }
+      keep.push(b);
+      continue;
+    }
     let text;
     try {
       const res = await fetch(status.results_url, { headers: claudeHeaders(env) });
