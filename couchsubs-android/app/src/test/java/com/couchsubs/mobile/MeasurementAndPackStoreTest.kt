@@ -173,6 +173,22 @@ class PackStoreTest {
     }
 
     @Test
+    fun manifestReplacementFailureIsReportedInsteadOfPretendingPacksWereSaved() {
+        val dir = Files.createTempDirectory("packs-state-blocked").toFile()
+        val state = File(dir, "packs.state")
+        assertTrue(state.mkdir())
+        File(state, "blocker").writeText("do not replace")
+
+        val server = FakeServer(listOf(remote("gta-v", gta)), mutableMapOf("gta-v" to gta))
+        val store = PackStore(dir, server)
+        assertThrows(java.io.IOException::class.java) { store.refresh() }
+
+        assertTrue(state.isDirectory)
+        assertEquals("do not replace", File(state, "blocker").readText())
+        assertTrue("failed manifest save must not look committed", store.installed().isEmpty())
+    }
+
+    @Test
     fun failedFirstDownloadRetriesWhileAnotherPackIsKept() {
         val dir = Files.createTempDirectory("packs").toFile()
         var now = 1_000L

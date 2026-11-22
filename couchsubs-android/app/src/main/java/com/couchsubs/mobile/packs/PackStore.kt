@@ -183,10 +183,15 @@ class PackStore(
             JSONObject().put("id", it.id).put("title", it.title).put("version", it.version).put("sha256", it.sha256)
         }))
         val temporary = File(directory, "$MANIFEST.tmp")
-        temporary.writeText(json.toString())
-        if (!temporary.renameTo(File(directory, MANIFEST))) {
-            File(directory, MANIFEST).delete()
-            temporary.renameTo(File(directory, MANIFEST))
+        try {
+            temporary.writeText(json.toString())
+            // The manifest is the only index of installed packs. Never delete
+            // the last good state before attempting the replacement, and do not
+            // report success when a filesystem move fails.
+            Files.move(temporary.toPath(), File(directory, MANIFEST).toPath(),
+                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } finally {
+            if (temporary.isFile) temporary.delete()
         }
     }
 }
