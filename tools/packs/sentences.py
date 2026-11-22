@@ -65,7 +65,8 @@ for i, k in enumerate(old_order):
         signed += 1
 assert signed == len(lengths) and pos == len(blooms)
 for ka, a in english.items():
-    sig = c.signature(a)
+    # Match the pack builder's GTA-specific short fuzzy signature threshold.
+    sig = c.signature(a, c.fuzzy_min_len(pack.get("title")))
     if sig:
         kept[int(ka, 16)] = sig
 
