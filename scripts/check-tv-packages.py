@@ -62,7 +62,19 @@ def problems(directory: Path, allow_missing=(), root: Path = ROOT) -> list:
     expected = source_versions(root)
     bundled = bundled_versions(directory)
     result = []
+    duplicates = set()
+    # Desktop release folders must contain one unambiguous installer per TV
+    # platform. The old glob loop silently kept only the lexicographically
+    # last file, so two different installers could pass version validation.
+    if not (directory / "tv-packages.properties").is_file():
+        for kind in expected:
+            names = sorted(path.name for path in directory.glob("*." + kind))
+            if len(names) > 1:
+                duplicates.add(kind)
+                result.append(f"{NAMES[kind]} paketinden birden fazla dosya var: {', '.join(names)}")
     for kind, want in expected.items():
+        if kind in duplicates:
+            continue
         have = bundled.get(kind)
         if have is None:
             if kind not in allow_missing:

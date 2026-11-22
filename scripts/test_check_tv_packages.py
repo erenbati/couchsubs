@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SOURCE = Path(__file__).with_name("check-tv-packages.py")
 spec = importlib.util.spec_from_file_location("check_tv_packages", SOURCE)
@@ -37,6 +38,23 @@ class TVPackageVersionTests(unittest.TestCase):
     def test_current_single_quoted_sources_still_work(self):
         self.assertEqual(self.sources('version="0.9.77" viewmodes="fullscreen"', "versionName '0.9.77'"),
                          {"ipk": "0.9.77", "wgt": "0.9.77", "apk": "0.9.77"})
+
+    def test_multiple_lg_packages_are_rejected_even_if_latest_version_matches(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            (folder / "com.couchsubs.tv_0.9.77_all.ipk").write_bytes(b"current")
+            (folder / "legacy_com.couchsubs.tv_0.9.77_all.ipk").write_bytes(b"ambiguous")
+            with patch.object(mod, "source_versions", return_value={"ipk": "0.9.77"}):
+                issues = mod.problems(folder)
+            self.assertEqual(len(issues), 1, issues)
+            self.assertIn("birden fazla", issues[0], "a release must not silently choose one of two TV installers")
+
+    def test_current_single_release_package_still_passes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            (folder / "com.couchsubs.tv_0.9.77_all.ipk").write_bytes(b"current")
+            with patch.object(mod, "source_versions", return_value={"ipk": "0.9.77"}):
+                self.assertEqual(mod.problems(folder), [])
 
 
 if __name__ == "__main__":
