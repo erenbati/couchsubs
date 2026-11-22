@@ -66,6 +66,8 @@ describe("GET /v1/packs", () => {
     ["invalid version", { version: "new" }],
     ["invalid size", { size: -1 }],
     ["invalid entry count", { entries: -1 }],
+    ["zero translations", { entries: 0 }],
+    ["empty archive size", { size: 0 }],
   ])("rejects invalid pack metadata (%s)", async (_label, changes) => {
     const entry = { ...index.packs[0], ...changes };
     const response = await call(get("/v1/packs"), { PACKS: indexBucket(JSON.stringify({ packs: [entry] })) }, new RateLimiter());
