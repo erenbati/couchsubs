@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: gradle
+    directories:
+      - /couchsubs-android
+      - /tv-android
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directories:
+      - /server/packs
+      - /server/pool
+      - /windows/xbox-bridge
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: nuget
+    directories:
+      - /linux/**
+      - /windows/**
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: pip
+    directory: /windows/ct2
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: swift
+    directories:
+      - /core
+      - /remoteplay
+      - /tools/frame-regression
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
