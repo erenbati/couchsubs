@@ -68,8 +68,14 @@ def run(start):
     # Like translation, review runs in parallel batches. Ignore model IDs from
     # other batches so a late/hallucinated correction cannot rewrite them.
     allowed = {iid for iid, _, _, _ in chunk}
-    return [fix for fix in (res or {}).get("fixes", [])
-            if isinstance(fix, dict) and fix.get("id") in allowed]
+    proposed = [fix for fix in (res or {}).get("fixes", [])
+                if isinstance(fix, dict) and fix.get("id") in allowed]
+    counts = {}
+    for fix in proposed:
+        counts[fix["id"]] = counts.get(fix["id"], 0) + 1
+    # A model may offer contradictory fixes for one ID. Reject all ambiguous
+    # corrections instead of silently applying whichever came last.
+    return [fix for fix in proposed if counts[fix["id"]] == 1]
 
 
 fixes = []
