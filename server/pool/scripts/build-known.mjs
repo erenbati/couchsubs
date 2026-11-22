@@ -20,6 +20,9 @@ for (const name of readdirSync(dir).filter((n) => n.endsWith(".json.gz") && !n.s
     keys.add(BigInt("0x" + k));
   }
 }
+// If the private packs were not fetched, emitting an empty file would silently
+// remove protection for manual translations after upload to R2.
+if (keys.size === 0) throw new Error("No manual subtitle keys found; refusing empty known-keys index");
 const list = BigUint64Array.from([...keys].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
 process.stderr.write(`${list.length} anahtar\n`);
 process.stdout.write(Buffer.from(list.buffer));

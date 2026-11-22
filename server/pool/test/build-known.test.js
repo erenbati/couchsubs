@@ -23,6 +23,47 @@ test("build-known uses its default pack directory on all platforms", { skip: !ha
   assert.deepStrictEqual(inferred, explicit);
 });
 
+test("build-known refuses to emit an empty index if private bundled packs were not downloaded", () => {
+  const dir = mkdtempSync(join(tmpdir(), "couchsubs-known-empty-"));
+  try {
+    writeFileSync(join(dir, "README.md"), "Manual packs must be fetched from private R2.");
+    assert.throws(() => execFileSync(process.execPath, [script, dir], {
+      stdio: ["ignore", "pipe", "pipe"],
+    }), "empty known-keys.bin would allow retranslation of manual pack entries");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("build-known refuses packs without subtitle keys", () => {
+  const dir = mkdtempSync(join(tmpdir(), "couchsubs-known-empty-pack-"));
+  try {
+    writeFileSync(join(dir, "test.json.gz"), gzipSync(JSON.stringify({
+      format: 2, id: "test", entries: {}, segments: {},
+    })));
+    assert.throws(() => execFileSync(process.execPath, [script, dir], {
+      stdio: ["ignore", "pipe", "pipe"],
+    }));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("build-known still emits actual manual keys", () => {
+  const dir = mkdtempSync(join(tmpdir(), "couchsubs-known-valid-"));
+  try {
+    writeFileSync(join(dir, "test.json.gz"), gzipSync(JSON.stringify({
+      format: 2, id: "test", entries: { "0000000000000001": "One" },
+      segments: { "0000000000000002": "Two" },
+    })));
+    const binary = execFileSync(process.execPath, [script, dir], { stdio: ["ignore", "pipe", "pipe"] });
+    assert.equal(binary.length, 16);
+    assert.deepEqual([...new BigUint64Array(binary.buffer, binary.byteOffset, 2)], [1n, 2n]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("build-known rejects non-64-bit manual keys rather than silently truncating them", () => {
   for (const invalid of ["10000000000000001", "1", "ghijklmnopqrstuv"]) {
     const dir = mkdtempSync(join(tmpdir(), "couchsubs-known-invalid-"));
