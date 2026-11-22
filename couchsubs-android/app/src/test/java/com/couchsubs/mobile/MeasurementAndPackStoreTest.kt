@@ -143,6 +143,36 @@ class PackStoreTest {
     }
 
     @Test
+    fun diskWriteFailureKeepsWorkingPackAndRetriesWithoutWaitingADay() {
+        val dir = Files.createTempDirectory("packs-write-fail").toFile()
+        var now = 1_000L
+        val server = FakeServer(listOf(remote("gta-v", gta)), mutableMapOf("gta-v" to gta))
+        val store = PackStore(dir, server, { now })
+        assertEquals(listOf("gta-v"), store.refresh().downloaded)
+
+        val updated = "updated-gta".toByteArray()
+        server.packs = listOf(remote("gta-v", updated, 2))
+        server.files["gta-v"] = updated
+        now += PackStore.REFRESH_INTERVAL_MS + 1
+        // Simulates a stale/locked staging path or a failed filesystem write.
+        val staging = File(dir, "gta-v.download")
+        assertTrue(staging.mkdir())
+        File(staging, "blocker").writeText("occupied")
+
+        val failed = store.refresh()
+        assertEquals(listOf("gta-v"), failed.failed)
+        assertTrue(failed.downloaded.isEmpty())
+        assertEquals("gta", File(dir, "gta-v.json.gz").readText())
+        assertEquals(-1L, store.installed().single().version)
+
+        assertTrue(staging.deleteRecursively())
+        now += 1_000L
+        val retry = store.refresh()
+        assertEquals(listOf("gta-v"), retry.downloaded)
+        assertEquals("updated-gta", File(dir, "gta-v.json.gz").readText())
+    }
+
+    @Test
     fun failedFirstDownloadRetriesWhileAnotherPackIsKept() {
         val dir = Files.createTempDirectory("packs").toFile()
         var now = 1_000L

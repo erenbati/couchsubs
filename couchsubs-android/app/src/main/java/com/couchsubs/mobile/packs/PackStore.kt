@@ -7,6 +7,8 @@ import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 
 /** Sunucudaki bir paket (server/packs: GET /v1/packs). */
@@ -127,10 +129,18 @@ class PackStore(
                 continue
             }
             val temporary = File(directory, "${pack.id}.download")
-            temporary.writeBytes(data)
-            if (!temporary.renameTo(file)) {
-                file.delete()
-                if (!temporary.renameTo(file)) throw IOException("cannot store ${pack.id}")
+            try {
+                temporary.writeBytes(data)
+                // A failed rename must never delete the last good package. The old
+                // renameTo fallback removed the installed pack before retrying.
+                Files.move(temporary.toPath(), file.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (error: IOException) {
+                if (temporary.isFile) temporary.delete()
+                retry = true
+                failed.add(pack.id)
+                if (existing != null && file.isFile) kept.add(existing.copy(version = -1))
+                continue
             }
             kept.add(Local(pack.id, pack.title, pack.version, pack.sha256.lowercase()))
             downloaded.add(pack.id)
