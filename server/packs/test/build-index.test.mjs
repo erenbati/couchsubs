@@ -25,6 +25,32 @@ describe("build-index.mjs", () => {
   });
 });
 
+it("refuses an empty release index when private pack archives were never downloaded", () => {
+  const dir = mkdtempSync(join(tmpdir(), "couchsubs-index-empty-"));
+  try {
+    writeFileSync(join(dir, "README.md"), "Packs are fetched separately from private R2.");
+    expect(() => execFileSync(process.execPath, [script, dir, "7"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    })).toThrow();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it("still builds an index for a valid local pack archive", () => {
+  const dir = mkdtempSync(join(tmpdir(), "couchsubs-index-valid-"));
+  try {
+    writeFileSync(join(dir, "sample-game.json.gz"), gzipSync(Buffer.from(JSON.stringify({
+      format: 2, id: "sample-game", title: "Sample Game", entries: { abc: "Example" },
+    }))));
+    const output = JSON.parse(execFileSync(process.execPath, [script, dir, "7"], { encoding: "utf8" }));
+    expect(output.packs).toHaveLength(1);
+    expect(output.packs[0]).toMatchObject({ id: "sample-game", entries: 1, version: 7 });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 it.each(["invalid", "-1", "1.5", "Infinity"])("refuses invalid pack index version %s", (version) => {
   expect(() => execFileSync(process.execPath, [script, defaultPacks, version], {
     encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
