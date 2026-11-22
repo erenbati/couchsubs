@@ -90,6 +90,8 @@ def main():
         lines.append(f"| {name} | {shown(b, lower)} | {shown(h, lower)} | {state} |")
     before, after = frame_failures(base), frame_failures(head)
     regressed = {k: v for k, v in after.items() if k not in before}
+    # An aggregate tie can hide a newly failing frame while another frame improves.
+    red |= bool(regressed)
     fixed = [k for k in before if k not in after]
     if regressed:
         lines += ["", f"**{base['core']} sürümünde geçip {head['core']} sürümünde kalan kareler:**"]
