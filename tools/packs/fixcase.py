@@ -1,9 +1,17 @@
 # Sentence-initial "I..." where Turkish needs "İ" (model lowercased/uppercased with ASCII rules).
 # Decides per word from word frequencies in the existing Turkish packs. Usage: fixcase.py <packs dir> <file.json>...
 import collections, gzip, json, os, re, sys
+# Legacy Windows terminal encodings (e.g. cp1254) cannot print the correction arrow.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
 freq = collections.Counter()
 for f in os.listdir(sys.argv[1]):
-    d = json.load(gzip.open(os.path.join(sys.argv[1], f)))
+    path = os.path.join(sys.argv[1], f)
+    if not f.endswith(".json.gz") or not os.path.isfile(path):
+        continue
+    d = json.load(gzip.open(path))
     for v in list(d["entries"].values()) + list(d.get("segments", {}).values()):
         for w in re.findall(r"\b[\wçğıöşü]+", v):
             if w[:1].islower():
