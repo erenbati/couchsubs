@@ -16,8 +16,13 @@ def inline(text: str) -> str:
     out = html.escape(text, quote=False)
     out = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", out)
     out = re.sub(r"`([^`]+)`", r"<code>\1</code>", out)
-    return re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)",
-                  lambda m: f'<a href="{html.escape(m.group(2))}">{m.group(1)}</a>', out)
+    # The text is HTML-escaped already; escaping the whole URL again would turn
+    # '&amp;' into '&amp;amp;' and break links with multiple query parameters.
+    def link(match):
+        href = match.group(2).replace('"', '&quot;').replace("'", '&#x27;')
+        return f'<a href="{href}">{match.group(1)}</a>'
+
+    return re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", link, out)
 
 
 def main(path: str) -> None:
