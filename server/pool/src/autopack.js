@@ -575,6 +575,11 @@ async function readIndex(env) {
       || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(pack.id) || ids.has(pack.id)) {
       throw new Error("autopack index invalid or duplicate pack ID");
     }
+    if (pack.r2Key !== undefined && (typeof pack.sha256 !== "string"
+      || !/^[a-f0-9]{64}$/i.test(pack.sha256)
+      || pack.r2Key !== `packs/${pack.id}/${pack.sha256}.json.gz`)) {
+      throw new Error("autopack index contains an invalid R2 pack key");
+    }
     ids.add(pack.id);
   }
   return index.packs;
@@ -611,7 +616,7 @@ async function buildPack(env, job, cache, known) {
   if (previous && cache.contentSha === contentSha) {
     // The index may outlive an R2 object removed independently.
     // An unchanged source hash is only enough when the published file exists.
-    const packKey = `packs/${id}.json.gz`;
+    const packKey = previous.r2Key ?? `packs/${id}.json.gz`;
     const published = env.PACKS.head
       ? await env.PACKS.head(packKey)
       : await env.PACKS.get(packKey);
@@ -619,17 +624,32 @@ async function buildPack(env, job, cache, known) {
   }
   const data = await gzip(body);
   const sha256 = await sha256Hex(data);
-  // Önce dosya, sonra liste: liste hiçbir zaman olmayan dosyayı göstermez.
-  await env.PACKS.put(`packs/${id}.json.gz`, data, {
-    httpMetadata: { contentType: "application/gzip" }, customMetadata: { sha256 },
-  });
+  const packKey = `packs/${id}/${sha256}.json.gz`;
+  const stableKey = `packs/${id}.json.gz`;
+  const metadata = { httpMetadata: { contentType: "application/gzip" }, customMetadata: { sha256 } };
+  // Önce değişmez anahtara yazılır. İndeks yazımı başarısızsa eski satır eski dosyayı göstermeye devam eder.
+  // İndeks yayınlandıktan sonra sabit anahtar eski uygulamalar için güncellenir.
+  if (previous?.sha256 === sha256 && previous.r2Key === packKey) {
+    // Önceki denemede indeks yazılmış, uyumluluk anahtarı yazılamamış olabilir; sürümü artırmadan onar.
+    await env.PACKS.put(packKey, data, metadata);
+    await env.PACKS.put(stableKey, data, metadata);
+    cache.contentSha = contentSha;
+    await putJson(env, cacheFile(job), cache);
+    return { id, built: false, unchanged: true, entries: count };
+  }
+  await env.PACKS.put(packKey, data, metadata);
   const fresh = await readIndex(env);
   const version = (fresh.find((p) => p.id === id)?.version ?? 0) + 1;
-  const entry = { id, title, version, sha256, size: data.length, entries: count, auto: true };
+  const entry = { id, title, version, sha256, size: data.length, entries: count, auto: true, r2Key: packKey };
   if (job.titleId) entry.titleId = job.titleId;
   else entry.game = job.gameKey;
   const list = fresh.filter((p) => p.id !== id).concat(entry).sort((a, b) => (a.id < b.id ? -1 : 1));
   await putJson(env, "index.json", { packs: list });
+  await env.PACKS.put(stableKey, data, metadata);
+  if (previous?.r2Key && previous.r2Key !== packKey && env.PACKS.delete) {
+    try { await env.PACKS.delete(previous.r2Key); }
+    catch (error) { console.error("autopack old pack cleanup failed", id, String(error?.message || error).slice(0, 200)); }
+  }
   cache.contentSha = contentSha;
   await putJson(env, cacheFile(job), cache);
   return { id, built: true, version, entries: count, size: data.length };

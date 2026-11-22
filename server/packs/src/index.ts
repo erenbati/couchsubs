@@ -36,19 +36,26 @@ export interface PackInfo {
   entries: number;
 }
 
+/** R2 anahtarı yalnız worker'lar arasında tutulur; indirme yanıtına eklenmez. */
+interface IndexedPack extends PackInfo {
+  r2Key?: string;
+}
+
 const PACK_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SHA256_HEX = /^[a-f0-9]{64}$/i;
 
 /** Bozuk indeks girdileri istemcilerin kurulu paket kayıtlarını kaybetmesine neden olabilir. */
-function validPack(value: unknown): value is PackInfo {
+function validPack(value: unknown): value is IndexedPack {
   if (!value || typeof value !== "object") return false;
   const pack = value as Record<string, unknown>;
+  const r2Key = pack.r2Key;
   return typeof pack.id === "string" && PACK_ID.test(pack.id)
     && typeof pack.title === "string" && pack.title.trim().length > 0
     && Number.isSafeInteger(pack.version) && (pack.version as number) >= 0
     && typeof pack.sha256 === "string" && SHA256_HEX.test(pack.sha256)
     && Number.isSafeInteger(pack.size) && (pack.size as number) >= 0
-    && Number.isSafeInteger(pack.entries) && (pack.entries as number) >= 0;
+    && Number.isSafeInteger(pack.entries) && (pack.entries as number) >= 0
+    && (r2Key === undefined || r2Key === `packs/${pack.id}/${pack.sha256}.json.gz`);
 }
 
 /** Bir IP'nin bir saatte indirebileceği paket dosyası. */
@@ -133,14 +140,14 @@ async function authorize(request: Request, url: URL, env: Env, now: number): Pro
   return json({ error: "forbidden" }, 403, { "cache-control": "no-store" });
 }
 
-async function readIndex(env: Env): Promise<PackInfo[] | null> {
+async function readIndex(env: Env): Promise<IndexedPack[] | null> {
   try {
     const object = await env.PACKS.get("index.json");
     if (!object) return null;
     const parsed = JSON.parse(await object.text()) as { packs?: unknown };
     if (!Array.isArray(parsed?.packs) || !parsed.packs.every(validPack)) return null;
     // Aynı kimliğin birden çok sürümü, istemcinin hangi paketi indireceğini belirsizleştirir.
-    if (new Set(parsed.packs.map((pack: PackInfo) => pack.id)).size !== parsed.packs.length) return null;
+    if (new Set(parsed.packs.map((pack: IndexedPack) => pack.id)).size !== parsed.packs.length) return null;
     return parsed.packs;
   } catch {
     return null;
@@ -151,12 +158,19 @@ async function list(env: Env): Promise<Response> {
   const packs = await readIndex(env);
   // Eksik/bozuk index başarıyla boş liste gibi gönderilirse istemciler kurulu paketleri silebilir.
   if (packs === null) return json({ error: "index_unavailable" }, 503, { "cache-control": "no-store" });
-  return json({ packs }, 200, { "cache-control": "public, max-age=300" });
+  // R2 yerleşimi iç alanıdır; API tüketicilerinin şeması değişmeden kalır.
+  const publicPacks = packs.map((pack) => {
+    const result = { ...pack };
+    delete result.r2Key;
+    return result;
+  });
+  return json({ packs: publicPacks }, 200, { "cache-control": "public, max-age=300" });
 }
 
 async function download(request: Request, env: Env, id: string, rate: RateLimiter, now: number): Promise<Response> {
   if (!PACK_ID.test(id)) return json({ error: "not_found" }, 404);
-  const object = await env.PACKS.get(`packs/${id}.json.gz`);
+  const indexed = (await readIndex(env))?.find((pack) => pack.id === id);
+  const object = await env.PACKS.get(indexed?.r2Key ?? `packs/${id}.json.gz`);
   if (!object || !object.body) return json({ error: "not_found" }, 404);
   const headers: Record<string, string> = {
     "content-type": "application/gzip",
