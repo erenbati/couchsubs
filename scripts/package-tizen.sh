@@ -31,8 +31,12 @@ print(ET.parse(sys.argv[1]).getroot().attrib["version"])
 PYEOF
 )
 mkdir -p "$DIST/tv-app"
-rm -f "$DIST"/tv-app/couchsubs-samsung_*.wgt
-"$PY" - "$OUT" "$DIST/tv-app/couchsubs-samsung_$VERSION.wgt" <<'PYEOF'
+TARGET="$DIST/tv-app/couchsubs-samsung_$VERSION.wgt"
+# Building directly into the release directory after deleting its old WGT
+# can destroy the last usable installer on a zip/write failure.
+STAGED=$(mktemp "$DIST/tv-app/.couchsubs-samsung-XXXXXX")
+trap 'rm -f "$STAGED"' EXIT
+"$PY" - "$OUT" "$STAGED" <<'PYEOF'
 import os, sys, zipfile
 src, dst = sys.argv[1], sys.argv[2]
 with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -41,7 +45,12 @@ with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as z:
             path = os.path.join(root, name)
             z.write(path, os.path.relpath(path, src).replace(os.sep, '/'))
 PYEOF
-echo "İmzasız paket: $DIST/tv-app/couchsubs-samsung_$VERSION.wgt"
+mv -f "$STAGED" "$TARGET"
+trap - EXIT
+for old in "$DIST"/tv-app/couchsubs-samsung_*.wgt; do
+  [ "$old" = "$TARGET" ] || rm -f "$old"
+done
+echo "İmzasız paket: $TARGET"
 if [ -n "$TIZEN_PROFILE" ]; then
   tizen package -t wgt -s "$TIZEN_PROFILE" -o "$DIST/tv-tizen" -- "$OUT"
   ls "$DIST"/tv-tizen/*.wgt
