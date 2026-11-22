@@ -91,7 +91,7 @@ def request(cfg, key="", query=None):
 
 def list_keys(cfg, prefix):
     ns = "{http://s3.amazonaws.com/doc/2006-03-01/}"
-    keys, token = [], None
+    keys, token, seen = [], None, set()
     while True:
         query = {"list-type": "2", "prefix": prefix}
         if token:
@@ -101,6 +101,9 @@ def list_keys(cfg, prefix):
         if tree.findtext(f"{ns}IsTruncated") != "true":
             return keys
         token = tree.findtext(f"{ns}NextContinuationToken")
+        if not token or token in seen:
+            raise ValueError("R2 listing has missing or repeated continuation token")
+        seen.add(token)
 
 
 def main(argv):
@@ -117,7 +120,7 @@ def main(argv):
         target.mkdir(parents=True, exist_ok=True)
         try:
             keys = list_keys(cfg, prefix)
-        except (urllib.error.URLError, ET.ParseError) as error:
+        except (urllib.error.URLError, ET.ParseError, ValueError) as error:
             print(f"✗ {prefix} listelenemedi: {getattr(error, 'code', '') or error.__class__.__name__}", file=sys.stderr)
             return 1
         for key, _size in keys:
