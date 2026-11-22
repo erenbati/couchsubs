@@ -525,10 +525,10 @@ async function loadKnown(env) {
   const object = await env.PACKS.get(KNOWN);
   if (!object) return null;
   const buffer = await object.arrayBuffer();
-  // Yarım kalmış dosya (8'in katı olmayan boyut) bozuktur: elle hazırlanan çevirileri korumak için beklenir. Sıralama
+  // Boş veya yarım kalmış dosya (8'in katı olmayan boyut) bozuktur: elle hazırlanan çevirileri korumak için beklenir. Sıralama
   // her tetiklemede taranmaz (650 bin anahtar, Free planın 10 ms CPU sınırını aşar); dosyayı scripts/build-known.mjs
   // sıralı ve tekrarsız üretir.
-  if (buffer.byteLength % 8 !== 0) return null;
+  if (buffer.byteLength === 0 || buffer.byteLength % 8 !== 0) return null;
   return new BigUint64Array(buffer);
 }
 

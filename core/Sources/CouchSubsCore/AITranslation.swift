@@ -537,10 +537,23 @@ public enum AIRequest {
     }
 
     /// Başarısız HTTP yanıtının anlamı. Gövde yalnız tanınan hata kodları için okunur, hiçbir yere yazılmaz.
+    private static func isTemporaryOpenAIRateLimit(_ body: Data) -> Bool {
+        guard let root = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let error = root["error"] as? [String: Any] else { return false }
+        let code = (error["code"] as? String)?.lowercased()
+        let type = (error["type"] as? String)?.lowercased()
+        if let code, ["insufficient_quota", "billing_hard_limit_reached", "credit_balance_exhausted", "organization_spend_limit_exceeded",
+                      "project_spend_limit_exceeded", "organization_usage_limit_exceeded"].contains(code) {
+            return false
+        }
+        return type == "rate_limit_error" || code == "slow_down" || code == "rate_limit_exceeded"
+    }
+
     public static func failure(status: Int, body: Data) -> AIFailure {
         let message = String(data: body, encoding: .utf8)?.lowercased() ?? ""
         switch status {
         case 401, 403: return .invalidKey
+        case 429 where isTemporaryOpenAIRateLimit(body): return .busy
         case 402, 429: return .quotaExceeded
         case 400:
             if message.contains("api_key_invalid") || message.contains("api key not valid") { return .invalidKey }
@@ -554,12 +567,14 @@ public enum AIRequest {
     }
 
     /// 429 yalnız dakikalık sınırdan geldiyse onun ayrıntısı; gün sınırı, bakiye ya da tanınmayan 429 için nil (bunlar
-    /// `quotaExceeded` olarak kullanıcıya gösterilir). Gemini'nin hata gövdesinde error.details[] içinde
+    /// `quotaExceeded` olarak kullanıcıya gösterilir). OpenAI'nin `rate_limit_error`/`slow_down` yanıtları kısa bekleme
+    /// olarak ele alınır. Gemini'nin hata gövdesinde error.details[] içinde
     /// google.rpc.QuotaFailure (violations[].quotaId, ör. "GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
     /// quotaValue "15") ve google.rpc.RetryInfo (retryDelay "37s") bulunur.
     public static func rateLimit(status: Int, body: Data) -> AIRateLimit? {
-        guard status == 429,
-              let root = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+        guard status == 429 else { return nil }
+        if isTemporaryOpenAIRateLimit(body) { return AIRateLimit() }
+        guard let root = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
               let details = (root["error"] as? [String: Any])?["details"] as? [[String: Any]] else { return nil }
         let violations = details.flatMap { $0["violations"] as? [[String: Any]] ?? [] }
         let ids = violations.compactMap { $0["quotaId"] as? String }

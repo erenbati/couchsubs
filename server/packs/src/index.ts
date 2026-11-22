@@ -53,8 +53,8 @@ function validPack(value: unknown): value is IndexedPack {
     && typeof pack.title === "string" && pack.title.trim().length > 0
     && Number.isSafeInteger(pack.version) && (pack.version as number) >= 0
     && typeof pack.sha256 === "string" && SHA256_HEX.test(pack.sha256)
-    && Number.isSafeInteger(pack.size) && (pack.size as number) >= 0
-    && Number.isSafeInteger(pack.entries) && (pack.entries as number) >= 0
+    && Number.isSafeInteger(pack.size) && (pack.size as number) > 0
+    && Number.isSafeInteger(pack.entries) && (pack.entries as number) > 0
     && (r2Key === undefined || r2Key === `packs/${pack.id}/${pack.sha256}.json.gz`);
 }
 
