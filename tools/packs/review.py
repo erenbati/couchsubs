@@ -4,6 +4,7 @@ import json, re, sys
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 import common as c, llm
+from atomic_json import dump_atomic
 from translate_rules import GLOSSARY, RULES
 
 game, src, out = sys.argv[1:4]
@@ -100,5 +101,5 @@ print("applied", len(applied), "vetoed", len(vetoed),
       {k: sum(1 for a in applied if a["why"] == k) for k in SCHEMA["properties"]["fixes"]["items"]["properties"]["why"]["enum"]})
 left = sum(1 for l in lines for j, en in enumerate(l["sents"]) if problems(en, l["tr"][j] or ""))
 print("auto flags left", left)
-json.dump(lines, open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=0)
-json.dump({"applied": applied, "vetoed": vetoed}, open(out + ".log.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+dump_atomic(lines, out, ensure_ascii=False, indent=0)
+dump_atomic({"applied": applied, "vetoed": vetoed}, out + ".log.json", ensure_ascii=False, indent=1)

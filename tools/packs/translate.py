@@ -5,6 +5,7 @@ import json, re, sys
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 import common as c, llm
+from atomic_json import dump_atomic
 
 game, srcs, out = sys.argv[1], sys.argv[2].split(","), sys.argv[3]
 
@@ -94,4 +95,4 @@ for i, l in enumerate(lines):
     l["tr"] = [got.get(f"{i}.{j}") for j in range(len(l["sents"]))]
 missing = sum(1 for l in lines for t in l["tr"] if not t)
 print("missing sentences", missing)
-json.dump(lines, open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=0)
+dump_atomic(lines, out, ensure_ascii=False, indent=0)
