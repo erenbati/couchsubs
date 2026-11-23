@@ -311,6 +311,39 @@ test("autopack preserves published translations when their R2 cache is missing",
   assert.deepEqual(JSON.parse(stored.get("auto/state.json")), state);
 });
 
+test("autopack defers a blocked published cache so other jobs still run", async () => {
+  const now = new Date("2026-11-20T04:00:00Z");
+  const head = { titleId: "PPSA11111", game: "First Game", lines: 350 };
+  const next = { titleId: "PPSA22222", game: "Second Game", lines: 350 };
+  const state = { night: "2026-11-20", queue: [head, next], translated: 0, done: [] };
+  const index = { packs: [{ id: "pool-ppsa11111", version: 4, entries: 350, sha256: "a".repeat(64) }] };
+  const stored = new Map([
+    ["auto/state.json", JSON.stringify(state)],
+    ["index.json", JSON.stringify(index)],
+  ]);
+  const writes = [];
+  const env = {
+    AI: {},
+    PACKS: {
+      get: async (name) => name === "auto/known-keys.bin"
+        ? { arrayBuffer: async () => new ArrayBuffer(8) }
+        : stored.has(name) ? { text: async () => stored.get(name) } : null,
+      put: async (name, value) => { writes.push(name); stored.set(name, value); },
+    },
+    DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [] }) }) }) },
+  };
+
+  const deferred = await runAutopack(env, now);
+  assert.equal(deferred.phase, "defer");
+  assert.deepEqual(JSON.parse(stored.get("auto/state.json")).queue.map((job) => job.titleId),
+    ["PPSA22222", "PPSA11111"]);
+  assert.deepEqual(writes, ["auto/state.json"], "published pack and its index must not be overwritten");
+  assert.deepEqual(JSON.parse(stored.get("index.json")), index);
+
+  const nextResult = await runAutopack(env, now);
+  assert.notEqual(nextResult.phase, "waiting", "the healthy second job must not starve");
+});
+
 test("general fallback is scheduled while a voted game has not published its first pack", async () => {
   const stored = new Map([["index.json", JSON.stringify({ packs: [] })]]);
   const env = {

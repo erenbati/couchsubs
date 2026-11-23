@@ -786,7 +786,17 @@ export async function runAutopack(env, now = new Date()) {
   const known = await loadKnown(env);
   if (!known) return { phase: "waiting", reason: "auto/known-keys.bin yok" };
   const cache = await loadCache(env, job);
-  if (!cache) return { phase: "waiting", reason: "auto/translation cache invalid" };
+  if (!cache) {
+    // A published pack must never be rebuilt from a missing or broken cache.
+    // Move the blocked job to the end so healthy games can still progress.
+    // When only this job remains, preserve the existing waiting behavior.
+    if (state.queue.length > 1) {
+      state.queue.push(state.queue.shift());
+      await putJson(env, STATE, state);
+      return { phase: "defer", titleId: job.titleId, reason: "auto/translation cache invalid" };
+    }
+    return { phase: "waiting", reason: "auto/translation cache invalid" };
+  }
   cache.fail ??= {};
   cache.batches ??= [];
   // Claude: önce bekleyen batch'lerden bitenleri topla (çeviri Batches ile gider, sonuç sonraki tetiklemelerde gelir).
