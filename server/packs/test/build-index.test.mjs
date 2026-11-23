@@ -41,7 +41,7 @@ it("still builds an index for a valid local pack archive", () => {
   const dir = mkdtempSync(join(tmpdir(), "couchsubs-index-valid-"));
   try {
     writeFileSync(join(dir, "sample-game.json.gz"), gzipSync(Buffer.from(JSON.stringify({
-      format: 2, id: "sample-game", title: "Sample Game", entries: { abc: "Example" },
+      format: 2, id: "sample-game", title: "Sample Game", entries: { "0123456789abcdef": "Example" },
     }))));
     const output = JSON.parse(execFileSync(process.execPath, [script, dir, "7"], { encoding: "utf8" }));
     expect(output.packs).toHaveLength(1);
