@@ -223,10 +223,13 @@ class LinePool(
             temporary.writeText(state.toString())
             if (!temporary.renameTo(file)) {
                 file.delete()
-                temporary.renameTo(file)
+                if (!temporary.renameTo(file)) throw IOException("Failed to replace line pool queue file")
             }
         } catch (error: IOException) {
+            // Keep pending changes dirty so the next save retries the failed write.
+            return
         } catch (error: JSONException) {
+            return
         }
         dirty = false
         lastSave = clock()
