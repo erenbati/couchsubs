@@ -35,14 +35,14 @@ class CoverageTests(unittest.TestCase):
     def test_speaker_label_still_matches(self):
         self.assertEqual(self.check(["Jason: Keep moving now.", "JASON: Keep moving now."]), 2)
 
-    def run_short_fuzzy(self, title):
+    def run_short_fuzzy(self, title, source="Stay inside", reading="Stay inslde"):
         # These are synthetic lines. OCR misreads the letter i as l.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             rows = root / "rows.jsonl"
-            rows.write_text(json.dumps({"text": "Stay inside"}) + "\n", encoding="utf-8")
+            rows.write_text(json.dumps({"text": source}) + "\n", encoding="utf-8")
             export = root / "pool.json"
-            export.write_text(json.dumps({"lines": [{"text": "Stay inslde"}]}), encoding="utf-8")
+            export.write_text(json.dumps({"lines": [{"text": reading}]}), encoding="utf-8")
             args = [sys.executable, "-B", str(SCRIPT), str(rows), str(export), "-", "--title", title]
             proc = subprocess.run(args, capture_output=True, text=True, encoding="utf-8")
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -50,6 +50,21 @@ class CoverageTests(unittest.TestCase):
 
     def test_gta_short_fuzzy_line_is_not_counted_as_missing(self):
         report = self.run_short_fuzzy("Grand Theft Auto VI")
+        self.assertIn("fuzzy>=0.6 1", report)
+        self.assertIn("miss 0", report)
+
+    def test_unsigned_source_cannot_count_as_generic_fuzzy_hit(self):
+        # Source folds to 14 characters; OCR text folds to 16.
+        # The generic pack builder does not generate a fuzzy signature for
+        # this source, so the offline coverage estimate must not count it.
+        report = self.run_short_fuzzy("Other Game", "Move to that room",
+                                      "Move to that roomss")
+        self.assertIn("fuzzy>=0.6 0", report)
+        self.assertIn("miss 1", report)
+
+    def test_same_source_can_be_signed_for_gta_short_fuzzy(self):
+        report = self.run_short_fuzzy("Grand Theft Auto VI", "Move to that room",
+                                      "Move to that roomss")
         self.assertIn("fuzzy>=0.6 1", report)
         self.assertIn("miss 0", report)
 

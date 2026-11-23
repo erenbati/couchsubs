@@ -17,7 +17,13 @@ for r in rows:
         k = c.key(s)
         if k:
             units[k] = s
-grams={k:set(''.join(c.folded(v))[i:i+3] for i in range(len(c.folded(v))-2)) for k,v in units.items()}
+# Only estimate fuzzy hits against source lines whose signatures would be
+# emitted by the actual pack builder. Shorter lines can still match exactly.
+grams={}
+for k, v in units.items():
+    fv = ''.join(c.folded(v))
+    if len(fv) >= fuzzy_min_len:
+        grams[k] = set(fv[i:i+3] for i in range(len(fv)-2))
 pool=json.load(open(args.pool, encoding="utf-8"))['lines']
 pool=[l for l in pool if re.search(pat,l['text'],re.I)] if pat!='-' else pool
 exact=fz=0; misses=[]
