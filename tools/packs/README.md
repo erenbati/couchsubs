@@ -5,6 +5,28 @@ Akış: `extract.py` (herkese açık kaynaktan İngilizce satırlar) → `poolfi
 düzeltme) → `translate.py` (Claude ile cümle cümle çeviri) → `review.py` ve `fixcase.py` (denetim) → `build.py`
 (biçim 2 paket: SHA-256 anahtarlar, parçalar, bulanık imzalar) → `coverage.py` (havuz satırlarıyla kapsam ölçümü).
 
+## GTA VI için yerel OCR anahtar analizi
+
+Telifli oyun dökümünü veya gerçek oyuncu OCR satırlarını depoya eklemeden, yerelde
+hazırlanan `rows.jsonl` (ör. onaylanırsa GTA VI çıkarma araçlarının çıktısı) ile
+yerel havuz dışa aktarımını karşılaştır:
+
+```sh
+python3 tools/packs/ocr_match_audit.py /yerel/rows.jsonl /yerel/pool.json --out /yerel/ocr-audit.json
+```
+
+`pool.json` biçimi `{"lines": [{"text": "..."}]}` ya da `wrangler d1 --json`
+sonucundaki `[{"success": true, "results": [...]}]` olabilir. Rapor **yalnızca sayım**
+üretir: kaynak satırları ve güvenli kategori sayıları, tam İngilizce anahtarı eşleşen
+OCR okumaları, `~INPUT_*`/`~BLIP_*` simgesi çıkarılınca anahtarı örtüşen şüpheli
+okumalar ve eşleşmeyen okumalar. `~1~` gibi değişken alanlar otomatik eşleşmiş
+sayılmaz. Serbest kaynak kategori değerleri rapora aynen yazılmaz.
+
+Bu bir **paket veya çalışma zamanı kapsamı garantisi değildir**: yalnız İngilizce
+anahtarları karşılaştırır; mevcut Türkçe çeviri, gerçek OCR simge yerleşimi, diğer
+paketlerle çakışma ve bulanık eşleşme koşulları bu raporda doğrulanmaz. Kaynak metin
+ve OCR satırlarının hiçbiri rapora kopyalanmaz; verileri ve raporu yerel tut.
+
 Anthropic anahtarı `~/.config/couchsubs/anthropic-key` dosyasından okunur; depoya konmaz. Harcama `ledger.jsonl`'a
 yazılır. Kaynaklar ve lisansları THIRD-PARTY-NOTICES.md'de.
 
