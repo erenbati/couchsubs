@@ -44,15 +44,16 @@ SCHEMA = {"type": "object", "properties": {"items": {"type": "array", "items": {
 def run(start):
     chunk = picked[start:start + 60]
     user = "Lines:\n" + "\n".join(f"{start + i}\t{p['raw']}" for i, p in enumerate(chunk))
-    return llm.call(SYSTEM, user, SCHEMA, "sm2-poolfix", max_tokens=16000)
+    return start, llm.call(SYSTEM, user, SCHEMA, "sm2-poolfix", max_tokens=16000)
 
 
 out = []
 with ThreadPoolExecutor(4) as ex:
-    for res in ex.map(run, range(0, len(picked), 60)):
+    for start, res in ex.map(run, range(0, len(picked), 60)):
         for it in (res or {}).get("items", []):
             i = it["id"]
-            if 0 <= i < len(picked) and it["keep"] and re.search(r"[A-Za-z]", it["english"]):
+            # An AI reply may hallucinate an ID belonging to another batch.
+            if start <= i < min(start + 60, len(picked)) and it["keep"] and re.search(r"[A-Za-z]", it["english"]):
                 out.append({"speaker": it["speaker"], "text": it["english"].strip(), "scene": "pool",
                             "raw": picked[i]["body"]})
 with open(sys.argv[3], "w") as f:
