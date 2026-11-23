@@ -40,6 +40,14 @@ class BuildPackTests(unittest.TestCase):
                 self.assertNotEqual(proc.returncode, 0, "a pack without full translations is rejected by clients")
                 self.assertIsNone(pack, "do not emit a zero-entry package")
 
+    def test_whitespace_only_translation_does_not_publish_partial_full_line(self):
+        for translations in (["Şimdi ayrılalım.", "   "], [" \t ", "Arkamda kal."]):
+            with self.subTest(translations=translations):
+                proc, pack = self.run_build(translations)
+                self.assertNotEqual(proc.returncode, 0,
+                    "whitespace-only sentence must not generate an incomplete full-line translation")
+                self.assertIsNone(pack, "do not publish a partial subtitle as if it were complete")
+
     def test_valid_aligned_subtitles_still_build(self):
         proc, pack = self.run_build(["Now we leave.", "Wait here."])
         self.assertEqual(proc.returncode, 0, proc.stderr)

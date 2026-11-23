@@ -32,7 +32,7 @@ for l in lines:
     # built from only one of them would publish incorrect subtitles.
     if not isinstance(l["tr"], list) or len(l["tr"]) != len(l["sents"]):
         raise SystemExit("reviewed subtitle has mismatched sentence and translation counts")
-    if not all(l["tr"]):
+    if not all(isinstance(t, str) and t.strip() for t in l["tr"]):
         continue
     whole = " ".join(t.strip() for t in l["tr"])
     # Türkçesi İngilizcesiyle aynı satırlar (adlar, ünlemler) parça olarak girer, tam satır olarak değil.
