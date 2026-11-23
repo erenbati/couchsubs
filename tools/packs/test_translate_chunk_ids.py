@@ -19,6 +19,7 @@ class TranslationChunkTests(unittest.TestCase):
             shutil.copy2(SOURCE, root / "translate.py")
             shutil.copy2(COMMON, root / "common.py")
             shutil.copy2(SOURCE.with_name("atomic_json.py"), root / "atomic_json.py")
+            shutil.copy2(SOURCE.with_name("translate_rules.py"), root / "translate_rules.py")
             (root / "llm.py").write_text(
                 'import re\n'
                 'def call(system, prompt, schema, tag, max_tokens):\n'
