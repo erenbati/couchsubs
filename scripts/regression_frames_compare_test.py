@@ -68,6 +68,17 @@ class RegressionFrameGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("phone subtitle", result.stdout)
 
+    def test_new_failure_reason_on_already_failing_frame_is_regression(self):
+        # Overall capture rates tie. The same frame already failed before,
+        # but a newly introduced false acceptance must still fail the gate.
+        base = summary("old", False, True)
+        head = summary("new", False, True)
+        head["frames"][0]["falseAccept"] = False
+        result = self.compare(base, head)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("first: yanlış kabul", result.stdout)
+
+
 
 if __name__ == "__main__":
     unittest.main()
