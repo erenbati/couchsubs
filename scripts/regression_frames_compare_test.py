@@ -48,6 +48,26 @@ class RegressionFrameGateTests(unittest.TestCase):
         result = self.compare(summary("old", True, False), summary("new", True, False))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_omitted_baseline_frame_fails_the_release_gate(self):
+        base = summary("old", True, True)
+        base["capture"] = {"passed": 2, "total": 2}
+        head = summary("new", True, True)
+        head["frames"] = [frame("first", True)]
+        head["capture"] = {"passed": 1, "total": 1}
+        result = self.compare(base, head)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("second", result.stdout)
+
+    def test_omitted_baseline_scenario_fails_the_release_gate(self):
+        base = summary("old", True, True)
+        base["capture"] = {"passed": 2, "total": 2}
+        base["scenarios"] = [{"name": "phone subtitle", "passed": True, "detail": "OK"}]
+        head = summary("new", True, True)
+        head["capture"] = {"passed": 2, "total": 2}
+        result = self.compare(base, head)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("phone subtitle", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
