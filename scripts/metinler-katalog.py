@@ -28,6 +28,8 @@ def rows():
             continue
         if len(cells) != 2:
             sys.exit(f"İki sütunlu olmayan satır: {line}")
+        if not cells[0] or not cells[1]:
+            sys.exit(f"Boş İngilizce ya da Türkçe metin: {line}")
         pairs.append((cells[0], cells[1]))
     return pairs
 
