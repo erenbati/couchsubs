@@ -147,6 +147,8 @@ def main(argv):
                             and isinstance(pack.get("entries"), dict) and pack["entries"]
                             and all(isinstance(v, str) and v.strip() for v in pack["entries"].values())
                             and isinstance(pack.get("segments", {}), dict)
+                            and all(isinstance(v, str) and v.strip()
+                                    for v in pack.get("segments", {}).values())
                             and pack.get("id", name.removesuffix(".json.gz")) == name.removesuffix(".json.gz")):
                         raise ValueError("invalid format-2 pack structure, ID or empty entries")
                 except (OSError, EOFError, UnicodeError, ValueError) as error:
