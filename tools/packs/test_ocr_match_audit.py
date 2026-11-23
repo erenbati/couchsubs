@@ -81,6 +81,24 @@ class OcrMatchAuditTests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertEqual(raw, '{"last_good": 1}\n')
 
+    def test_report_destination_cannot_overwrite_local_source_or_pool(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = root / "rows.jsonl"
+            pool = root / "pool.json"
+            for source in (rows, pool):
+                with self.subTest(source=source.name):
+                    rows.write_text(json.dumps({"text": "Keep moving now."}) + "\n",
+                                    encoding="utf-8")
+                    pool.write_text(json.dumps({"lines": [{"text": "Keep moving now."}]}),
+                                    encoding="utf-8")
+                    original = source.read_bytes()
+                    result = subprocess.run(
+                        [sys.executable, "-B", str(SCRIPT), str(rows), str(pool),
+                         "--out", str(source)], capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(source.read_bytes(), original)
+
     def test_valid_output_replaces_report_with_counts_only(self):
         rows = [{"text": "Keep moving now."}]
         pool = {"lines": [{"text": "Keep moving now."}]}

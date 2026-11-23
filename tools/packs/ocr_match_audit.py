@@ -127,6 +127,10 @@ def main():
     parser.add_argument("pool", help="local OCR pool JSON/D1 export, never uploaded")
     parser.add_argument("--out", help="write a counts-only JSON report atomically; default stdout")
     args = parser.parse_args()
+    if args.out:
+        destination = Path(args.out).resolve()
+        if destination in (Path(args.rows).resolve(), Path(args.pool).resolve()):
+            parser.error("report path must differ from the source rows and OCR pool")
     try:
         summary = audit(args.rows, args.pool)
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
