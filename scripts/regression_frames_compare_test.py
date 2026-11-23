@@ -68,6 +68,17 @@ class RegressionFrameGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("phone subtitle", result.stdout)
 
+    def test_missing_cover_measurement_for_covered_frame_fails_gate(self):
+        # Same frame IDs, captures and aggregate totals. A runner silently
+        # dropping coverage for one previously covered frame must not pass.
+        base = summary("old", True, True)
+        head = summary("new", True, True)
+        base["frames"][0]["coverage"] = 0.99
+        head["frames"][0].pop("coverage", None)
+        result = self.compare(base, head)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("kutu", result.stdout)
+
     def test_new_failure_reason_on_already_failing_frame_is_regression(self):
         # Overall capture rates tie. The same frame already failed before,
         # but a newly introduced false acceptance must still fail the gate.

@@ -80,7 +80,9 @@ def main():
             def covered(summary):
                 return {f["id"]: f["coverage"] >= 0.95 for f in summary["frames"] if f.get("coverage") is not None}
             cb, ch = covered(base), covered(head)
-            worse = any(ok and ch.get(i) is False for i, ok in cb.items())
+            # A previously measured frame losing its coverage result is
+            # an unverified release, not evidence that coverage stayed good.
+            worse = any(i not in ch or (ok and ch[i] is False) for i, ok in cb.items())
             better = any(not ok and ch.get(i) is True for i, ok in cb.items())
         else:
             worse = rate(h) < rate(b) - 1e-9
