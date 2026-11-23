@@ -55,6 +55,12 @@ class GameSenseTest {
         assertEquals("v rally", GameName.key("V-Rally"))
         assertEquals("mega man x 2", GameName.key("Mega Man X2"))
         assertEquals("gta 5", GameName.key("GTA V"))
+        assertEquals("gta 5 enhanced", GameName.key("Grand Theft Auto V Enhanced"))
+        assertEquals("gta 5 premium edition", GameName.key("GTA V Premium Edition"))
+        assertEquals("final fantasy 10 hd", GameName.key("Final Fantasy X HD"))
+        assertEquals("mega man x hd", GameName.key("Mega Man X HD"))
+        assertEquals("x men origins wolverine", GameName.key("X-Men Origins: Wolverine"))
+        assertEquals("v rally 4", GameName.key("V-Rally 4"))
         assertEquals("final fantasy 10", GameName.key("Final Fantasy X"))
         assertEquals("", GameName.key(""))
     }

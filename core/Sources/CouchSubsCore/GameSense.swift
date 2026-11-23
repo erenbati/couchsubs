@@ -198,11 +198,13 @@ public enum GameName {
             previous = character
         }
         let rawWords = text.split(separator: " ").map(String.init)
-        // V/X may be literal franchise names (X-Men, V-Rally, Mega Man X).
-        let literalMegaManX = rawWords == ["mega", "man", "x"]
+        // Preserve literal franchise letters but keep established Roman sequel keys.
+        let megaManX = rawWords.count >= 3 && Array(rawWords.prefix(3)) == ["mega", "man", "x"]
         var words = rawWords.enumerated().map { index, word in
-            if (word == "v" || word == "x") && (index != rawWords.count - 1 || literalMegaManX) { return word }
-            return roman[word] ?? word
+            let next = index + 1 < rawWords.count ? rawWords[index + 1] : ""
+            let literal = (word == "x" && ((megaManX && index == 2) || next == "men"))
+                || (word == "v" && next == "rally")
+            return literal ? word : (roman[word] ?? word)
         }
         if words.first == "the", words.count > 1 { words.removeFirst() }
         var joined = " " + words.joined(separator: " ") + " "

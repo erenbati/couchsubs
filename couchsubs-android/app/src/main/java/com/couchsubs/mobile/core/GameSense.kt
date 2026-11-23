@@ -198,10 +198,13 @@ object GameName {
             previous = cp
         }
         val rawWords = text.split(' ').filter { it.isNotEmpty() }
-        // V/X may be literal franchise names (X-Men, V-Rally, Mega Man X).
-        val literalMegaManX = rawWords == listOf("mega", "man", "x")
+        // Preserve literal franchise letters but keep established Roman sequel keys.
+        val megaManX = rawWords.take(3) == listOf("mega", "man", "x")
         var words = rawWords.mapIndexed { i, w ->
-            if ((w == "v" || w == "x") && (i != rawWords.lastIndex || literalMegaManX)) w else ROMAN[w] ?: w
+            val next = rawWords.getOrNull(i + 1)
+            val literal = (w == "x" && ((megaManX && i == 2) || next == "men")) ||
+                (w == "v" && next == "rally")
+            if (literal) w else ROMAN[w] ?: w
         }
         if (words.size > 1 && words.first() == "the") words = words.drop(1)
         var joined = " " + words.joinToString(" ") + " "

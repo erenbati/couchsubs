@@ -30,11 +30,14 @@ export function gameKey(value) {
   // "gta6" → "gta 6" (harf ve rakam ayrılır).
   t = t.replace(/(\p{L})(\p{N})/gu, "$1 $2").replace(/(\p{N})(\p{L})/gu, "$1 $2");
   const rawWords = t.split(" ").filter(Boolean);
-  // Single-letter V/X can be part of a franchise name (X-Men, V-Rally, Mega Man X).
-  // Treat them as sequel numbers only at the end, except for the literal Mega Man X title.
-  const literalMegaManX = rawWords.join(" ") === "mega man x";
-  let words = rawWords.map((w, i) =>
-    ((w === "v" || w === "x") && (i !== rawWords.length - 1 || literalMegaManX)) ? w : (ROMAN[w] ?? w));
+  // Preserve literal franchise letters without changing established sequel keys
+  // (e.g. GTA V Premium Edition and Final Fantasy X HD).
+  const megaManX = rawWords[0] === "mega" && rawWords[1] === "man" && rawWords[2] === "x";
+  let words = rawWords.map((w, i) => {
+    const literal = (w === "x" && ((megaManX && i === 2) || rawWords[i + 1] === "men"))
+      || (w === "v" && rawWords[i + 1] === "rally");
+    return literal ? w : (ROMAN[w] ?? w);
+  });
   if (words[0] === "the" && words.length > 1) words = words.slice(1);
   let joined = ` ${words.join(" ")} `;
   for (const [long, short] of ALIASES) joined = joined.split(` ${long} `).join(short ? ` ${short} ` : " ");
