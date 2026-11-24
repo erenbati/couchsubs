@@ -98,6 +98,32 @@ final class SettledTextTests: XCTestCase {
         }
     }
 
+    /// Atılan satır ekranda durdukça günlüğe nedeniyle bir kez düşer (Windows ve Android aynı).
+    func testSkippedLineIsNotedOnce() {
+        var settled = SettledText()
+        settled.settle("Yakin zamanda oynananlar", box: nil, target: true, shown: false, loose: true, at: 0)
+        XCTAssertEqual(settled.noteSkip("Yakin zamanda oynananlar"), "birebir aynı")
+        XCTAssertNil(settled.noteSkip("Yakin zamanda oynananlar"))
+        XCTAssertEqual(settled.noteSkip("Yakin zamanda oynananiar"), "gevşek eşleşme")
+        XCTAssertNil(settled.noteSkip("Yakin zamanda oynananiar"))
+        XCTAssertNil(settled.noteSkip("Completely different line"))
+        settled.observe([], at: 2000)
+        XCTAssertNil(settled.noteSkip("Yakin zamanda oynananlar"))
+    }
+
+    func testMissionLineReportsDroppedLine() {
+        var mission = MissionLine()
+        let line = TextLine("Find the hidden key", box: TextBox(left: 0.3, top: 0.8, right: 0.7, bottom: 0.85))
+        let area = TextBox(left: 0, top: 0, right: 1, bottom: 1)
+        _ = mission.observe([line], area: area, at: 0)
+        _ = mission.observe([line], area: area, at: 1000)
+        XCTAssertEqual(mission.dropped, [])
+        _ = mission.observe([], area: area, at: 3000)
+        XCTAssertEqual(mission.dropped, ["Find the hidden key"])
+        _ = mission.observe([], area: area, at: 3100)
+        XCTAssertEqual(mission.dropped, [])
+    }
+
     private var image: CGImage {
         CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!.makeImage()!
@@ -123,6 +149,8 @@ final class SettledTextTests: XCTestCase {
         XCTAssertEqual(translator.requested, [])
         XCTAssertEqual(sender.sent, [])
         XCTAssertFalse(log.contains { $0.contains("→ paket") }, log.joined(separator: "\n"))
+        // Atılan satırın yeniden okumaları sessiz kalmaz: nedeniyle günlüğe düşer, her okuma en çok bir kez döngü başına.
+        XCTAssertTrue(log.contains { $0.hasPrefix("düşen satır [SettledText] ") }, log.joined(separator: "\n"))
         for frame in vector.frames {
             let excerpt = SubtitleLog.excerpt(frame.text)
             let drops = log.filter { $0.contains(excerpt) && $0.contains("çevrilmedi") }

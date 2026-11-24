@@ -134,6 +134,8 @@ public final class SubtitlePipeline {
     /// bloğun bozuk okunmuş parçası çevrilmez, aynı satır değişmeyen ekranda yeniden işlenmez.
     private var settled = SettledText()
     private var mission = MissionLine()
+    /// Düşürülen ya da bekletilen satırın nedeni, sınırlı ve tekrarsız (`DropLog`).
+    private let drops: DropLog
     /// Görev satırının bölgesi değişti (nil: görev kalktı). Görev altyazıya girmez; bölgesi "auto-mission" ek alanı olarak
     /// kendi yerinde ve özgün stilinde gösterilir (bkz. `MissionLine`).
     public var onMissionChanged: ((CropRegion?) -> Void)?
@@ -168,6 +170,8 @@ public final class SubtitlePipeline {
     private var phoneLookedAt: Int?
     /// Son yazı tanımanın süresi (ms); kare değişmeyip okuma yeniden kullanılınca da o okumanın süresi geçerlidir.
     private var lastReadMs: Int?
+    /// Son yazı tanımanın süresi (ms): kare sıklığı okuma yavaşsa seyrekleşir (`FrameCadence`).
+    public var lastOcrMs: Int? { lastReadMs }
     /// İşlenen karenin okunması (satır kararlı olunca isteğe geçer).
     private var currentRead = ReadInfo(capturedAt: 0)
 
@@ -196,6 +200,9 @@ public final class SubtitlePipeline {
     public var skipsTurkish = true
     /// Hiçbir pakette bulunmayan kararlı satır (ortak havuz için).
     public var onPackMiss: ((String) -> Void)?
+    /// Altyazı alanındaki blok sahne yazısı sayılıp atıldı (`SceneText.reason`); telefon çevirisi kapalıyken telefon
+    /// listesi için ipucu (`GamePhoneHint`). Kararları değiştirmez.
+    public var onSceneTextDropped: ((String) -> Void)?
     /// Son gösterilen çevirinin nereden geldiği: "paket" ya da "motor" (günlük ve sayım için).
     public private(set) var lastOrigin: String?
     /// Bu hatta paketten gelen satır sayısı.
@@ -227,6 +234,7 @@ public final class SubtitlePipeline {
         self.now = clock
         self.stabilizer = SubtitleStabilizer(clock: clock)
         self.own = OwnSubtitles(clock: clock)
+        self.drops = DropLog(clock: clock)
         sessionStart = clock()
         quiet = QuietReads(since: sessionStart)
     }
@@ -343,6 +351,9 @@ public final class SubtitlePipeline {
             log(mission.region == nil ? "görev satırı kalktı" : "görev satırı kendi yerinde gösteriliyor")
             onMissionChanged?(mission.region)
         }
+        for line in mission.dropped {
+            drops.note("MissionLine", "\(MissionLine.settleMs / 1000) sn dolmadan kalktı, görev sayılmadı, çevrilmedi", line, log: onLog)
+        }
         var edge: [Reading] = []
         var sceneTexts: [String] = []
         var staleTexts: [String] = []
@@ -355,6 +366,7 @@ public final class SubtitlePipeline {
             sceneTexts += block.lines.map(\.text)
             if reason == InkTone.reason { darkBlocks.append(block) }
             self?.logSceneText(block.text, reason)
+            self?.onSceneTextDropped?(reason)
         }, notices: { edge.append($0.placed(in: place)) },
            age: { sticky.unchangedMs($0, at: readAt) }, stale: { staleTexts += $0.lines.map(\.text) })
         for block in darkBlocks where darkInkStyle.observe(block, in: place) {
@@ -596,7 +608,12 @@ public final class SubtitlePipeline {
     /// parçası, ya da kapanmayan parantezle bölünmüş çöp okuma (`OcrNoise.looksBracketGarbled`). Atılan satır günlüğe bir
     /// kez yazılır. Windows (QuietDrop) ve Android (quietDrop) aynı kuralları uygular.
     private func quietDrop(_ source: String, box: TextBox?) -> Bool {
-        if settled.isSettled(source) { return true }
+        if settled.isSettled(source) {
+            if let reason = settled.noteSkip(source) {
+                drops.note("SettledText", "karara bağlanmış satırla \(reason), yeniden işlenmedi", source, log: onLog)
+            }
+            return true
+        }
         let note: String
         let target = skipsTurkish && TurkishText.looksTurkish(source)
         if target {

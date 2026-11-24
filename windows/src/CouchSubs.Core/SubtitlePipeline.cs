@@ -205,12 +205,21 @@ public sealed class SubtitlePipeline(ITextReader reader, ITextTranslator transla
     public event Action<string>? PackMissed;
 
     /// <summary>
+    /// Altyazı yolu bir bloğu sahne yazısı sayıp attı (nedeni: <see cref="SceneText.Reason"/>). GTA 6 telefonu kapalıyken
+    /// telefon listesi böyle atılıyorsa kullanıcıya ipucu gösterilir (<see cref="GamePhoneHint"/>). Okuma iş parçacığında
+    /// çağrılır.
+    /// </summary>
+    public event Action<string>? OnSceneTextDropped;
+
+    /// <summary>
     /// Görev satırının bölgesi değişti (null: görev kalktı). Görev altyazıya girmez; bölgesi "auto-mission" ek alanı olarak
     /// kendi yerinde ve özgün stilinde gösterilir (bkz. <see cref="MissionLine"/>). Okuma iş parçacığında çağrılır.
     /// </summary>
     public event Action<CropRegion?>? MissionChanged;
 
     private readonly MissionLine mission = new();
+    /// <summary>Düşürülen ya da bekletilen satırın nedeni, sınırlı ve tekrarsız (<see cref="DropLog"/>).</summary>
+    private readonly DropLog drops = new(clock ?? DefaultClock);
     /// <summary>
     /// Ekranın kenarındaki bildirim kartlarının alanları değişti (boş: hiç yok). Bildirim altyazıya girmez; alanları
     /// "auto-notice-&lt;n&gt;" ek alanı olarak kendi yerinde ve özgün stilinde gösterilir (bkz. <see cref="ScreenNotices"/>).
@@ -430,6 +439,8 @@ public sealed class SubtitlePipeline(ITextReader reader, ITextTranslator transla
                 Write($"sabit satır: {SubtitleLog.Excerpt(row)} görev/HUD yazısı sayıldı, çevrilmiyor");
             missionMoved = mission.Observe(stickyRows.Removed, area, now());
             missionRegion = mission.Region;
+            foreach (var dropped in mission.Dropped)
+                drops.Note("MissionLine", $"{MissionLine.SettleMs / 1000} sn dolmadan kalktı, görev sayılmadı, çevrilmedi", dropped, Log);
         }
         if (missionMoved)
         {
@@ -452,6 +463,7 @@ public sealed class SubtitlePipeline(ITextReader reader, ITextTranslator transla
                                          {
                                              if (reason == InkTone.Reason) darkBlocks.Add(block);
                                              LogSceneText(block.Text, reason);
+                                             OnSceneTextDropped?.Invoke(reason);
                                          },
                                          block => edge.Add(block.PlacedIn(area)),
                                          line => stickyRows.UnchangedMs(line, readAt),
@@ -764,7 +776,11 @@ public sealed class SubtitlePipeline(ITextReader reader, ITextTranslator transla
     /// </summary>
     private bool QuietDrop(string source, TextBox? box)
     {
-        if (settled.IsSettled(source)) return true;
+        if (settled.IsSettled(source))
+        {
+            if (settled.NoteSkip(source) is { } reason) drops.Note("SettledText", $"karara bağlanmış satırla {reason}, yeniden işlenmedi", source, Log);
+            return true;
+        }
         string note;
         var target = SkipsTurkish && TurkishText.LooksTurkish(source);
         if (target)

@@ -108,6 +108,23 @@ public class ScreenMenuTests
         Assert.True(detector.InMenu);
     }
 
+    /// <summary>
+    /// Süresi dolan menünün alanları yazılar yerinde dursa da kalkar: menü çevirileri oyun menüden çıktıktan sonra TV'de
+    /// kalıyordu (#1198). RegionWatcher kalkan alana boş çeviri gönderir.
+    /// </summary>
+    [Fact]
+    public void ExpiredMenuDropsEveryMenuArea()
+    {
+        var detector = new ScreenTextDetector();
+        Run(detector, 0, 5000, _ => Wheel());
+        Assert.True(detector.InMenu);
+        var before = detector.Areas.Select(area => area.Id).ToHashSet();
+        Assert.Equal(10, before.Count);
+        Run(detector, 5100, 5600, _ => Wheel());
+        Assert.False(detector.InMenu);
+        Assert.DoesNotContain(detector.Areas, area => before.Contains(area.Id) || area.Menu);
+    }
+
     [Fact]
     public void NavigatingKeepsTheOtherBoxes()
     {

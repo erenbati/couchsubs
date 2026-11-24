@@ -84,6 +84,22 @@ class MenuScreenTextTest {
         assertTrue(detector.menu)
     }
 
+    /**
+     * #1198: menü durumu süresi dolup bitince menüde bulunan alanların hepsi kalkar (RegionWatcher çevirilerini TV'den
+     * kaldırır). Eskiden karoları yerinde duran alan menü alanı olarak yaşamaya devam ediyor, çevirisi ekranda kalıyordu.
+     */
+    @Test
+    fun expiredMenuDropsEveryMenuArea() {
+        val detector = ScreenTextDetector()
+        var areas = emptyList<ExtraArea>()
+        for (t in 0L..400L step 100) areas = detector.step(wheel(0), t)
+        val before = areas.map { it.id }.toSet()
+        assertTrue(before.isNotEmpty())
+        for (t in 500L..8000L step 100) areas = detector.step(wheel(0), t)
+        assertFalse(detector.menu)
+        assertTrue(areas.toString(), areas.none { it.id in before || it.menu })
+    }
+
     @Test
     fun shortLabelsOverASharpMovingSceneAreNotAMenu() {
         val detector = ScreenTextDetector()

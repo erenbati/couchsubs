@@ -74,4 +74,14 @@ class LocalAiTest {
         assertEquals(OnlineKeyState.MODEL_REJECTED, KeyCheck.aiSample(AiProvider.LOCAL, "", model, { _, _, _, _, _ -> 404 to "{}" }, server).first)
         assertEquals(OnlineKeyState.UNREACHABLE, KeyCheck.aiSample(AiProvider.LOCAL, "", model, Http.Default, null).first)
     }
+
+    /** Ekran çevirisi isteğinde yazı başına karakter bütçesi; küfür yumuşatılmaz (Mac ve Windows ile aynı). */
+    @org.junit.Test
+    fun screenRequestCarriesCharacterBudget() {
+        org.junit.Assert.assertEquals(listOf(4, 18, 29), AiRequest.screenLimits(listOf("MAP", "SET DESTINATION", "Keep an eye on the party.")))
+        val message = AiRequest.userMessage(listOf("MAP", "SET DESTINATION"), emptyList(), limits = listOf(4, 18))
+        org.junit.Assert.assertTrue(message.contains(AiRequest.LIMITS_NOTE + "\n[4,18]"))
+        org.junit.Assert.assertTrue(AiRequest.LIMITS_NOTE.contains("never censor or soften profanity"))
+        org.junit.Assert.assertFalse(AiRequest.userMessage(listOf("MAP"), emptyList()).contains(AiRequest.LIMITS_NOTE))
+    }
 }

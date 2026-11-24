@@ -661,6 +661,23 @@ final class SamsungInstaller {
         return readInstalledVersion(device)
     }
 
+    /// TV'deki durum (kurmadan): sürüm, kesin "CouchSubs yok" ya da bilinmiyor (liste okunamadı, aynı kimlikle başka
+    /// uygulama). TV'ye bağlanılamazsa hata. Telefonun sessiz sürüm denetimi "yok"u ayırmıyordu; TV'den silinen uygulama
+    /// telefonda "kurulu" kalıyordu (#1158).
+    func installedPresence() throws -> TVAppVersionCheck.Outcome {
+        let device = try connect()
+        defer { device.close() }
+        let version = readInstalledVersion(device)
+        return Self.presence(version: version, listRead: lastListRead,
+                             foreign: version != nil && SamsungDiagnostics.isForeign(lastListing))
+    }
+
+    /// `vd_applist` sonucundan durum: yalnız okunan listede CouchSubs yoksa "yok" (Android ile aynı kural).
+    static func presence(version: String?, listRead: Bool, foreign: Bool) -> TVAppVersionCheck.Outcome {
+        if let version { return foreign ? .unknown : .version(version) }
+        return listRead ? .missing : .unknown
+    }
+
     /// Kurulu TV uygulamasını geliştirici bağlantısıyla (sdb, `was_execute`) açar; arka plandaysa öne getirir (bekçi, bkz.
     /// `SamsungLauncher`; Mac ve Windows'taki samsung-open ile aynı). sdb izin sormaz, TV'de bildirim çıkarmaz.
     /// Geliştirici modu kapalıysa ya da Host PC IP başka cihazınsa false.

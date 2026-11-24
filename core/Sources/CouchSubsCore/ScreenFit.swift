@@ -173,8 +173,8 @@ public enum ScreenFit {
     }
 
     /// Önce yalnız yatay sıkıştırma bu orana kadar, sonra genişleme, en son `minSqueeze`'e kadar (TV ile aynı).
-    public static let firstSqueeze = 0.8
-    public static let minSqueeze = 0.7
+    public static let firstSqueeze = 0.9
+    public static let minSqueeze = 0.85
 
     /// Çeviriyi özgün yazının alanına yerleştirir. `measure`: yazının çizicinin kendi yazı tipiyle, sabit yazı boyunda
     /// genişliği (piksel). `room`: genişleyebileceği alan (piksel; yoksa kutunun kendisi). `rows`: özgün satır sayısı.

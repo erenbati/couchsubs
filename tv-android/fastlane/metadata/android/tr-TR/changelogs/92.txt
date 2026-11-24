@@ -1,0 +1,1 @@
+0.9.89: "Üstünde" seçiliyken çeviri İngilizce altyazının üstüne binmiyor; "Örtsün"de yazı boyu satırdan satıra değişmiyor, uzun çeviri küçülmeden bölünüyor.

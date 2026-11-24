@@ -13,13 +13,21 @@ final class HomeTicker: ObservableObject {
     @Published private(set) var fps = 0
     @Published private(set) var now = Date()
     @Published private(set) var delays: [Int] = []
+    private var imageAt: Int?
     private var lastCount = 0
     private var lastAt = Date()
     private var lastMetrics: LineMetrics?
 
     func tick(_ model: AppModel) {
         let date = Date()
-        if model.lastFrame !== image { image = model.lastFrame }
+        // Canlı önizleme: uygulama öndeyken her yenilemede, oyun oynanırken (arka planda) saniyede bir (hareket kapısıyla
+        // aynı kural; Windows GamePreview).
+        let ms = SubtitleStabilizer.uptimeMs()
+        if model.lastFrame !== image,
+           model.lastFrame == nil || PreviewCadence.due(now: ms, last: imageAt, active: NSApp.isActive) {
+            image = model.lastFrame
+            imageAt = ms
+        }
         let elapsed = date.timeIntervalSince(lastAt)
         if elapsed >= 1 {
             let value = model.isRunning ? Int((Double(model.frameCount - lastCount) / elapsed).rounded()) : 0

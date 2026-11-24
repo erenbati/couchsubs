@@ -162,6 +162,10 @@ public partial class MainView : UserControl
 
     private void OnShowCrash(object sender, RoutedEventArgs e) => Services.CrashWatch.ShowInExplorer();
 
+    private void OnEnableGamePhone(object sender, RoutedEventArgs e) => controller.EnableGamePhone();
+
+    private void OnDismissGamePhoneHint(object sender, RoutedEventArgs e) => controller.DismissGamePhoneHint();
+
     private void OnCopyCrash(object sender, RoutedEventArgs e)
     {
         if (Services.CrashWatch.CopySummary()) CrashCopyButton.Content = Localizer.Current["Copied"];

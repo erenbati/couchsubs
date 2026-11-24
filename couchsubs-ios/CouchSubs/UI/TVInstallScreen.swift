@@ -301,6 +301,8 @@ struct SamsungInstallSection: View {
         case .installFailed: TVText.errFailed
         case .foreignApp: TVText.foreignMessage
         }
+        // Kurulum bağlantısı reddedildi ("IP hatası", #1158): hangi menüde ne yapılacağı bu cihazın adresiyle tek satırda.
+        if failure.error == .unreachable { text += "\n\n" + TVText.hostPcSteps(phone ?? phoneAddress(near: nil) ?? "?") }
         if let detail = failure.detail, !detail.isEmpty { text += "\n\n" + TVText.details(detail) }
         if failure.error == .installFailed || failure.error == .certificateRejected { text += "\n\n" + TVText.maintenance }
         // TV'nin kendi "Samsung sunucusuna bağlanılamıyor (AS400)" uyarısı (Samsung 7 Series 2018, 21 Kas; Mac/Windows/Android ile aynı).

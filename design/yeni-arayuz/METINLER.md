@@ -67,6 +67,9 @@ Tuvalde küçük düzeltme olursa önce tuval dosyası okunur, sonra bu belge g�
 
 - **Reklam bandı** (`DSAdBand`): Ana Ekran, Geçmiş, Ayarlar ve diğer uygulama sayfalarının altında sabit (kenarlardan 24,
   alttan 16). Kurulum, açılış, oyun görüntüsü/yayın pencerelerinde **yok**. İçerik şimdilik yerel örnek; uzaktan liste sonra.
+  **Çeviri sürerken ve deneme modunda gizli**, çeviri durunca geri gelir (dört platformda aynı: Windows `AdBandPolicy`,
+  Mac `AdCatalog.bandVisible`, iPhone/Android `PromoPolicy.adBandVisible`). Masaüstünde şerit yumuşakça söner, cam alt çubuk
+  ve yeri kalır (düzen zıplamaz); telefonda çeviri ekranı ayrı sayfa olduğundan şerit yeri hiç ayrılmaz.
 - **Açılır reklam**: yalnız görsel (yazı/düğme yok); görselin oranına göre yatay ya da dikey açılır; tıklanınca bağlantı;
   köşede × ve küçük REKLAM etiketi. Günde en fazla 1; yalnız uygulama açılışında ya da çeviri durunca; çeviri sürerken,
   kurulumda ve görüntü penceresinde asla. Üçüncü taraf reklam ağı, izleme yok.

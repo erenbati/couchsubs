@@ -248,6 +248,22 @@ public sealed class DevModeInstaller(IRemoteShell shell, TimeSpan? pollInterval 
         "i=0; while [ -f " + AppInfoPath + " ] && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done";
 
     /// <summary>
+    /// TV'de açık com.couchsubs.tv'yi kapatır (ares-launch --close'un luna çağrısı) ve webOS'un süreci bırakması için kısa
+    /// bekler. beta.89 (LG): 0.9.81'den 0.9.84'e güncellenen TV'de appinfo.json 0.9.84 diyordu, açık uygulama ise 0.9.81'in
+    /// kodunu çalıştırmayı sürdürüyordu: kurulumdan sonra uygulama kapatılmıyordu, açma komutu açık uygulamayı yalnız öne
+    /// getiriyor (webOSRelaunch), sayfa diskten yeniden okunmuyordu. Mac, iPhone ve Android'deki komutla aynı.
+    /// </summary>
+    public const string CloseCommand =
+        "/usr/bin/luna-send-pub -n 1 'luna://com.webos.applicationManager/closeByAppId' '{\"id\":\"com.couchsubs.tv\"}'; sleep 2";
+
+    /// <summary>Uygulamayı kapatır; açık değilse ya da TV reddederse kurulum yine başarılıdır. TV'nin yanıtını döner.</summary>
+    public async Task<string> CloseAppAsync()
+    {
+        try { return (await SshAsync(CloseCommand)).Output.Trim(); }
+        catch (Exception error) when (error is not OperationCanceledException) { return error.Message; }
+    }
+
+    /// <summary>
     /// Paketi TV'ye yükler ve ares-install'un yaptığı gibi kurar: kurulum aboneliği TV "installed" ya da hata diyene kadar
     /// açık kalır, paket ancak bundan sonra silinir. Eskiden <c>luna-send -n 1</c> ilk yanıttan sonra çıkıyordu; abonelik
     /// kapanınca bazı webOS sürümleri kurulumu yarıda bırakıyor, biz de sürüm görünmeyince "boş alan" hatası veriyorduk.
@@ -284,6 +300,8 @@ public sealed class DevModeInstaller(IRemoteShell shell, TimeSpan? pollInterval 
             if (await InstalledVersionAsync() == version)
             {
                 await RemoveAsync(remote);
+                // Açık (eski) uygulama kapatılır; sonra açılan uygulama yeni sürümü diskten yükler (bkz. CloseCommand).
+                await CloseAppAsync();
                 return;
             }
             if (timer.Elapsed >= limit) break;

@@ -98,10 +98,14 @@
     return map;
   }
 
-  // Yalnız satır başındaki "Ad:" konuşanın renginde; cümle seçilen yazı renginde kalır (TV ile aynı).
+  // Yalnız satır başındaki "Ad:" konuşanın renginde; cümle seçilen yazı renginde kalır (TV ile aynı). Karakter Adı ›
+  // Tüm Satır (style.wholeLine): ad ve cümle, devam satırlarıyla birlikte sonraki konuşanın adına dek o renkte.
+  var wholeLine = false;
+
   function paint(el, text, map) {
     el.textContent = '';
     var lines = text.split('\n');
+    var running = null;
     for (var i = 0; i < lines.length; i++) {
       if (i > 0) el.appendChild(document.createTextNode('\n'));
       var found = null;
@@ -115,6 +119,14 @@
             length = name.length + mark[0].length;
           }
         }
+      }
+      if (wholeLine && found) running = map[found];
+      if (wholeLine && running) {
+        var whole = document.createElement('span');
+        whole.style.color = running;
+        whole.textContent = lines[i];
+        el.appendChild(whole);
+        continue;
       }
       if (!found) { el.appendChild(document.createTextNode(lines[i])); continue; }
       var span = document.createElement('span');
@@ -173,6 +185,7 @@
     color = typeof style.textHex === 'string' && /^#[0-9A-Fa-f]{6}$/.test(style.textHex) ? style.textHex
       : style.textColor === 'yellow' ? '#ffe135' : '#ffffff';
     bold = !!style.bold;
+    wholeLine = style.wholeLine === true;
     if (current) { line.style.color = color; line.className = 'on' + (bold ? ' bold' : ''); fit(line, 2); }
   }
 

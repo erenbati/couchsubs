@@ -194,7 +194,9 @@ struct PhoneSubtitlePreview: View {
             VStack(spacing: Mobile.Space.hair) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
                     (Text(verbatim: model.settings.showSpeakerNames ? line.who + ": " : "").foregroundColor(nameColor(line.who, index: index, style: style))
-                     + Text(verbatim: line.text).foregroundColor(SubtitlePalette.color(SubtitlePalette.textHex(style)) ?? .white))
+                     + Text(verbatim: line.text).foregroundColor(model.settings.speakerColors && style.nameColorMode == .line
+                                                                    ? nameColor(line.who, index: index, style: style)
+                                                                    : SubtitlePalette.color(SubtitlePalette.textHex(style)) ?? .white))
                         .font(.system(size: CGFloat(display) * 0.4, weight: style.bold ? .bold : .semibold))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, Mobile.Space.inline)
@@ -218,7 +220,7 @@ struct PhoneSubtitlePreview: View {
         switch model.settings.speakerColors ? style.nameColorMode : .text {
         case .text: return SubtitlePalette.color(SubtitlePalette.textHex(style)) ?? .white
         case .single: return SubtitlePalette.color(style.nameHex ?? SubtitlePalette.names[0].hex) ?? .dsAmber
-        case .speaker:
+        case .speaker, .line:
             let hex = style.characterColors[who.lowercased()] ?? SubtitlePalette.names[(index + 1) % SubtitlePalette.names.count].hex
             return SubtitlePalette.color(hex) ?? .dsAmber
         }
@@ -343,7 +345,7 @@ private struct AppearancePage: View {
         return SettingUnit(title: "Character Name",
                            hint: mode.wrappedValue == .text ? "The character name is shown in the same color as the text." : nil) {
             VStack(alignment: .leading, spacing: Mobile.Space.gap) {
-                DSTabs(selection: mode, items: [(NameColorMode.text, "Same as Text"), (.single, "Single Color"), (.speaker, "By Character")])
+                DSTabs(selection: mode, items: [(NameColorMode.text, "Same as Text"), (.single, "Single Color"), (.speaker, "By Character"), (.line, "Whole Line")])
                 switch mode.wrappedValue {
                 case .text:
                     EmptyView()
@@ -352,7 +354,7 @@ private struct AppearancePage: View {
                         update { $0.nameHex = swatch.hex }
                         model.sendTestSubtitle()
                     }
-                case .speaker:
+                case .speaker, .line:
                     CharacterColors()
                 }
             }
@@ -794,6 +796,7 @@ private struct ConsolePage: View {
             }
         }
         .buttonStyle(.plain)
+        if !model.isXbox && model.console != nil { ConsoleAddressTile() }
         if !model.isXbox { LoginPasscodeTile() }
         // Yalnız Xbox: uzaktan oynatmada Xbox sesi istemciye verip TV'yi susturabilir (PS5'te ses TV'de kalır).
         if model.isXbox {
@@ -823,6 +826,43 @@ private struct ConsolePage: View {
             }
         }
         DemoModeTile(path: $path)
+    }
+}
+
+/// Konsol ve Kaynak › "IP Adresi Gir": PS5'in yeni adresi elle yazılır (adres değişip PS5 ağda bulunamazsa; Mac
+/// ConsoleSettingsCard ve Android ile aynı). Kayıt korunur, bağlıysa yeni adresle yeniden bağlanılır.
+private struct ConsoleAddressTile: View {
+    @EnvironmentObject private var model: PhoneModel
+    @State private var entering = false
+    @State private var typed = ""
+    @State private var rejected = false
+
+    var body: some View {
+        Tile {
+            ListRow(symbol: "network", title: "PS5 and connection", detail: model.console?.host)
+            Button("Enter IP Address") { entering.toggle() }.buttonStyle(DSButtonStyle(kind: .secondary))
+            if entering {
+                DSFieldChrome {
+                    TextField("IP address, e.g. 192.168.1.20", text: $typed)
+                        .keyboardType(.numbersAndPunctuation).autocorrectionDisabled().textInputAutocapitalization(.never)
+                        .onChange(of: typed) { _ in rejected = false }
+                } trailing: {
+                    Button("Save") {
+                        rejected = !model.enterConsoleAddress(typed)
+                        if !rejected {
+                            entering = false
+                            typed = ""
+                        }
+                    }
+                    .font(Mobile.TypeScale.headline)
+                    .foregroundStyle(Mobile.Palette.accentText)
+                    .padding(.horizontal, Mobile.Space.gap)
+                    .frame(minHeight: Mobile.Control.icon)
+                    .disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if rejected { MobileNote(text: String(localized: "This is not a valid IP address. Type it like 192.168.1.20, without http:// or a port number.")) }
+            }
+        }
     }
 }
 

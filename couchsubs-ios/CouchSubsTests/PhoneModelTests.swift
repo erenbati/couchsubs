@@ -162,6 +162,24 @@ final class PhoneModelTests: XCTestCase {
         model.stop()
     }
 
+    /// #1158: uygulama TV'den silinince telefon onu "kurulu" gösteriyor, kurulum önerilmiyordu. TV "CouchSubs yok" deyince
+    /// kayıt silinir, ana ekran kurulumu önerir; başka TV'nin bildirimi kayda dokunmaz.
+    func testSamsungAppMissingForgetsTheInstalledRecord() async throws {
+        let model = makeModel()
+        await model.tvAppInstalled(brand: .samsung, host: "192.168.1.50", port: nil, version: "0.9.80")
+        XCTAssertEqual(model.installedTVApp?.version, "0.9.80")
+        XCTAssertTrue(SamsungAppKnowledge.shared.isKnown(host: "192.168.1.50"))
+        XCTAssertFalse(model.tvAppMissing)
+        model.samsungAppMissing(host: "192.168.1.99")
+        XCTAssertNotNil(model.installedTVApp)
+        model.samsungAppMissing(host: " 192.168.1.50 ")
+        XCTAssertNil(model.installedTVApp)
+        XCTAssertNil(defaults.data(forKey: StoreKey.tvAppInstalled))
+        XCTAssertFalse(SamsungAppKnowledge.shared.isKnown(host: "192.168.1.50"))
+        XCTAssertTrue(model.tvAppMissing)
+        model.stop()
+    }
+
     private func pairCall(_ method: String, _ model: PhoneModel, _ query: String = "") async throws -> (Int, [String: String]) {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(model.serverPort)/pair\(query)")!)
         request.httpMethod = method
@@ -425,9 +443,9 @@ final class PhoneModelTests: XCTestCase {
         XCTAssertEqual(model.settings.translationEngine, .free)
     }
 
-    /// "GTA 6'daki telefonu otomatik çevir": kapalı gelir; yalnız çeviri sürerken, ayar açıkken ve oyun GTA 6 iken izlenir.
+    /// "GTA 6'daki telefonu otomatik çevir": açık gelir (#1202); yalnız çeviri sürerken, ayar açıkken ve oyun GTA 6 iken izlenir.
     func testGamePhoneIsTrackedOnlyInGTA6WhenTurnedOn() {
-        XCTAssertFalse(UserSettings().autoReadGamePhone)
+        XCTAssertTrue(UserSettings().autoReadGamePhone)
         XCTAssertTrue(PhoneModel.tracksGamePhone(running: true, enabled: true, game: "Grand Theft Auto VI"))
         XCTAssertTrue(PhoneModel.tracksGamePhone(running: true, enabled: true, game: "GTA 6"))
         XCTAssertFalse(PhoneModel.tracksGamePhone(running: true, enabled: false, game: "GTA 6"))
@@ -568,5 +586,17 @@ final class TVRelocationTests: XCTestCase {
         let moved = await model.relocateForInstall(host: old, brand: .lg)
         XCTAssertEqual(moved, new)
         XCTAssertEqual(model.tv?.host, new)
+    }
+
+    /// Ayarlar'da "IP Adresi Gir": PS5'in yeni adresi elle yazılır; kayıt korunur, geçersiz adres reddedilir.
+    func testEnteredConsoleAddressMovesTheRegisteredPS5() async throws {
+        let model = makeModel()
+        XCTAssertFalse(model.enterConsoleAddress("192.168.1.44"), "kayıtlı PS5 yokken adres yazılmaz")
+        try await model.register(host: "192.168.1.20", pin: "12345678")
+        XCTAssertFalse(model.enterConsoleAddress("192.168.1.300"))
+        XCTAssertEqual(model.console?.host, "192.168.1.20")
+        XCTAssertTrue(model.enterConsoleAddress(" 192.168.1.44 "))
+        XCTAssertEqual(model.console?.host, "192.168.1.44")
+        XCTAssertEqual(model.console?.name, "PS5")
     }
 }

@@ -23,6 +23,8 @@ public static class TvAppMessages
 
     /// <summary>Samsung bağlantı hatalarında Host PC IP'ye yazılacak adres.</summary>
     public const string ComputerAddressLine = "This computer's address (Host PC IP): %@";
+    /// <summary>Samsung kurulum bağlantısı reddedilince ("IP hatası", #1158): menü, iki ayar ve bu cihazın adresi tek satırda.</summary>
+    public const string HostPcStepsLine = "On the TV: Apps › press 1 2 3 4 5 › Developer mode On, Host PC IP = this device's IP (%@), then restart the TV.";
     /// <summary>Bu bilgisayarın Host PC IP için gösterilenden başka ev ağı adresleri varsa (Wi-Fi ve Ethernet ikisi de bağlı).</summary>
     public const string OtherAddressesLine = "If the TV does not accept this address, try one of this computer's other addresses: %@";
 
@@ -61,6 +63,8 @@ public static class TvAppMessages
         var result = text[Key(error, brand)];
         if (samsung && error == DevModeError.Unreachable && !string.IsNullOrWhiteSpace(computerAddress))
             result += "\n\n" + text.Format(ComputerAddressLine, computerAddress);
+        if (samsung && error == DevModeError.Unreachable)
+            result += "\n\n" + text.Format(HostPcStepsLine, string.IsNullOrWhiteSpace(computerAddress) ? "?" : computerAddress);
         if (state.Reason is { } reason)
             result += $"\n\n{text[samsung ? "Details:" : "TV says:"]} {reason}";
         if (!samsung) return result + "\n\n" + text.Format(SendLogLine, samsungLog);

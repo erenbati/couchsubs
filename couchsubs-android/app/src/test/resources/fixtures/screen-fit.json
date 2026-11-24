@@ -457,14 +457,14 @@
   {
    "align": "right",
    "expect": {
-    "left": 96,
+    "left": 83,
     "lines": [
      "HEDEF BELİRLE"
     ],
-    "squeeze": 0.8,
-    "width": 104
+    "squeeze": 0.9,
+    "width": 117
    },
-   "id": "sığmayan sağa yaslı etiket sola genişler",
+   "id": "sığmayan sağa yaslı etiket sola genişler, en çok %10 sıkışır",
    "left": 100,
    "room": [
     20,
@@ -482,10 +482,10 @@
      "bir iki üç dört",
      "beş altı yedi sekiz"
     ],
-    "squeeze": 0.7,
+    "squeeze": 0.85,
     "width": 120
    },
-   "id": "iki satırlık açıklama, alan yok: en çok sıkıştırma",
+   "id": "iki satırlık açıklama, alan yok: sıkıştırma en çok %15 (hafif)",
    "left": 0,
    "room": null,
    "rows": 2,
@@ -511,6 +511,26 @@
    "rows": 1,
    "text": "ÖZET",
    "width": 60
+  },
+  {
+   "align": "center",
+   "expect": {
+    "left": 0,
+    "lines": [
+     "sen bunu bilmiyorsun ama ben biliyorum"
+    ],
+    "squeeze": 0.9,
+    "width": 342
+   },
+   "id": "uzun tek satır, alan var: genişler, sıkıştırma en çok %10",
+   "left": 50,
+   "room": [
+    0,
+    640
+   ],
+   "rows": 1,
+   "text": "sen bunu bilmiyorsun ama ben biliyorum",
+   "width": 200
   }
  ],
  "linesNote": "ScreenFit.lines (çizicilerin ortak satır yerleşimi): ölçü her harf 10 piksel; left/width/room piksel.",

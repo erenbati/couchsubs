@@ -37,7 +37,12 @@ struct SettledText {
         /// "I can do" → "I can't do", yeniden çevrilir).
         let loose: Bool
         var seenAt: Int
+        /// Bu kayıt yüzünden atıldığı günlüğe yazılmış okumalar (`noteSkip`): satır ekranda durdukça her biri bir kez.
+        var noted: [String] = []
     }
+
+    /// Bir kaydın yüzünden atılan en çok bu kadar farklı okuma günlüğe yazılır (yazı tanımanın titrediği satır gürültü yapmasın).
+    static let notesPerEntry = 4
 
     private(set) var entries: [Entry] = []
 
@@ -68,6 +73,19 @@ struct SettledText {
         let text = TextMatch.normalize(source)
         guard text.count >= Self.minLength else { return false }
         return entries.contains { $0.text == text || ($0.loose && TextMatch.isSimilar(text, $0.text, threshold: Self.similarity)) }
+    }
+
+    /// Karara bağlanmış satır yüzünden sessizce atılan okumanın günlükteki nedeni ("birebir aynı" ya da "gevşek eşleşme").
+    /// Aynı okuma, kaydı ekranda durdukça yalnız ilk soruluşunda döner; sonra nil (günlük her karede dolmasın). Kullanıcı
+    /// günlüğünde çevrilmeyen satırın neden çevrilmediği görünsün diye. Windows (NoteSkip) ve Android (noteSkip) aynı.
+    mutating func noteSkip(_ source: String) -> String? {
+        let text = TextMatch.normalize(source)
+        guard text.count >= Self.minLength else { return nil }
+        let index = entries.lastIndex { $0.text == text }
+            ?? entries.lastIndex { $0.loose && TextMatch.isSimilar(text, $0.text, threshold: Self.similarity) }
+        guard let index, !entries[index].noted.contains(text), entries[index].noted.count < Self.notesPerEntry else { return nil }
+        entries[index].noted.append(text)
+        return entries[index].text == text ? "birebir aynı" : "gevşek eşleşme"
     }
 
     /// Satır, aynı yerde duran ve kaynağı zaten hedef dilde olan bir bloğun bozuk okunmuş parçası mı ("One [Ikan Ipufl"

@@ -38,7 +38,7 @@ class SubtitleServerTest {
         assertEquals("event: clear\ndata: {}\n\n", SubtitleServer.clearFrame())
         assertEquals(
             "event: style\ndata: {\"background\":90,\"backgroundColor\":\"#101014\",\"backgroundShape\":\"fit\",\"bold\":false,\"bottomPercent\":7,\"displayMode\":\"inApp\",\"fontSize\":46," +
-                "\"nameOnly\":false,\"placement\":\"cover\",\"setApart\":true,\"stackPrevious\":true,\"textColor\":\"white\"}\n\n",
+                "\"nameOnly\":false,\"placement\":\"cover\",\"setApart\":true,\"stackPrevious\":true,\"textColor\":\"white\",\"wholeLine\":false}\n\n",
             SubtitleServer.styleFrame(SubtitleStyle()),
         )
         assertTrue(SubtitleServer.styleFrame(SubtitleStyle(displayMode = TvDisplayMode.OVERLAY, textColor = SubtitleTextColor.YELLOW))
@@ -150,6 +150,82 @@ class SubtitleServerTest {
             Thread.sleep(10)
         }
         return true
+    }
+
+    /** TV akışını açar ve `link`'ten sonraki olayları (ad, veri) sırayla okuyan işlev döner. */
+    private fun tvEvents(port: Int, sockets: MutableList<Socket>): () -> Pair<String, String> {
+        val socket = Socket("127.0.0.1", port)
+        sockets.add(socket)
+        socket.soTimeout = 5000
+        socket.getOutputStream().write("GET /events?v=0.9.76 HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray())
+        val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+        while (reader.readLine() != "event: link") Unit
+        reader.readLine()
+        return {
+            var name = ""
+            var data = ""
+            while (true) {
+                val line = reader.readLine() ?: break
+                if (line.startsWith("event: ")) name = line.removePrefix("event: ")
+                else if (line.startsWith("data: ")) data = line.removePrefix("data: ")
+                else if (line.isEmpty() && name.isNotEmpty()) break
+            }
+            name to data
+        }
+    }
+
+    /**
+     * #1198: yeni bağlanan TV önce gösterilen alanların listesini (`region-sync`; listede olmayanları kaldırır), sonra
+     * her alanı `keep` bayrağıyla alır. Kopukken kaçan boşaltma olayı yüzünden çeviri ekranda kalıyordu.
+     */
+    @Test
+    fun newStreamGetsLiveRegionsWithSync() {
+        val server = SubtitleServer(0)
+        val port = server.start()
+        val sockets = mutableListOf<Socket>()
+        try {
+            server.sendRegion("q", "Selam", TextBox(0.1, 0.1, 0.3, 0.2), 0.03)
+            server.sendRegion("game-phone", "Mesaj", null, null)
+            server.sendRegion("bos", "Gitti", null, null)
+            server.sendRegion("bos", "", null, null)
+            val next = tvEvents(port, sockets)
+            assertEquals("region-sync" to "{\"ids\":[\"game-phone\",\"q\"]}", next())
+            val phone = next()
+            assertEquals("region", phone.first)
+            assertTrue(phone.second, phone.second.contains("\"id\":\"game-phone\"") && phone.second.contains("\"keep\":true"))
+            val q = next()
+            assertTrue(q.second, q.second.contains("\"id\":\"q\"") && q.second.contains("\"keep\":true") && q.second.contains("Selam"))
+            server.clearRegions()
+            assertEquals("region-clear", next().first)
+            assertEquals("region-sync" to "{\"ids\":[]}", tvEvents(port, sockets)())
+        } finally {
+            sockets.forEach { it.close() }
+            server.stop()
+        }
+    }
+
+    /** Gösterilen alan (telefon kartı hariç) aralıkla `keep` bayrağıyla yenilenir: TV'deki ömrü dolup kalkmasın. */
+    @Test
+    fun liveRegionsAreRefreshedExceptThePhone() {
+        val server = SubtitleServer(0)
+        server.regionRefreshMs = 100
+        val port = server.start()
+        val sockets = mutableListOf<Socket>()
+        try {
+            val next = tvEvents(port, sockets)
+            assertEquals("region-sync", next().first)
+            assertTrue(waitFor { server.connectedClients == 1 })
+            server.sendRegion("q", "Selam", null, null)
+            server.sendRegion("game-phone", "Mesaj", null, null)
+            val seen = mutableListOf<Pair<String, String>>()
+            repeat(8) { seen.add(next()) }
+            val kept = seen.filter { it.second.contains("\"keep\":true") }
+            assertTrue(seen.toString(), kept.size >= 2)
+            assertTrue(seen.toString(), kept.all { it.first == "region" && it.second.contains("\"id\":\"q\"") })
+        } finally {
+            sockets.forEach { it.close() }
+            server.stop()
+        }
     }
 
     /** TV akışı `link` ile kimliğini alır; `/ack` bilinen kimliğe 204, bilinmeyene 404 (Mac/iPhone ve Windows ile aynı). */

@@ -225,15 +225,17 @@ public enum ScreenPhoneCard {
     /// Balonlar arasında en az `bubbleSpacing` satır boşluk kalır; mesajlar telefon boyuna sığmazsa kart uzar, yine
     /// sığmazsa en eski mesajlar düşer. Kartın altında kalan başka bir çeviri kartın dışına, yanına alınır. `textScale`:
     /// altyazı boyutu ayarının varsayılana oranı (`textScale(fontSize:)`); panelin yazısı onunla büyür, küçülür.
+    /// `line`: telefondaki satır yüksekliği yerine kullanılacak kilitli ölçüm (`PhonePanelSteady.steadyLine`, #1152);
+    /// verilmezse bu karenin ölçümü (`measuredLine`).
     public static func layout(_ items: [ScreenTranslation.Item], handset: Handset,
-                              textScale: Double = 1) -> [ScreenTranslation.Item] {
+                              textScale: Double = 1, line locked: Double? = nil) -> [ScreenTranslation.Item] {
         let onPhone = items.filter { $0.phone?.role.inCard == true }.sorted { $0.phone!.spot.top < $1.phone!.spot.top }
         guard onPhone.contains(where: { !$0.unchanged }) else { return items }
         let others = items.filter { $0.phone?.role.inCard != true }
         var card = cardBox(handset.bounds, avoiding: others.filter { !$0.unchanged }.map(\.box))
         let cardWidth = card.right - card.left
-        let heights = onPhone.map(\.lineHeight).sorted()
-        let line = max(minLine * min(maxScale, max(minScale, textScale)), heights[heights.count / 2])
+        let measured = locked ?? measuredLine(onPhone) ?? 0
+        let line = max(minLine * min(maxScale, max(minScale, textScale)), measured)
         let pad = cardWidth * 0.05, padY = line * 0.4, spacing = line * bubbleSpacing
         let flat = { (align: TextLook.Align, bold: Bool) in TextLook(bold: bold, condensed: false, align: align, upper: false, flat: true) }
 
@@ -340,6 +342,12 @@ public enum ScreenPhoneCard {
             result.append(placed)
         }
         return result
+    }
+
+    /// Kartta dizilecek telefon yazılarının satır yüksekliklerinin ortancası (panelin yazı boyu bundan gelir); yoksa nil.
+    public static func measuredLine(_ items: [ScreenTranslation.Item]) -> Double? {
+        let heights = items.filter { $0.phone?.role.inCard == true }.map(\.lineHeight).sorted()
+        return heights.isEmpty ? nil : heights[heights.count / 2]
     }
 
     /// Metni sözcük sözcük en çok `perLine` harflik satırlara böler (çok uzun sözcük kendi satırında kalır).

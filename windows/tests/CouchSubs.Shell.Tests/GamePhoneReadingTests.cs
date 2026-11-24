@@ -10,11 +10,40 @@ namespace CouchSubs.Shell.Tests;
 public class GamePhoneReadingTests
 {
     [Fact]
-    public void ExistingSettingsDefaultToOffAndThePreferenceRoundTrips()
+    public void PhoneDefaultsToOnAndThePreferenceRoundTrips()
     {
-        Assert.False(JsonSerializer.Deserialize<UserSettings>("{}")!.AutoReadGamePhone);
-        var json = JsonSerializer.Serialize(new UserSettings { AutoReadGamePhone = true });
-        Assert.True(JsonSerializer.Deserialize<UserSettings>(json)!.AutoReadGamePhone);
+        // GTA 6 telefonu varsayılan açık (#1202): alanı olmayan dosya da açık gelir.
+        Assert.True(JsonSerializer.Deserialize<UserSettings>("{}")!.AutoReadGamePhone);
+        var json = JsonSerializer.Serialize(new UserSettings { AutoReadGamePhone = false });
+        Assert.False(JsonSerializer.Deserialize<UserSettings>(json)!.AutoReadGamePhone);
+    }
+
+    [Fact]
+    public void MigrationTurnsThePhoneOnOnceForOldSettings()
+    {
+        // Eski göç otomatik ekran yazısı kapalıyken telefonu kapatmıştı (#1202): bir kez açılır.
+        var old = JsonSerializer.Deserialize<UserSettings>(
+            """{"AutoScreenText":false,"AutoScreenTextReset":true,"ScreenTextExtrasReset":true,"AutoReadGamePhone":false}""")!;
+        Assert.False(old.ReadsGamePhone);
+        var migrated = GamePhoneMigration.Apply(old);
+        Assert.True(migrated.AutoReadGamePhone);
+        Assert.True(migrated.GamePhoneReenabled);
+        // Kullanıcı sonra bilerek kapatırsa göç tekrarlanmaz.
+        var closed = JsonSerializer.Deserialize<UserSettings>(JsonSerializer.Serialize(migrated))! with { AutoReadGamePhone = false };
+        Assert.Equal(closed, GamePhoneMigration.Apply(closed));
+        // Yeni kurulum: bütün göçlerden sonra telefon açık.
+        var fresh = GamePhoneMigration.Apply(ScreenTextExtrasMigration.Apply(AutoScreenTextMigration.Apply(new UserSettings()).Settings));
+        Assert.True(fresh.ReadsGamePhone);
+    }
+
+    [Fact]
+    public void SessionLogSaysWhetherThePhoneIsRead()
+    {
+        Assert.Equal("otomatik ekran yazısı: kapalı, telefon: açık", SessionSummary.ScreenText(new UserSettings()));
+        Assert.Equal("otomatik ekran yazısı: kapalı, telefon: kapalı",
+                     SessionSummary.ScreenText(new UserSettings { AutoReadGamePhone = false }));
+        Assert.Equal("otomatik ekran yazısı: açık, telefon: açık",
+                     SessionSummary.ScreenText(new UserSettings { AutoReadGamePhone = false, AutoScreenText = true }));
     }
 
     [Theory]
@@ -48,7 +77,8 @@ public class GamePhoneReadingTests
     {
         var services = new FakeServices { ReaderLines = Reading.FromText("Call me tomorrow.") };
         var settings = new MemorySettings();
-        settings.Save(new UserSettings { FrameSource = FrameSource.RemotePlayWindow, Output = SubtitleOutput.Computer, AutoScreenText = false, GameAreaPresets = false });
+        // Telefon kapalı başlar (kullanıcı kapatmış; göç yapılmış).
+        settings.Save(new UserSettings { FrameSource = FrameSource.RemotePlayWindow, Output = SubtitleOutput.Computer, AutoScreenText = false, GameAreaPresets = false, AutoReadGamePhone = false, GamePhoneReenabled = true });
         var controller = AppControllerTests.Make(services, settings: settings);
         var events = new ConcurrentQueue<SubtitleEvent>();
         controller.StreamEvent += events.Enqueue;

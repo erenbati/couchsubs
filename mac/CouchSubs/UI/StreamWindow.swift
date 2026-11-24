@@ -153,7 +153,10 @@ struct StreamWindowView: View {
             .padding(.bottom, proxy.size.height * 0.07)
             .frame(width: proxy.size.width, height: proxy.size.height)
             .background {
-                if !model.overlayPhoneItems.isEmpty { GamePhoneBlocks(items: model.overlayPhoneItems) }
+                // Yerinde Türkçe çizim: telefonun Türkçe ikizi çapayla telefonun üstünde (yayın penceresi karenin kendisidir).
+                if model.drawsPhoneInPlace {
+                    PhoneTwinLayer(feed: model.phoneAnchorFeed)
+                } else if !model.overlayPhoneItems.isEmpty { GamePhoneBlocks(items: model.overlayPhoneItems) }
                 // Aynı yazıyı çizen iki kutudan yalnız biri: "Ekranı çevir" otomatik ekran yazısının üstüne geçer (#827).
                 let screenText = ScreenTranslation.layered(model.overlayRegions.flatMap { $0.items ?? [] } + model.overlayScreenItems)
                 if !screenText.isEmpty { ScreenTextBlocks(items: screenText, avoiding: subtitleFrame) }
@@ -223,7 +226,7 @@ struct StreamWindowView: View {
         let colored = model.settings.speakerColors && !line.paragraphs
         let text = SubtitleOverlayView.subtitleText(wrapped.text, colored: colored,
                                                     base: SubtitleOverlayView.textColor(style), book: model.speakerBook,
-                                                    nameOnly: style.nameOnly)
+                                                    nameOnly: style.nameOnly, wholeLine: style.nameColorMode == .line)
             .font(.system(size: size, weight: weight))
         return text
             .opacity(textOpacity)

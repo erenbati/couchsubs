@@ -1,6 +1,12 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Voice for Unknown Characters": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Voice for Unknown Characters"}}, "tr": {"stringUnit": {"state": "translated", "value": "Tanınmayan Karakterlerin Sesi"}}}},
+    "Voice for unknown characters": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Voice for unknown characters"}}, "tr": {"stringUnit": {"state": "translated", "value": "Tanınmayan karakterlerin sesi"}}}},
+    "Used when the name doesn't show whether the character is a man or a woman. You can change each character's voice below.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Used when the name doesn't show whether the character is a man or a woman. You can change each character's voice below."}}, "tr": {"stringUnit": {"state": "translated", "value": "Karakterin adından kadın mı erkek mi olduğu anlaşılmazsa bu ses kullanılır. Her karakterin sesini aşağıdan değiştirebilirsiniz."}}}},
+    "Man": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Man"}}, "tr": {"stringUnit": {"state": "translated", "value": "Erkek"}}}},
+    "Woman": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Woman"}}, "tr": {"stringUnit": {"state": "translated", "value": "Kadın"}}}},
+    "On the TV: Apps › press 1 2 3 4 5 › Developer mode On, Host PC IP = this device's IP (%@), then restart the TV.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "On the TV: Apps › press 1 2 3 4 5 › Developer mode On, Host PC IP = this device's IP (%@), then restart the TV."}}, "tr": {"stringUnit": {"state": "translated", "value": "TV'de: Uygulamalar › kumandada 1 2 3 4 5 › Developer Mode Açık, Host PC IP = bu cihazın IP'si (%@), sonra TV'yi yeniden başlatın."}}}},
     "Not responding — searching again…": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Not responding — searching again…"}}, "tr": {"stringUnit": {"state": "translated", "value": "Yanıt vermiyor — yeniden aranıyor…"}}}},
     "The TV isn't responding at this address (is it on and on the same network?)": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The TV isn't responding at this address (is it on and on the same network?)"}}, "tr": {"stringUnit": {"state": "translated", "value": "TV bu adreste yanıt vermiyor (açık ve aynı ağda mı?)"}}}},
     "The TV Isn't Responding": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The TV Isn't Responding"}}, "tr": {"stringUnit": {"state": "translated", "value": "TV Yanıt Vermiyor"}}}},
@@ -8932,18 +8938,18 @@
         }
       }
     },
-    "PS5 not found at %@. Make sure it is on and on the same network. Reconnecting…": {
+    "PS5 not found at %@. Searching the network for it. Make sure it is on and on the same network; if its address changed, use Enter IP Address in Settings > Console. Reconnecting…": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "PS5 not found at %@. Make sure it is on and on the same network. Reconnecting…"
+            "value": "PS5 not found at %@. Searching the network for it. Make sure it is on and on the same network; if its address changed, use Enter IP Address in Settings > Console. Reconnecting…"
           }
         },
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "PS5 %@ adresinde bulunamadı. Açık ve aynı ağda olduğundan emin olun. Yeniden bağlanılıyor…"
+            "value": "PS5 %@ adresinde bulunamadı, ağda aranıyor. Açık ve aynı ağda olduğundan emin olun; adresi değiştiyse Ayarlar > Konsol'da IP Adresi Gir'i kullanın. Yeniden bağlanılıyor…"
           }
         }
       }
@@ -9994,18 +10000,18 @@
         }
       }
     },
-    "The screen stays on · brightness is lowered automatically": {
+    "Keep the phone screen on while you play; translation stops when the screen turns off. Keep it plugged in.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The screen stays on · brightness is lowered automatically"
+            "value": "Keep the phone screen on while you play; translation stops when the screen turns off. Keep it plugged in."
           }
         },
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ekran açık kalır · parlaklık otomatik kısılır"
+            "value": "Oynarken telefonun ekranını açık tutun; ekran kapanınca çeviri durur. Şarja takılı olsun."
           }
         }
       }
@@ -14177,6 +14183,7 @@
         }
       }
     },
+    "CouchSubs on the TV is still running an old version (%@). On the TV, close CouchSubs and open it again.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "CouchSubs on the TV is still running an old version (%@). On the TV, close CouchSubs and open it again."}}, "tr": {"stringUnit": {"state": "translated", "value": "TV'deki CouchSubs eski sürümde çalışıyor (%@). TV'de CouchSubs'ı kapatıp yeniden açın."}}}},
     "TV: %@ → this phone: %@": {
       "localizations": {
         "en": {
@@ -16018,6 +16025,7 @@
     "Same as Text": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Same as Text"}}, "tr": {"stringUnit": {"state": "translated", "value": "Yazıyla Aynı"}}}},
     "Single Color": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Single Color"}}, "tr": {"stringUnit": {"state": "translated", "value": "Tek Renk"}}}},
     "By Character": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "By Character"}}, "tr": {"stringUnit": {"state": "translated", "value": "Karaktere Göre"}}}},
+    "Whole Line": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Whole Line"}}, "tr": {"stringUnit": {"state": "translated", "value": "Tüm Satır"}}}},
     "The character name is shown in the same color as the text.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The character name is shown in the same color as the text."}}, "tr": {"stringUnit": {"state": "translated", "value": "Karakter adı yazıyla aynı renkte gösterilir."}}}},
     "New characters get colors in turn.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "New characters get colors in turn."}}, "tr": {"stringUnit": {"state": "translated", "value": "Yeni karakterlere sırayla renk verilir."}}}},
     "Navy": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Navy"}}, "tr": {"stringUnit": {"state": "translated", "value": "Lacivert"}}}},
@@ -16076,6 +16084,8 @@
     "Saved Games": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Saved Games"}}, "tr": {"stringUnit": {"state": "translated", "value": "Kayıtlı Oyunlar"}}}},
     "When one of these games starts, its areas load by themselves.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "When one of these games starts, its areas load by themselves."}}, "tr": {"stringUnit": {"state": "translated", "value": "Bu oyunlardan biri açılınca alanları kendiliğinden yüklenir."}}}},
     "Use Ready Areas for Known Games": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Use Ready Areas for Known Games"}}, "tr": {"stringUnit": {"state": "translated", "value": "Bilinen Oyunlarda Hazır Alanları Kullan"}}}},
+    "Redraw the Screen in Turkish in Place (Experimental)": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Redraw the Screen in Turkish in Place (Experimental)"}}, "tr": {"stringUnit": {"state": "translated", "value": "Ekranı Yerinde Türkçe Çiz (Deneysel)"}}}},
+    "GTA 6 phone: the original text is erased and the translation is drawn in its place, right on the phone in the game window, and it moves with the phone. Works when the picture is read from a window on this Mac (Remote Play, chiaki-ng or OBS).": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "GTA 6 phone: the original text is erased and the translation is drawn in its place, right on the phone in the game window, and it moves with the phone. Works when the picture is read from a window on this Mac (Remote Play, chiaki-ng or OBS)."}}, "tr": {"stringUnit": {"state": "translated", "value": "GTA 6 telefonu: özgün yazı silinir, çevirisi oyun penceresinde telefonun üstüne, aynı yere çizilir ve telefonla birlikte hareket eder. Görüntü bu Mac'teki bir pencereden (Remote Play, chiaki-ng ya da OBS) okunurken çalışır."}}}},
     "Keep Centered": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Keep Centered"}}, "tr": {"stringUnit": {"state": "translated", "value": "Ortada Tut"}}}},
     "Use Game Packs": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Use Game Packs"}}, "tr": {"stringUnit": {"state": "translated", "value": "Oyun Paketlerini Kullan"}}}},
     "Ready Turkish translations for some games. A line found in the pack appears instantly without going to the translation engine.": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Ready Turkish translations for some games. A line found in the pack appears instantly without going to the translation engine."}}, "tr": {"stringUnit": {"state": "translated", "value": "Bazı oyunlar için hazır Türkçe çeviriler. Pakette bulunan satır çeviri motoruna gitmeden anında görünür."}}}},
@@ -16185,7 +16195,9 @@
     "Pack Installed": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Pack Installed"}}, "tr": {"stringUnit": {"state": "translated", "value": "Paket Kuruldu"}}}},
     "Playing": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Playing"}}, "tr": {"stringUnit": {"state": "translated", "value": "Oynanıyor"}}}},
     "Suggestions": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Suggestions"}}, "tr": {"stringUnit": {"state": "translated", "value": "Öneriler"}}}},
-    "Signing In…": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Signing In…"}}, "tr": {"stringUnit": {"state": "translated", "value": "Giriş Yapılıyor…"}}}}
+    "Signing In…": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Signing In…"}}, "tr": {"stringUnit": {"state": "translated", "value": "Giriş Yapılıyor…"}}}},
+    "The phone translation is off. Turn it on?": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "The phone translation is off. Turn it on?"}}, "tr": {"stringUnit": {"state": "translated", "value": "Telefon çevirisi kapalı, açmak ister misiniz?"}}}},
+    "Turn On": {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Turn On"}}, "tr": {"stringUnit": {"state": "translated", "value": "Aç"}}}}
   },
   "version": "1.0"
 }

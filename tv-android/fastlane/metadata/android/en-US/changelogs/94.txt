@@ -1,0 +1,1 @@
+0.9.91: With "Above" and "Below", the translation no longer touches the English subtitle; the gap is twice as large.

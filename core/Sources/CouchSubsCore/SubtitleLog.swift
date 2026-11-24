@@ -57,13 +57,15 @@ public enum SubtitleLog {
         }
     }
 
-    /// "oturum başladı" satırının alan kısmı: altyazı alanının seçimi ve sınırları, otomatik ekran yazısı. Bir günlükte
+    /// "oturum başladı" satırının alan kısmı: altyazı alanının seçimi ve sınırları, otomatik ekran yazısı, GTA 6 telefonu
+    /// (#1202: günlükte telefonun okunup okunmadığı görünmüyordu). Bir günlükte
     /// altyazının hiç okunmadığı oturumda alanın ne olduğu görünmüyordu (iPhone 1.0.6, 2026-11-22).
     public static func areaSummary(_ settings: UserSettings) -> String {
         let r = settings.region
         func f(_ value: Double) -> String { String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), value) }
         return "alan: \(settings.areaPreset.rawValue) (\(f(r.top))-\(f(r.bottom)) x \(f(r.left))-\(f(r.right))), "
             + "otomatik ekran yazısı: \(settings.autoScreenText ? "açık" : "kapalı")"
+            + ", telefon: \(settings.readsGamePhone ? "açık" : "kapalı")"
     }
 
     /// Günlükteki tırnaklı, tek satırlık, en çok `limit` karakterlik alıntı.

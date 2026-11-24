@@ -114,6 +114,25 @@ CAPABILITIES = {
         ("windows", _WIN_TESTS + "InkToneTests.cs", r"dark-ink\.json"),
         ("android", _DROID_TESTS + "InkToneTest.kt", r"dark-ink\.json"),
     ],
+    # Dublajda adından cinsiyeti anlaşılmayan karakter kadın sesine düşüyordu (GTA 6 Jason): "Tanınmayan karakterlerin
+    # sesi" dört platformda aynı seçim, eski kayıt bir kez düzeltilir.
+    "Dublajda tanınmayan karakterin sesi (setUnknownGender) ve eski kaydın düzeltilmesi": [
+        ("mac", _CORE + "Dubbing/VoiceCast.swift", r"func setUnknownGender\("),
+        ("mac", _CORE + "Dubbing/VoiceCast.swift", r"func upgradingRules\("),
+        ("mac", "mac/CouchSubs/UI/DubbingCard.swift", r"setUnknownGender\("),
+        ("mac", "couchsubs-ios/CouchSubs/UI/DubbingTile.swift", r"setUnknownGender\("),
+        ("windows", _WIN + "Dubbing/VoiceCast.cs", r"public void SetUnknownGender\("),
+        ("windows", _WIN + "Dubbing/VoiceCast.cs", r"private void UpgradeRules\("),
+        ("windows", "windows/src/CouchSubs.App/Views/DubbingCard.xaml.cs", r"SetUnknownGender\("),
+        ("android", _DROID + "Dubbing.kt", r"fun setUnknownGender\("),
+        ("android", _DROID + "Dubbing.kt", r"fun upgradeRules\("),
+        ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/ui/DubbingTile.kt", r"setUnknownGender\("),
+    ],
+    "Ortak deneme dosyası voice-cast.json": [
+        ("mac", _CORE_TESTS + "DubbingTests.swift", r"voice-cast\.json"),
+        ("windows", _WIN_TESTS + "DubbingTests.cs", r"voice-cast\.json"),
+        ("android", _DROID_TESTS + "DubbingTest.kt", r"voice-cast\.json"),
+    ],
     # Yalnız masaüstü (#853): Xbox seçiliyken görüntü Xbox uygulaması / play.xbox.com / capture card ile OBS penceresinden
     # okunur, CouchSubs Xbox'a bağlanmaz. iPhone ve Android'de okunacak bilgisayar penceresi yoktur; telefonlarda bu seçim
     # bilinçli olarak yoktur (Android = iPhone eşitliği bozulmaz). Windows = Mac eşitliği burada denetlenir.
@@ -177,6 +196,26 @@ CAPABILITIES = {
         ("ios", "couchsubs-ios/CouchSubs/PhoneModel.swift", r"func tvAppReported\("),
         ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/tv/TvAppUpdate.kt", r"fun reported\("),
     ],
+    # beta.89 (LG): kurulumdan sonra webOS eski süreci tutuyordu (paket 0.9.84, açık uygulama 0.9.81). Dört platform da kurulumdan
+    # sonra açık uygulamayı kapatır (closeByAppId), çalışan sürümü denetler, eskiyse bir kez daha kapatıp açar, yine eskiyse
+    # "TV'de CouchSubs'ı kapatıp yeniden açın" der. TV sayfası (tv-webos/platform.js) da diskteki sürüm yeniyse yeniden yüklenir.
+    "LG kurulumdan sonra açık uygulamayı kapatıp açma ve çalışan sürüm denetimi": [
+        ("mac", _CORE + "LGTV/DevModeInstaller.swift", r"public func closeApp\("),
+        ("mac", _CORE + "LGTV/TVAppRunningCheck.swift", r"public mutating func report\("),
+        ("mac", _CORE + "LGTV/SSAPClient.swift", r"public func reopenApp\("),
+        ("mac", "mac/CouchSubs/AppModel.swift", r"private func lgRunningReported\("),
+        ("windows", _WIN + "LgTv/DevModeInstaller.cs", r"public async Task<string> CloseAppAsync\("),
+        ("windows", _WIN + "LgTv/TvAppRunningCheck.cs", r"public TvAppRunningVerdict Report\("),
+        ("windows", _WIN + "LgTv/TvKeeper.cs", r"public void ReopenApp\("),
+        ("windows", "windows/src/CouchSubs.Shell/AppController.cs", r"private bool LgRunningReported\("),
+        ("ios", "couchsubs-ios/CouchSubs/TVInstall/LGPhoneInstall.swift", r"static let closeCommand"),
+        ("ios", "couchsubs-ios/CouchSubs/TVInstall/LGPhoneInstall.swift", r"runningVersion: String\? = nil"),
+        ("ios", "couchsubs-ios/CouchSubs/PhoneModel.swift", r"private func lgRunningReported\("),
+        ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/tv/lg/LgInstaller.kt", r"const val CLOSE_COMMAND"),
+        ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/tv/lg/LgInstaller.kt", r"runningVersion: String\? = null"),
+        ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/tv/lg/TvAppRunningCheck.kt", r"fun report\("),
+        ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/tv/TvAppUpdate.kt", r"internal fun lgRunningReported\("),
+    ],
     # "Ekranı çevir" özgün yazının birebir yerinde ve boyunda: kutunun genişleyebileceği alan simgelere kadar (room), kutu
     # yalnız yazıyı kapsar, sütun/şerit hizası, eş öğeler aynı boyda. TV (tv-webos fitStyled) bu alanlarla çizer.
     "Ekran yazısı yerleşimi (ScreenFit: room, rows, hiza, eş boy)": [
@@ -186,6 +225,52 @@ CAPABILITIES = {
         ("mac", _CORE_TESTS + "ScreenFitTests.swift", r"screen-fit\.json"),
         ("windows", _WIN_TESTS + "ScreenFitTests.cs", r"screen-fit\.json"),
         ("android", _DROID_TESTS + "ScreenFitTest.kt", r"screen-fit\.json"),
+    ],
+    # Ekran yazısı takibi: özgün yazı kalkınca çevirisi aynı karede kalkar (kutunun gri izinin ilintisi), her uygulama her
+    # karede sunucuya verir.
+    "Ekran yazısı takibi (ScreenPresence)": [
+        ("mac", _CORE + "ScreenPresence.swift", r"mutating func visible\("),
+        ("windows", _WIN + "ScreenPresence.cs", r"public IReadOnlyList<bool> Visible\("),
+        ("android", _DROID + "ScreenPresence.kt", r"fun visible\("),
+        ("mac", "mac/CouchSubs/AppModel.swift", r"server\.observe\(frame\)"),
+        ("ios", "couchsubs-ios/CouchSubs/PhoneModel.swift", r"server\.observe\(frame\)"),
+        ("windows", "windows/src/CouchSubs.Shell/AppController.cs", r"server\.Observe\(frame\)"),
+        ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/service/TranslationService.kt", r"live\.observe"),
+        ("mac", _CORE_TESTS + "ScreenPresenceTests.swift", r"screen-presence\.json"),
+        ("windows", _WIN_TESTS + "ScreenPresenceTests.cs", r"screen-presence\.json"),
+        ("android", _DROID_TESTS + "ScreenPresenceTest.kt", r"screen-presence\.json"),
+    ],
+    # Ekran yazısının görünüşü oturum boyunca kilitli: öğe türü başına boy, kalınlık, renk ilk ölçümde; yalnız belirgin
+    # (%25+) ve kalıcı (1 sn+) değişimde yenilenir. "Ekranı çevir" ve otomatik ekran yazısı sunucuda aynı kilitten geçer.
+    "Ekran yazısı kararlı stil kilidi (ScreenStyleLock)": [
+        ("mac", _CORE + "ScreenStyleLock.swift", r"mutating func steady\("),
+        ("windows", _WIN + "ScreenStyleLock.cs", r"public IReadOnlyList<ScreenTranslation.Item> Steady\("),
+        ("android", _DROID + "ScreenStyleLock.kt", r"fun steady\("),
+        ("mac", _CORE + "SubtitleServer.swift", r"steadied\(items"),
+        ("windows", _WIN + "SubtitleServer.cs", r"Steadied\(\["),
+        ("android", _DROID + "SubtitleServer.kt", r"steadied\(items"),
+        ("mac", _CORE_TESTS + "ScreenStyleLockTests.swift", r"screen-style-lock\.json"),
+        ("windows", _WIN_TESTS + "ScreenStyleLockTests.cs", r"screen-style-lock\.json"),
+        ("android", _DROID_TESTS + "ScreenStyleLockTest.kt", r"screen-style-lock\.json"),
+    ],
+    # Çapa takibi: telefonun/kartın dörtgeni her karede OCR'sız, alt piksel izlenir (izdüşümsel Lucas-Kanade); çeviri
+    # katmanı bu dönüşümle taşınır (docs/ekran-capasi.md).
+    "Ekran çapası takibi (ScreenAnchor)": [
+        ("mac", _CORE + "ScreenAnchor.swift", r"public func track\("),
+        ("windows", _WIN + "ScreenAnchor.cs", r"public Fix\? Track\("),
+        ("android", _DROID + "ScreenAnchor.kt", r"fun track\("),
+        ("mac", _CORE_TESTS + "ScreenAnchorTests.swift", r"screen-anchor\.json"),
+        ("windows", _WIN_TESTS + "ScreenAnchorTests.cs", r"screen-anchor\.json"),
+        ("android", _DROID_TESTS + "ScreenAnchorTest.kt", r"screen-anchor\.json"),
+    ],
+    # Bilgisayar/telefon ekranında özgün stilli ekran yazısı oyun karesindeki kendi yerinde (hizalı liste değil), ortak
+    # satır yerleşimiyle.
+    "Ekran yazısı masaüstünde/telefonda yerinde çizim": [
+        ("mac", "mac/CouchSubs/UI/StreamWindow.swift", r"struct ScreenTextBlocks"),
+        ("windows", "windows/src/CouchSubs.App/Views/ScreenTextCanvas.cs", r"ScreenFit\.Layout\("),
+        ("windows", "windows/src/CouchSubs.App/Views/StreamWindow.cs", r"screenTextLayer\.Show\("),
+        ("ios", "couchsubs-ios/CouchSubs/UI/Home.swift", r"ScreenFit\.lines\("),
+        ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/ui/PhoneSubtitleActivity.kt", r"ScreenFit\.lines\("),
     ],
     # Çizicilerin ortak satır yerleşimi: yazı boyu sabit, önce yatay sıkıştırma, sonra room içinde genişleme (TV fitStyled).
     "Ekran yazısı çizici yerleşimi (ScreenFit.lines)": [
@@ -291,6 +376,25 @@ CAPABILITIES = {
         ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/tv/TvRelocation.kt", r"fun searchTvAgain\("),
         ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/tv/TvRelocation.kt", r"fun useTvAddress\("),
         ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/tv/TvRelocation.kt", r"fun removeTvPairing\("),
+    ],
+    # #1158: Samsung'da TV'den silinen uygulama "kurulu" görünüyordu; liste/vd_applist "yok" deyince kayıt silinir ve
+    # kurulum bağlantısı reddedilince metin menüyü, iki ayarı ve bu cihazın adresini söyler.
+    "Samsung: TV'den silinen uygulamanın \"kurulu\" kaydı silinir, Host PC IP adımı adresle yazılır": [
+        ("mac", _CORE + "LGTV/SamsungTV.swift", r"public func appMissing\(host: String\?\) -> Bool"),
+        ("mac", _CORE + "LGTV/SamsungTV.swift", r"SamsungAppKnowledge\.forgetsOnList\(presence\)"),
+        ("mac", "mac/CouchSubs/AppModel.swift", r"func samsungAppMissing\(host: String\)"),
+        ("mac", "mac/CouchSubs/UI/Onboarding/TVAppCard.swift", r"static func hostPcSteps\("),
+        ("ios", "couchsubs-ios/CouchSubs/PhoneModel.swift", r"func samsungAppMissing\(host: String\)"),
+        ("ios", "couchsubs-ios/CouchSubs/TVInstall/SamsungInstall.swift", r"func installedPresence\(\)"),
+        ("ios", "couchsubs-ios/CouchSubs/UI/TVInstallScreen.swift", r"TVText\.hostPcSteps\("),
+        ("windows", _WIN + "LgTv/SamsungTv.cs", r"public static bool AppMissing\(string\? host\)"),
+        ("windows", _WIN + "LgTv/SamsungTv.cs", r"SamsungAppKnowledge\.ForgetsOnList\(presence\)"),
+        ("windows", "windows/src/CouchSubs.Shell/AppController.cs", r"public void SamsungAppMissing\(string host\)"),
+        ("windows", "windows/src/CouchSubs.Shell/TvAppMessages.cs", r"HostPcStepsLine"),
+        ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/tv/TvAppUpdate.kt", r"fun samsungAppMissing\("),
+        ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/tv/TvSessionLauncher.kt", r"samsungForgetsOnList\(knownStale, presence\)"),
+        ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/tv/samsung/SamsungInstaller.kt", r"fun installedPresence\(\)"),
+        ("android", "couchsubs-android/app/src/main/java/com/couchsubs/mobile/ui/TvInstallScreen.kt", r"R\.string\.tvinstall_host_pc_steps"),
     ],
 }
 

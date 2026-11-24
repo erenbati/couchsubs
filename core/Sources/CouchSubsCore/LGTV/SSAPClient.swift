@@ -244,6 +244,8 @@ public final class TVKeeper: @unchecked Sendable {
     private let tvConnected: (@Sendable () -> Bool)?
     /// LG: bu bekçi uygulamayı bir kez açtı (ya da açık ve bağlı buldu).
     private var opened = false
+    /// LG: uygulama kurulumdan sonra kapatıldı (`reopenApp`); yeni bağlantıda bağlı görünse de açılır.
+    private var launchAfterClose = false
     /// LG: yeniden kurulan bağlantıdaki açmaların sayısı (geri çekilme için) ve sonuncusunun anı.
     private var reopens = 0
     private var lastReopen: ContinuousClock.Instant?
@@ -369,6 +371,14 @@ public final class TVKeeper: @unchecked Sendable {
     private func openOnFreshConnection(_ fresh: TVControlling) async throws {
         let time = now()
         noteHealth(at: time)
+        if launchAfterClose {
+            // Kurulumdan sonra uygulama kapatıldı: sunucu kopan akışı henüz fark etmemiş olabilir, bağlı sayılmaz.
+            launchAfterClose = false
+            try await fresh.launch(appId: appId, params: params)
+            opened = true
+            onOpenResult?(nil)
+            return
+        }
         if tvConnected?() == true {
             opened = true
             onOpenResult?(nil)
@@ -480,6 +490,13 @@ public final class TVKeeper: @unchecked Sendable {
         forced.removeAll()
         consoleReturns.removeAll()
         lastForced = nil
+    }
+
+    /// LG: TV uygulaması kurulumdan sonra (ya da eski sürümde çalıştığı için) kapatıldı; bağlantı yeniden kurulur ve uygulama
+    /// bağlı görünse de bir kez açılır (adres ve anahtar parametreyle). Windows TvKeeper.ReopenApp ile aynı.
+    public func reopenApp() {
+        reconnect()
+        launchAfterClose = true
     }
 
     public func stop() {

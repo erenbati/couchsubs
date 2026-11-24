@@ -794,14 +794,19 @@ public final class StreamSession: @unchecked Sendable {
     /// Taramada bulunanlar arasından kayıtlı PS5: adı (kayıtta PS5'in verdiği ad) tek eşleşen; emin değilse nil.
     /// Eskiden ağda tek PS5 varsa adına bakılmadan o seçiliyordu; aynı evde iki PS5 varken biri yeniden başlarken
     /// uygulama diğerine geçip onun adresini kaydediyordu (GitHub #425).
+    /// Ad, boşluk ve büyük/küçük harf gözetmeden eşlenir (eskiden harf farkında PS5 yeni adreste bulunamıyordu); kayıtta ad
+    /// yoksa ağdaki tek PS5 seçilir (Windows ve Android ile aynı).
     static func pickMoved(_ found: [ConsoleInfo], name: String) -> ConsoleInfo? {
-        let named = found.filter { $0.name == name }
+        let named = found.filter { isRegistered($0, name: name) }
         return named.count == 1 ? named[0] : nil
     }
 
-    /// Aramaya yanıt veren PS5 kayıtlı PS5 mi (ad eşleşmesi; kayıtta ad yoksa her yanıt kabul edilir).
+    /// Aramaya yanıt veren PS5 kayıtlı PS5 mi (ad eşleşmesi, boşluk ve harf büyüklüğü gözetilmez; kayıtta ad yoksa her yanıt
+    /// kabul edilir).
     static func isRegistered(_ info: ConsoleInfo, name: String) -> Bool {
-        name.isEmpty || info.name == name
+        let wanted = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return wanted.isEmpty
+            || info.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(wanted) == .orderedSame
     }
 
     private func waitForWake(_ current: Int, deadline: Date) {

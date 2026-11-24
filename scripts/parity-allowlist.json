@@ -14,7 +14,8 @@
     "mac_only": {
       "areaPreset": "Bilinçli (model farkı): Windows hazır alanı bölge değerinden çıkarır (AreaPresets), ayrı alanda saklamaz.",
       "localAIServer": "Hesaplanan alan (localAIBaseURL'den çıkar), saklanmaz. Windows'ta karşılığı LocalAIServers.Detect.",
-      "translationEngine": "Hesaplanan alan (onlineTranslation + onlineEngine), saklanmaz. Windows'ta aynı iki alan var."
+      "translationEngine": "Hesaplanan alan (onlineTranslation + onlineEngine), saklanmaz. Windows'ta aynı iki alan var.",
+      "drawScreenInPlace": "Önce Mac'te deneniyor, Sinan Bey kararı (24 Kas): GTA 6 telefonunu yerinde Türkçe çizme (ekran çapası, PhoneTwin). Mac'te düzgün çalışınca öbür platformlara eklenecek."
     }
   },
   "mobile_settings": {
@@ -121,7 +122,9 @@
     "While Full Screen is selected the whole screen is read, so extra areas aren't read; choosing another area reads them again.": "Aynı ayar telefonda Android'le ortak telefon metniyle var (yalnız yazım farkı, aynı seçenek ve varsayılan). Telefonda ek alanlar kartında aynı uyarı.",
     "GTA 6 phone messages": "Aynı ayar telefonda Android'le ortak telefon metniyle var (yalnız yazım farkı, aynı seçenek ve varsayılan). Telefonda 'GTA 6 Phone Messages'.",
     "Use Ready Areas for Known Games": "Aynı ayar telefonda Android'le ortak telefon metniyle var (yalnız yazım farkı, aynı seçenek ve varsayılan). Telefonda 'Use ready areas for known games'.",
-    "In fixed position you can also move subtitles with the ▲ and ▼ buttons on the TV remote.": "Aynı ayar telefonda Android'le ortak telefon metniyle var (yalnız yazım farkı, aynı seçenek ve varsayılan). Telefonda sabit yükseklik kaydırıcısının açıklamasında aynı cümle."
+    "In fixed position you can also move subtitles with the ▲ and ▼ buttons on the TV remote.": "Aynı ayar telefonda Android'le ortak telefon metniyle var (yalnız yazım farkı, aynı seçenek ve varsayılan). Telefonda sabit yükseklik kaydırıcısının açıklamasında aynı cümle.",
+    "Redraw the Screen in Turkish in Place (Experimental)": "Önce Mac'te deneniyor, Sinan Bey kararı (24 Kas): GTA 6 telefonunu yerinde Türkçe çizme (ekran çapası, PhoneTwin). Mac'te düzgün çalışınca öbür platformlara eklenecek.",
+    "GTA 6 phone: the original text is erased and the translation is drawn in its place, right on the phone in the game window, and it moves with the phone. Works when the picture is read from a window on this Mac (Remote Play, chiaki-ng or OBS).": "Önce Mac'te deneniyor, Sinan Bey kararı (24 Kas): GTA 6 telefonunu yerinde Türkçe çizme (ekran çapası, PhoneTwin). Mac'te düzgün çalışınca öbür platformlara eklenecek."
   },
   "phone_settings": {
     "_": "Android AppSettings (kalıcı ayarlar) ↔ ortak UserSettings + SubtitleStyle (iPhone). Ad eşlemesi küçük harfle.",
@@ -186,7 +189,8 @@
       "xboxFrameSource": "Yalnız masaüstü (fiziksel): telefonda bilgisayar penceresi, klavye kısayolu ya da serbest alan (fareyle donmuş PC görüntüsü) yok; iPhone UserSettings'i Mac'le ortak olduğu için alan modelde durur, iPhone'da kullanılmaz.",
       "overlayClickThrough": "Yalnız masaüstü (fiziksel): telefonda bilgisayar penceresi, klavye kısayolu ya da serbest alan (fareyle donmuş PC görüntüsü) yok; iPhone UserSettings'i Mac'le ortak olduğu için alan modelde durur, iPhone'da kullanılmaz.",
       "hotkeys": "Yalnız masaüstü (fiziksel): telefonda bilgisayar penceresi, klavye kısayolu ya da serbest alan (fareyle donmuş PC görüntüsü) yok; iPhone UserSettings'i Mac'le ortak olduğu için alan modelde durur, iPhone'da kullanılmaz.",
-      "freeAreaTarget": "Yalnız masaüstü (fiziksel): telefonda bilgisayar penceresi, klavye kısayolu ya da serbest alan (fareyle donmuş PC görüntüsü) yok; iPhone UserSettings'i Mac'le ortak olduğu için alan modelde durur, iPhone'da kullanılmaz."
+      "freeAreaTarget": "Yalnız masaüstü (fiziksel): telefonda bilgisayar penceresi, klavye kısayolu ya da serbest alan (fareyle donmuş PC görüntüsü) yok; iPhone UserSettings'i Mac'le ortak olduğu için alan modelde durur, iPhone'da kullanılmaz.",
+      "drawScreenInPlace": "Önce Mac'te deneniyor, Sinan Bey kararı (24 Kas): GTA 6 telefonunu yerinde Türkçe çizme (ekran çapası, PhoneTwin). Mac'te düzgün çalışınca öbür platformlara eklenecek."
     }
   }
 }
