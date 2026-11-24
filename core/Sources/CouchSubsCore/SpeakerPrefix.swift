@@ -30,11 +30,24 @@ public enum SpeakerPrefix {
               let nameRange = Range(found.range(at: 1), in: trimmed) else { return nil }
         let name = String(trimmed[nameRange])
         let body = String(trimmed[whole.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard name.count <= maxNameLength,
-              !(!name.contains(" ") && SubtitleSegmenter.notNames.contains(name.lowercased())),
-              body.contains(where: \.isLetter),
-              !body.hasPrefix("/") else { return nil }
+        guard isName(name), body.contains(where: \.isLetter), !body.hasPrefix("/") else { return nil }
         return Split(name: name, body: body)
+    }
+
+    /// Tek başına okunan konuşan adı ("Lucia:", "JASON :"): ardında cümle yok; ad değilse ("Note:", "10:") nil. Yazı
+    /// tanıma renkli adı cümleden ayrı satır okuyabiliyor; ad cümleye katılmazsa düşüyordu (`Reading.joiningRows`).
+    public static func nameOnly(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let range = NSRange(trimmed.startIndex..., in: trimmed)
+        guard let found = pattern.firstMatch(in: trimmed, range: range), found.range == range,
+              let nameRange = Range(found.range(at: 1), in: trimmed) else { return nil }
+        let name = String(trimmed[nameRange])
+        return isName(name) ? name : nil
+    }
+
+    /// Ad uzunluğu aşılmamış ve tek sözcükse oyun başlığı ("Note", "Objective") değil.
+    private static func isName(_ name: String) -> Bool {
+        name.count <= maxNameLength && !(!name.contains(" ") && SubtitleSegmenter.notNames.contains(name.lowercased()))
     }
 
     /// Gösterilecek metin: çeviri `source`'un baştaki adıyla başlar ("ARTHUR: Gitmeliyiz."); `show` kapalıysa

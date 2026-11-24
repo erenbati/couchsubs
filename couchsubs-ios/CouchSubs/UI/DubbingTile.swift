@@ -26,6 +26,12 @@ struct DubbingTile: View {
                 }
                 Text("Play the voice on").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
                 SegmentedTabs(options: [DubbingOutput.tv: "TV", .computer: "This phone"], selection: $model.settings.dubbing.output)
+                // Adından kadın mı erkek mi olduğu anlaşılmayan karakterin sesi (Android, Mac, Windows'ta aynı seçim).
+                Text("Voice for unknown characters").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                SegmentedTabs(options: [DubbingVoice.Gender.male: "Man", .female: "Woman"],
+                              selection: Binding(get: { model.settings.dubbing.cast.unknownGender },
+                                                 set: { model.settings.dubbing.cast.setUnknownGender($0) }))
+                caption("Used when the name doesn't show whether the character is a man or a woman. You can change each character's voice below.")
                 voiceRow(Text("Narrator and unnamed lines"), voice: $model.settings.dubbing.cast.narrator)
                 voiceRow(Text("Second speaker in dialogue"), voice: $model.settings.dubbing.cast.partner)
                 let names = model.settings.dubbing.cast.assignments.keys.sorted()

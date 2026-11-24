@@ -66,6 +66,14 @@ final class ReadQueueTests: XCTestCase {
                   space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!.makeImage()!
     }
 
+    /// `VisionReader`'ın yerine (testler Vision çalıştırmaz): yedek bağlamdaysa yedekten okur, değilse "asıl" döner.
+    private static func rescuedOrPrimary() throws -> Reading {
+        guard let rescuer = ReadQueue.activeRescuer else { return Reading(text: "asıl") }
+        let image = CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!.makeImage()!
+        return try rescuer.recognize(image, language: "en")
+    }
+
     /// Biten okumanın karesi hemen bırakılır; süre zamanlayıcıları onu `timeoutMs` boyunca tutmaz (GitHub #822). Mac'te
     /// pencere yakalamanın karesi okuma sırasındaki görüntüye bağlıdır; her okuma karesini 10 sn tutunca ScreenCaptureKit'in
     /// üç karelik havuzu doluyor, yeni kare gelmiyor, altyazı ~10,6 sn arayla okunuyordu.
@@ -205,7 +213,7 @@ final class ReadQueueTests: XCTestCase {
         XCTAssertTrue(events.all.contains { if case .rescueFailed(_, failures: 2) = $0 { return true } else { return false } })
     }
 
-    /// Takılma yinelenirse okuma yolu değişir: hızlı düzey (Neural Engine'siz) bu oturumda kalıcı olur.
+    /// Takılma yinelenirse okuma yolu değişir: hızlı düzey (Neural Engine'siz) bir süre (`fastLevelHoldMs`) kullanılır.
     func testRepeatedStallsSwitchToFastLevel() async throws {
         XCTAssertFalse(VisionReader.useFastLevel)
         defer { VisionReader.useFastLevel = false }
@@ -348,7 +356,7 @@ final class ReadQueueTests: XCTestCase {
         }
         XCTAssertLessThan(Date().timeIntervalSince(started), 2, "altyazı 5 sn'lik genel sınırı beklememeli")
         XCTAssertTrue(queue.isRescuing)
-        let reading = try await queue.run(priority: .subtitle) { try VisionReader().readLines(self.image(), deep: false) }
+        let reading = try await queue.run(priority: .subtitle) { try Self.rescuedOrPrimary() }
         XCTAssertEqual(reading.text, "yedekten")
     }
 
@@ -362,11 +370,228 @@ final class ReadQueueTests: XCTestCase {
         let background = Task { try? await queue.run(priority: .background) { hang.wait() } }
         try await Task.sleep(for: .milliseconds(50))
         let started = Date()
-        let reading = try await queue.run(priority: .subtitle) { try VisionReader().readLines(self.image(), deep: false) }
+        let reading = try await queue.run(priority: .subtitle) { try Self.rescuedOrPrimary() }
         XCTAssertEqual(reading.text, "yedekten")
         XCTAssertLessThan(Date().timeIntervalSince(started), 2)
         hang.release()
         _ = await background.value
+    }
+
+    // MARK: - #1210: Mac'te 15-20 dakikada bir "yazı okuma yanıt vermiyor" uyarısı, ardından bozuk çeviri
+
+    /// 1. Altyazıyı bekleten arka plan okuması (telefon, ek alan, ekran yazısı) takılma sayılmaz: uyarı çıkmaz (asıl
+    /// okuyucu takılı değil, `isRescuing` yanlış), sıradaki arka plan okumaları düşürülür, altyazı yalnız o tur yedekten
+    /// okunur. Arka plan okuması sürerken gelen altyazı beklemeden yedeğe gider; arka plan okuması bitince sonucunu alır,
+    /// yedek kapatılır ve altyazı yeniden asıl okuyucudan okunur.
+    func testBackgroundReadBlockingSubtitleIsNotAStall() async throws {
+        let gate = Hang()
+        defer { gate.release() }
+        let queue = ReadQueue(label: "test.yield", timeoutMs: 5000, subtitleTimeoutMs: 1000)
+        let rescuer = FakeRescuer()
+        queue.rescuer = rescuer
+        let events = Events()
+        queue.onEvent = { events.add($0) }
+
+        let background = Task { try await queue.run(priority: .background, detail: "telefon 64x64") { gate.wait(); return "telefon" } }
+        try await Task.sleep(for: .milliseconds(30))
+        let region = Task { try await queue.run(priority: .background, detail: "ek alan 64x64") { "ek alan" } }
+        let request = Task { try await queue.run(priority: .background, detail: "ekranı çevir 64x64", droppable: false) { "ekranı çevir" } }
+        try await Task.sleep(for: .milliseconds(30))
+
+        let first = try await queue.run(priority: .subtitle, detail: "altyazı 64x64") { try Self.rescuedOrPrimary() }
+        XCTAssertEqual(first.text, "yedekten", "altyazı bu tur yedekten okunur")
+        XCTAssertFalse(queue.isRescuing, "asıl okuyucu takılı sayılmaz: uyarı çıkmaz")
+        XCTAssertNil(queue.stalledMs)
+        XCTAssertGreaterThan(queue.backgroundSlowdown, 1, "arka plan turları kısılır")
+        do {
+            _ = try await region.value
+            XCTFail("sıradaki dönemsel arka plan okuması düşürülmeliydi")
+        } catch {
+            XCTAssertEqual(error as? ReadQueueError, .timedOut(ms: 5000))
+        }
+
+        // Arka plan okuması sürerken gelen altyazı sınırı beklemeden yedeğe gider.
+        let started = Date()
+        let second = try await queue.run(priority: .subtitle) { try Self.rescuedOrPrimary() }
+        XCTAssertEqual(second.text, "yedekten")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.5, "sınırı (1 sn) beklemez")
+
+        XCTAssertFalse(events.all.contains { if case .stalled = $0 { return true } else { return false } }, "takılma bildirilmez")
+        let yields = events.all.filter { if case .backgroundYielded(_, dropped: 1, rescued: true) = $0 { return true } else { return false } }
+        XCTAssertEqual(yields.count, 1, "yanından geçiş bir kez günlüğe yazılır")
+
+        gate.release()
+        let backgroundValue = try await background.value
+        XCTAssertEqual(backgroundValue, "telefon", "süren arka plan okuması sonucunu teslim eder")
+        let requestValue = try await request.value
+        XCTAssertEqual(requestValue, "ekranı çevir", "kullanıcının istediği okuma düşürülmez")
+        var text = ""
+        for _ in 0..<100 where text != "asıl" {
+            text = (try? await queue.run(priority: .subtitle) { try Self.rescuedOrPrimary() })?.text ?? ""
+            if text != "asıl" { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        XCTAssertEqual(text, "asıl", "arka plan okuması bitince altyazı asıl okuyucudan okunur")
+        XCTAssertEqual(rescuer.standDowns.value, 1, "o tur için açılan yedek kapatılır")
+        XCTAssertFalse(VisionReader.useFastLevel)
+    }
+
+    /// 1 (iPhone, yedek yok): altyazıyı bekleten arka plan okuması yine takılma sayılmaz; sıradaki arka plan okumaları
+    /// düşürülür, altyazı sırada öne geçer ve arka plan okuması biter bitmez asıl okuyucudan okunur.
+    func testBackgroundReadBlockingSubtitleWithoutRescueDropsBackgroundReads() async throws {
+        let gate = Hang()
+        defer { gate.release() }
+        let queue = ReadQueue(label: "test.yield.norescue", timeoutMs: 5000, subtitleTimeoutMs: 100)
+        let events = Events()
+        queue.onEvent = { events.add($0) }
+        let order = Order()
+
+        let background = Task { try await queue.run(priority: .background) { gate.wait(); order.add("telefon") } }
+        try await Task.sleep(for: .milliseconds(30))
+        let region = Task { try await queue.run(priority: .background) { order.add("ek alan") } }
+        try await Task.sleep(for: .milliseconds(20))
+        let subtitle = Task { try await queue.run(priority: .subtitle) { order.add("altyazı") } }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(queue.stalledMs, "takılma sayılmaz")
+        XCTAssertTrue(events.all.contains { if case .backgroundYielded(_, dropped: 1, rescued: false) = $0 { return true } else { return false } })
+        gate.release()
+        try await background.value
+        try await subtitle.value
+        do {
+            try await region.value
+            XCTFail("ek alan okuması düşürülmeliydi")
+        } catch {
+            XCTAssertEqual(error as? ReadQueueError, .timedOut(ms: 5000))
+        }
+        XCTAssertEqual(order.all, ["telefon", "altyazı"])
+        XCTAssertFalse(events.all.contains { if case .stalled = $0 { return true } else { return false } })
+    }
+
+    /// 1: arka plan okuması genel süre sınırında da bitmezse o zaman gerçek takılmadır (bildirilir, yedeğe geçilir).
+    func testBackgroundReadThatNeverReturnsIsStillAStall() async throws {
+        let hang = Hang()
+        defer { hang.release() }
+        let queue = ReadQueue(label: "test.yield.hang", timeoutMs: 400, subtitleTimeoutMs: 80)
+        queue.rescuer = FakeRescuer()
+        let events = Events()
+        queue.onEvent = { events.add($0) }
+        let background = Task { try? await queue.run(priority: .background) { hang.wait() } }
+        try await Task.sleep(for: .milliseconds(20))
+        _ = try await queue.run(priority: .subtitle) { try Self.rescuedOrPrimary() }
+        XCTAssertFalse(queue.isRescuing)
+        for _ in 0..<100 where queue.stalledMs == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNotNil(queue.stalledMs)
+        XCTAssertTrue(queue.isRescuing)
+        XCTAssertTrue(events.all.contains { if case .stalled(_, rescued: true) = $0 { return true } else { return false } })
+        hang.release()
+        _ = await background.value
+    }
+
+    /// 2. Hızlı düzey kalıcı değildir: süresi dolunca okumalar yeniden isabetli düzeyde verilir ve günlüğe yazılır.
+    /// Eskiden oturum boyunca kalıyordu; çeviriler bozuk geliyor, ancak uygulamayı yeniden açmak düzeltiyordu.
+    func testFastLevelIsRestoredAfterHold() async throws {
+        XCTAssertFalse(VisionReader.useFastLevel)
+        defer { VisionReader.useFastLevel = false }
+        let queue = ReadQueue(label: "test.restore", timeoutMs: 100, degradeAfterStalls: 1, fastLevelHoldMs: 300)
+        let events = Events()
+        queue.onEvent = { events.add($0) }
+        let hang = DispatchSemaphore(value: 0)
+        _ = try? await queue.run { hang.wait() }
+        hang.signal()
+        for _ in 0..<100 where queue.stalledMs != nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(VisionReader.useFastLevel)
+        XCTAssertTrue(events.all.contains(.degraded(stalls: 1)))
+
+        _ = try await queue.run { 1 }
+        XCTAssertTrue(VisionReader.useFastLevel, "süre dolmadan isabetli düzeye dönülmez")
+        try await Task.sleep(for: .milliseconds(350))
+        _ = try await queue.run { 2 }
+        XCTAssertFalse(VisionReader.useFastLevel, "süre dolunca isabetli düzeye dönülür")
+        XCTAssertTrue(events.all.contains { if case .restored(let ms) = $0 { return ms >= 300 } else { return false } })
+
+        // Yeniden takılırsa bir takılmada yine hızlı düzeye geçilir.
+        let again = DispatchSemaphore(value: 0)
+        _ = try? await queue.run { again.wait() }
+        again.signal()
+        for _ in 0..<100 where queue.stalledMs != nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(VisionReader.useFastLevel)
+    }
+
+    /// 2 (iPhone): takılan okuma bırakılınca geçilen hızlı düzey de süreli; bırakılan okuma bitmeden (Vision'ı hâlâ
+    /// tutuyor olabilir) isabetli düzeye dönülmez.
+    func testAbandonFastLevelIsRestoredAfterAbandonedReadFinishes() async throws {
+        defer { VisionReader.useFastLevel = false }
+        let hang = Hang()
+        defer { hang.release() }
+        let queue = ReadQueue(label: "test.restore.abandon", timeoutMs: 50, fastLevelHoldMs: 100)
+        let events = Events()
+        queue.onEvent = { events.add($0) }
+        _ = try? await queue.run { hang.wait() }
+        XCTAssertNotNil(queue.abandonStall(olderThanMs: 0))
+        XCTAssertTrue(VisionReader.useFastLevel)
+        try await Task.sleep(for: .milliseconds(150))
+        _ = try await queue.run { 1 }
+        XCTAssertTrue(VisionReader.useFastLevel, "bırakılan okuma bitmeden dönülmez")
+        hang.release()
+        for _ in 0..<100 where !events.all.contains(where: { if case .abandonedFinished = $0 { return true } else { return false } }) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        _ = try await queue.run { 2 }
+        XCTAssertFalse(VisionReader.useFastLevel)
+        XCTAssertTrue(events.all.contains { if case .restored = $0 { return true } else { return false } })
+    }
+
+    /// 3. Yedekten asıl okuyucuya dönüş kendiliğindendir: takılan altyazı okuması bitince yedek kapatılır, uyarının
+    /// dayandığı durum (`isRescuing`, `stalledMs`) kalkar, `recovered` bildirilir ve sonraki okuma asıl okuyucudadır.
+    func testRescueEndsAndWarningClearsWhenPrimaryRecovers() async throws {
+        let queue = ReadQueue(label: "test.recover", timeoutMs: 5000, subtitleTimeoutMs: 80)
+        let rescuer = FakeRescuer()
+        queue.rescuer = rescuer
+        let events = Events()
+        queue.onEvent = { events.add($0) }
+        let gate = DispatchSemaphore(value: 0)
+        _ = try? await queue.run(priority: .subtitle) { gate.wait() }
+        XCTAssertTrue(queue.isRescuing)
+        let rescued = try await queue.run(priority: .subtitle) { try Self.rescuedOrPrimary() }
+        XCTAssertEqual(rescued.text, "yedekten")
+        gate.signal()
+        for _ in 0..<100 where queue.isRescuing { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(queue.isRescuing)
+        XCTAssertNil(queue.stalledMs)
+        XCTAssertEqual(rescuer.standDowns.value, 1)
+        XCTAssertTrue(events.all.contains { if case .recovered = $0 { return true } else { return false } })
+        let primary = try await queue.run(priority: .subtitle) { try Self.rescuedOrPrimary() }
+        XCTAssertEqual(primary.text, "asıl")
+    }
+
+    /// 4. Altyazının kendi okuma sınırı cihazın son okumalarına uyar: ortanca × 3, en az `subtitleTimeoutMs`, en çok
+    /// `subtitleTimeoutCapMs`. Isınıp yavaşlayan Mac'te her okuma eski sabit sınırı aşınca yanlış alarm çıkıyordu.
+    func testSubtitleLimitAdaptsToRecentReadTimes() async throws {
+        let queue = ReadQueue(label: "test.adaptive", timeoutMs: 5000, subtitleTimeoutMs: 100, subtitleTimeoutCapMs: 2000)
+        let events = Events()
+        queue.onEvent = { events.add($0) }
+        XCTAssertEqual(queue.currentSubtitleTimeoutMs, 100, "yeterli okuma yokken taban sınır")
+        // Hızlı okumalar sınırı tabanın altına indirmez.
+        for _ in 0..<ReadQueue.subtitleMinSamples { _ = try await queue.run(priority: .subtitle) { 1 } }
+        XCTAssertEqual(queue.currentSubtitleTimeoutMs, 100)
+        // Cihaz yavaşladı: okumalar ~200 ms. Sınır ortanca × 3'e uzar. (Okumalar yedeksiz verilir: yavaş CI makinesinde
+        // erken sınıra takılmasınlar; süreleri yine de sayılır.)
+        for _ in 0..<ReadQueue.subtitleSampleCount { _ = try await queue.run(priority: .subtitle) { Thread.sleep(forTimeInterval: 0.2) } }
+        let limit = queue.currentSubtitleTimeoutMs
+        XCTAssertGreaterThanOrEqual(limit, 600)
+        XCTAssertLessThanOrEqual(limit, 2000)
+        // Yedek varken: eski sınırı (100 ms) çok aşan ama cihazın tipik süresine uyan okuma takılma sayılmaz.
+        queue.rescuer = FakeRescuer()
+        let value = try await queue.run(priority: .subtitle) { Thread.sleep(forTimeInterval: 0.3); return 7 }
+        XCTAssertEqual(value, 7)
+        XCTAssertFalse(queue.isRescuing)
+        XCTAssertFalse(events.all.contains { if case .stalled = $0 { return true } else { return false } })
+    }
+
+    /// 4: uyarlanan sınırın üst ucu (`subtitleTimeoutCapMs`, uygulamada 10 sn).
+    func testAdaptiveSubtitleLimitIsCapped() async throws {
+        let queue = ReadQueue(label: "test.adaptive.cap", timeoutMs: 5000, subtitleTimeoutMs: 50, subtitleTimeoutCapMs: 200)
+        for _ in 0..<ReadQueue.subtitleMinSamples { _ = try await queue.run(priority: .subtitle) { Thread.sleep(forTimeInterval: 0.1) } }
+        XCTAssertEqual(queue.currentSubtitleTimeoutMs, 200)
     }
 
     /// Yedek yokken (iPhone) altyazı için erken sınır uygulanmaz: beklemenin yerine geçecek okuyucu yok.
@@ -414,14 +639,14 @@ final class ReadQueueTests: XCTestCase {
         for _ in 0..<12 {
             _ = try? await queue.run(priority: .subtitle, detail: "altyazı 64x64") { () -> Reading in
                 // Yedek bağlamda değilse asıl okuyucudadır (Vision'ın yerinde): girer ve takılır.
-                guard ReadQueue.activeRescuer == nil else { return try VisionReader().readLines(self.image(), deep: false) }
+                guard ReadQueue.activeRescuer == nil else { return try Self.rescuedOrPrimary() }
                 primary.enter()
                 defer { primary.leave() }
                 hang.wait()
                 return .empty
             }
             _ = try? await queue.run(priority: .background, detail: "ek alan 64x64") { () -> Reading in
-                guard ReadQueue.activeRescuer == nil else { return try VisionReader().readLines(self.image(), deep: false) }
+                guard ReadQueue.activeRescuer == nil else { return try Self.rescuedOrPrimary() }
                 primary.enter()
                 defer { primary.leave() }
                 hang.wait()

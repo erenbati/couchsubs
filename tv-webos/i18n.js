@@ -24,6 +24,8 @@
       resolution: 'Görüntü',
       pictureWindow: 'Pencere',
       diagnostics: 'Tanı',
+      // Bağlı telefon/bilgisayardaki TV uygulaması bu TV'dekinden yeni (%1: o sürüm).
+      appOutdated: 'TV uygulaması eski, %1 var: telefonda/bilgisayarda "TV uygulamasını güncelle"',
       server: 'Uygulama',
       connection: 'Bağlantı',
       loading: '(yükleniyor)',
@@ -83,6 +85,7 @@
       resolution: 'Picture',
       pictureWindow: 'Window',
       diagnostics: 'Diagnostics',
+      appOutdated: 'TV app is out of date, %1 is available: "Update the TV App" on the phone/computer',
       server: 'App',
       connection: 'Connection',
       loading: '(loading)',

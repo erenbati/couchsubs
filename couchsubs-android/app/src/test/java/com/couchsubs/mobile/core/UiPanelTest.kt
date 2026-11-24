@@ -58,8 +58,39 @@ class UiPanelTest {
             { "TR: $it" }, recorder)
         repeat(2) { watcher.pass(setOf(help.id), listOf(help to crop(panel = true, signature = 1))) }
         assertTrue(recorder.sent.toString(), recorder.sent.contains(GameAreaPresets.HELP_ID to "TR: Follow Vicki to the car."))
-        watcher.pass(setOf(help.id), listOf(help to crop(panel = false, signature = 200)))
+        // Panel [RegionWatcher.PANEL_MISS_TURNS] tur art arda yoksa kutu kalkar.
+        repeat(RegionWatcher.PANEL_MISS_TURNS) { watcher.pass(setOf(help.id), listOf(help to crop(panel = false, signature = 200))) }
         assertEquals(GameAreaPresets.HELP_ID to "", recorder.sent.last())
+    }
+
+    /**
+     * #1202: arayüz kutusu tek karede bulunamayınca çeviri siliniyor, yazı aynı kaldığı için bir daha gelmiyordu. Bir iki
+     * karelik ıska çeviriyi silmez; üç tur sonra silinir, panel aynı yazıyla geri gelince çeviri yeniden gösterilir (Mac/iPhone
+     * ve Windows ile aynı).
+     */
+    @Test
+    fun presetAreaKeepsItsTranslationThroughShortPanelMissesAndComesBackWithTheSameText() {
+        val recorder = Recorder()
+        val watcher = RegionWatcher({ Reading(listOf(TextLine("Follow Vicki to the car.", TextBox(0.1, 0.2, 0.9, 0.3)))) },
+            { "TR: $it" }, recorder)
+        fun pass(panel: Boolean, signature: Int) = watcher.pass(setOf(help.id), listOf(help to crop(panel, signature)))
+        repeat(2) { pass(panel = true, signature = 1) }
+        val shown = GameAreaPresets.HELP_ID to "TR: Follow Vicki to the car."
+        assertEquals(shown, recorder.sent.last())
+        val count = recorder.sent.size
+        // İki tur ıska (iz değişmese de ikinci tur yeniden denetler): çeviri kalır.
+        pass(panel = false, signature = 200)
+        pass(panel = false, signature = 200)
+        assertEquals(count, recorder.sent.size)
+        // Panel geri geldi: aynı yazı yeniden çevrilmez, kutu ekranda kalır.
+        repeat(2) { pass(panel = true, signature = 1) }
+        assertEquals(shown, recorder.sent.last())
+        // Üç tur art arda yok: silinir.
+        repeat(RegionWatcher.PANEL_MISS_TURNS) { pass(panel = false, signature = 200) }
+        assertEquals(GameAreaPresets.HELP_ID to "", recorder.sent.last())
+        // Panel aynı yazıyla (ve silindiği karedekiyle aynı izle) geri gelince çeviri yeniden gösterilir.
+        repeat(2) { pass(panel = true, signature = 200) }
+        assertEquals(shown, recorder.sent.last())
     }
 
     @Test

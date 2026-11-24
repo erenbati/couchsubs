@@ -90,4 +90,99 @@ class PhoneJitterTest {
         assertNull(PhoneSteady.translation("On", known))
         assertEquals("Yeni", PhoneSteady.translation("New rnessage", mapOf("New message" to "Yeni")))
     }
+
+    // Yanda Panel'in yazı boyu ve yeri (#1152, GTA 6: "telefon titreyince panelin yazıları büyüyüp küçülüyor").
+
+    private val still = GamePhoneGeometry.Pose(0.70, 0.19, 0.70, 0.87)
+
+    private fun shaken(scale: Double = 1.0, dx: Double = 0.0, dy: Double = 0.0): GamePhoneGeometry.Pose {
+        val cy = (still.topY + still.bottomY) / 2 + dy
+        val half = (still.bottomY - still.topY) / 2 * scale
+        return GamePhoneGeometry.Pose(still.topX + dx, cy - half, still.bottomX + dx, cy + half)
+    }
+
+    /** Yakın kamerada el titremesi: boy ±%8, ortası boyun ±%5'i; okunan satır yüksekliği ±%20. */
+    private val shakes = listOf(
+        doubleArrayOf(1.08, 0.004, -0.03, 1.2), doubleArrayOf(0.93, -0.006, 0.02, 0.82),
+        doubleArrayOf(1.05, 0.003, 0.034, 1.15), doubleArrayOf(0.95, -0.002, -0.025, 0.85),
+        doubleArrayOf(1.07, 0.005, 0.01, 1.18), doubleArrayOf(0.92, -0.004, -0.034, 0.8),
+        doubleArrayOf(1.03, 0.006, 0.028, 1.1), doubleArrayOf(0.97, -0.006, -0.01, 0.9),
+    )
+
+    private fun chatItems(line: Double) = listOf(
+        ScreenTranslation.Item("Where are you man", "Neredesin adamım bu saatte, herkes seni bekliyor",
+            TextBox(0.75, 0.2, 0.9, 0.2 + line), line,
+            phone = ScreenPhoneCard.Placement(ScreenPhoneCard.Role.INCOMING, TextBox(0.1, 0.2, 0.8, 0.23))),
+        ScreenTranslation.Item("On my way", "Yoldayım, beş dakikaya oradayım", TextBox(0.75, 0.4, 0.9, 0.4 + line), line,
+            phone = ScreenPhoneCard.Placement(ScreenPhoneCard.Role.OUTGOING, TextBox(0.1, 0.4, 0.8, 0.43))),
+    )
+
+    @Test
+    fun panelKeepsItsSizeAndPlaceWhileThePhoneShakes() {
+        val steady = PhonePanelSteady()
+        val first = steady.steadyPose(still, 0)
+        assertTrue(first.resized)
+        assertEquals(0.02, steady.steadyLine(0.02, 0)!!, 0.0)
+        val drawn = ScreenPhoneCard.layout(chatItems(0.02), ScreenPhoneCard.Handset(first.pose, 16.0 / 9), lockedLine = 0.02)
+        shakes.forEachIndexed { turn, shake ->
+            val now = (turn + 1) * 450L
+            val placed = steady.steadyPose(shaken(shake[0], shake[1], shake[2]), now)
+            assertEquals("tur $turn", still, placed.pose)
+            assertFalse(placed.resized)
+            val measured = ScreenPhoneCard.measuredLine(chatItems(0.02 * shake[3]))
+            assertEquals(0.02 * shake[3], measured!!, 0.0)
+            val line = steady.steadyLine(measured, now)
+            assertEquals(0.02, line!!, 0.0)
+            val laid = ScreenPhoneCard.layout(chatItems(0.02 * shake[3]), ScreenPhoneCard.Handset(placed.pose, 16.0 / 9),
+                lockedLine = line)
+            assertEquals("tur $turn", drawn, laid)
+        }
+    }
+
+    @Test
+    fun panelFollowsARealZoomAfterItLastsASecond() {
+        val steady = PhonePanelSteady()
+        steady.steadyPose(still, 0)
+        steady.steadyLine(0.02, 0)
+        val near = shaken(scale = 1.4)
+        assertEquals(still, steady.steadyPose(near, 450).pose)
+        assertEquals(still, steady.steadyPose(near, 900).pose)
+        assertEquals(still, steady.steadyPose(still, 1350).pose)
+        assertEquals(still, steady.steadyPose(near, 1800).pose)
+        assertEquals(still, steady.steadyPose(near, 2250).pose)
+        val zoomed = steady.steadyPose(near, 2800)
+        assertEquals(near, zoomed.pose)
+        assertTrue(zoomed.resized)
+        assertEquals(0.028, steady.steadyLine(0.028, 2800)!!, 0.0)
+        assertEquals(0.028, steady.steadyLine(0.025, 3250)!!, 0.0)
+    }
+
+    @Test
+    fun panelFollowsARealMoveWithoutChangingItsTextSize() {
+        val steady = PhonePanelSteady()
+        steady.steadyPose(still, 0)
+        steady.steadyLine(0.02, 0)
+        val moved = shaken(dx = -0.2)
+        assertEquals(still, steady.steadyPose(moved, 450).pose)
+        val placed = steady.steadyPose(moved, 1450)
+        assertEquals(moved, placed.pose)
+        assertFalse(placed.resized)
+        assertEquals(0.02, steady.steadyLine(0.023, 1450)!!, 0.0)
+        assertEquals(moved, steady.steadyPose(shaken(1.06, -0.196, 0.02), 1900).pose)
+    }
+
+    @Test
+    fun wrongFirstTextSizeIsCorrectedOnlyWhenTheNewSizeLasts() {
+        val steady = PhonePanelSteady()
+        assertEquals(0.014, steady.steadyLine(0.014, 0)!!, 0.0)
+        assertEquals(0.014, steady.steadyLine(null, 200)!!, 0.0)
+        assertEquals(0.014, steady.steadyLine(0.021, 450)!!, 0.0)
+        assertEquals(0.014, steady.steadyLine(0.015, 900)!!, 0.0)
+        assertEquals(0.014, steady.steadyLine(0.021, 1350)!!, 0.0)
+        assertEquals(0.014, steady.steadyLine(0.022, 2000)!!, 0.0)
+        assertEquals(0.021, steady.steadyLine(0.021, 2400)!!, 0.0)
+        steady.reset()
+        assertNull(steady.line)
+        assertTrue(steady.steadyPose(shaken(dx = 0.1), 2500).resized)
+    }
 }

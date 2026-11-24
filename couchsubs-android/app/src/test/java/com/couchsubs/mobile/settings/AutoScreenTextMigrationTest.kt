@@ -28,14 +28,28 @@ class AutoScreenTextMigrationTest {
 
     /**
      * beta.63–68: hazır alanlar varsayılan açıktı; otomatik ekran yazısı kapalıyken de GTA 6'da menü ve bildirimler
-     * çevriliyordu. Göç hazır alanları ve GTA 6 telefonunu bir kez kapatır; kullanıcı otomatik ekran yazısını açmışsa
-     * dokunmaz; sonra kullanıcının açtığı ayar bir daha kapatılmaz.
+     * çevriliyordu. Göç hazır alanları bir kez kapatır (GTA 6 telefonuna artık dokunmaz); kullanıcı otomatik ekran
+     * yazısını açmışsa dokunmaz; sonra kullanıcının açtığı ayar bir daha kapatılmaz.
      */
     @Test
-    fun presetsAndPhoneAreTurnedOffOnceWhenAutoScreenTextIsOff() {
+    fun presetsAreTurnedOffOnceWhenAutoScreenTextIsOff() {
         assertTrue(ScreenTextExtrasMigration.apply(reset = false, autoScreenText = false)!!)
         assertFalse(ScreenTextExtrasMigration.apply(reset = false, autoScreenText = true)!!)
         assertNull(ScreenTextExtrasMigration.apply(reset = true, autoScreenText = false))
         assertNull(ScreenTextExtrasMigration.apply(reset = true, autoScreenText = true))
+    }
+
+    /** #1202: eski göçün kapattığı GTA 6 telefonu bir kez açılır; işaret konduktan sonra kullanıcının seçimine dokunulmaz. */
+    @Test
+    fun gamePhoneIsTurnedOnOnce() {
+        assertTrue(GamePhoneMigration.apply(reenabled = false))
+        assertFalse(GamePhoneMigration.apply(reenabled = true))
+    }
+
+    /** Oturum başı günlük satırında telefonun açık mı kapalı mı olduğu görünür (#1202). */
+    @Test
+    fun sessionLogShowsThePhoneSetting() {
+        assertEquals("otomatik ekran yazısı: kapalı, telefon: açık", SessionLogSummary.of(autoScreenText = false, readsGamePhone = true))
+        assertEquals("otomatik ekran yazısı: açık, telefon: kapalı", SessionLogSummary.of(autoScreenText = true, readsGamePhone = false))
     }
 }

@@ -6,12 +6,12 @@ import XCTest
 final class SpeakerColorsTests: XCTestCase {
     /// Windows, Android ve TV uygulaması aynı değerleri üretir (aynı palet, aynı FNV-1a).
     func testColorIsStablePerNameAndCaseInsensitive() {
-        XCTAssertEqual(SpeakerColors.color(for: "Mattia"), "#90CAF9")
-        XCTAssertEqual(SpeakerColors.color(for: "MATTIA"), "#90CAF9")
-        XCTAssertEqual(SpeakerColors.color(for: " Mattia "), "#90CAF9")
-        XCTAssertEqual(SpeakerColors.color(for: "Lucia"), "#F06292")
-        XCTAssertEqual(SpeakerColors.color(for: "Jason"), "#4DD0E1")
-        XCTAssertEqual(SpeakerColors.color(for: "Cal"), "#4FC3F7")
+        XCTAssertEqual(SpeakerColors.color(for: "Mattia"), "#F76AB7")
+        XCTAssertEqual(SpeakerColors.color(for: "MATTIA"), "#F76AB7")
+        XCTAssertEqual(SpeakerColors.color(for: " Mattia "), "#F76AB7")
+        XCTAssertEqual(SpeakerColors.color(for: "Lucia"), "#2AD5E5")
+        XCTAssertEqual(SpeakerColors.color(for: "Jason"), "#49B5FA")
+        XCTAssertEqual(SpeakerColors.color(for: "Cal"), "#FEA757")
     }
 
     func testPaletteParsesToComponents() {
@@ -26,7 +26,7 @@ final class SpeakerColorsTests: XCTestCase {
     func testTurkishHeadingsAreNotSpeakers() {
         XCTAssertTrue(SpeakerColors.speakers(in: "Hedef: Arabaya bin.\nGörev: Lucia'yı bul.\nNOT: Kaydet.\nİpucu: Koş.").isEmpty)
         XCTAssertEqual(SpeakerColors.segments(in: "Mattia: Gidelim.\nHedef: Arabaya bin."), [
-            .init(text: "Mattia:", color: "#90CAF9"),
+            .init(text: "Mattia:", color: "#F76AB7"),
             .init(text: " Gidelim.\nHedef: Arabaya bin.", color: nil),
         ])
     }
@@ -34,7 +34,7 @@ final class SpeakerColorsTests: XCTestCase {
     func testSpeakersAreUniqueInOrder() {
         let speakers = SpeakerColors.speakers(in: "Lucia: Gel.\nMattia: Geliyorum.\nLucia: Çabuk.")
         XCTAssertEqual(speakers.map(\.name), ["Lucia", "Mattia"])
-        XCTAssertEqual(speakers.map(\.color), ["#F06292", "#90CAF9"])
+        XCTAssertEqual(speakers.map(\.color), ["#2AD5E5", "#F76AB7"])
         XCTAssertTrue(SpeakerColors.speakers(in: "Saat 10:30 oldu").isEmpty)
         XCTAssertTrue(SpeakerColors.speakers(in: "Note: Kaydet").isEmpty)
     }
@@ -47,11 +47,21 @@ final class SpeakerColorsTests: XCTestCase {
         XCTAssertEqual(segments.map(\.text).joined(), text)
         XCTAssertEqual(segments, [
             .init(text: "Görev başladı\n", color: nil),
-            .init(text: "Mattia:", color: "#90CAF9"),
+            .init(text: "Mattia:", color: "#F76AB7"),
             .init(text: " Buradan\ngidelim.\n", color: nil),
-            .init(text: "Lucia :", color: "#F06292"),
+            .init(text: "Lucia :", color: "#2AD5E5"),
             .init(text: " Tamam.", color: nil),
         ])
         XCTAssertEqual(SpeakerColors.segments(in: "Adsız"), [.init(text: "Adsız", color: nil)])
+    }
+
+    /// Karakter Adı › Tüm Satır: ad ve cümle, devam satırıyla birlikte konuşanın renginde.
+    func testWholeLineColorsTheSentence() {
+        let text = "Görev başladı\nMattia: Buradan\ngidelim.\nLucia : Tamam."
+        XCTAssertEqual(SpeakerColors.segments(in: text, wholeLine: true), [
+            .init(text: "Görev başladı\n", color: nil),
+            .init(text: "Mattia: Buradan\ngidelim.\n", color: "#F76AB7"),
+            .init(text: "Lucia : Tamam.", color: "#2AD5E5"),
+        ])
     }
 }

@@ -58,6 +58,8 @@ enum TVText {
     static func errNotRestarted(_ a0: String) -> String { String(format: String(localized: "The TV's settings are right (Developer mode on, Host PC IP %@), but the TV has not fully restarted since then, so it does not accept the phone yet. Hold the power button on the remote until the TV turns off and comes back on with the Samsung logo (about 5 seconds), or unplug the TV for 30 seconds, then try again."), a0) }
     static func errOtherIp(_ a0: String, _ a1: String) -> String { String(format: String(localized: "The TV's Host PC IP is %1$@, but this phone's address is %2$@. In the TV's Developer mode window, set Host PC IP to %2$@, then restart the TV fully (hold the power button until the Samsung logo appears, about 5 seconds)."), a0, a1) }
     static func errDevOff(_ a0: String) -> String { String(format: String(localized: "Developer mode is off on the TV. Turn it on with the steps above, type this phone's address (%@) as Host PC IP, then restart the TV fully (hold the power button until the Samsung logo appears, about 5 seconds)."), a0) }
+    /// Samsung kurulum bağlantısı reddedilince her durumda yazılan kısa yol: menü, iki ayar ve bu cihazın adresi (#1158).
+    static func hostPcSteps(_ a0: String) -> String { String(format: String(localized: "On the TV: Apps › press 1 2 3 4 5 › Developer mode On, Host PC IP = this device's IP (%@), then restart the TV."), a0) }
     static var errTooOld: String { String(localized: "This Samsung TV is too old for the CouchSubs TV app (2016 models and later are supported).") }
     static var errLogin: String { String(localized: "Samsung sign-in did not complete. Try again and finish signing in on the page that opens.") }
     static var errCertificate: String { String(localized: "Samsung did not issue the signing certificate. Try again in a few minutes.") }
@@ -85,9 +87,12 @@ enum TVText {
     static var lgStep4: String { String(localized: "4. Type the Passphrase above and press Install and open. The passphrase is only needed for the first install.") }
     static func lgTvSays(_ a0: String) -> String { String(format: String(localized: "TV says: %@"), a0) }
     static var lgErrUnreachable: String { String(localized: "The TV did not respond. Make sure the TV is on and on the same Wi-Fi as this phone, and that Dev Mode Status is on in the Developer Mode app.") }
-    static var lgErrRestartNeeded: String { String(localized: "The TV's Key Server is on, but its developer connection is closed. After Dev Mode Status is turned on the TV has to restart: press RESTART in the Developer Mode app (or unplug the TV and plug it back in), then open the app again, turn on Key Server and try again.") }
+    static var lgErrRestartNeeded: String { String(localized: "Developer mode looks on (the TV's Key Server answers), but the TV refuses the install connection. Unplug the TV for 30 seconds and plug it back in (or press RESTART in the Developer Mode app), then open the Developer Mode app, check that Dev Mode Status is on, turn on Key Server and try again. On some TVs that use webOS Hub this connection may be closed in the TV's software; the TV app then cannot be installed this way.") }
     static var lgErrDevModeOff: String { String(localized: "The TV is on at this address, but developer mode is off. Open the Developer Mode app on the TV: Dev Mode Status must be on (it turns off by itself when its time runs out; turn it on again and the TV restarts). Then turn on Key Server and try again.") }
-    static var lgErrTvNotFound: String { String(localized: "No TV responds at this address. The TV may be off, on another Wi-Fi, or its address may have changed. Turn the TV on, check its IP address in the TV's Settings › Network, and pick the right TV from the list above.") }
+    /// Kayıtlı adreste TV hiç yanıt vermiyor ve ağda yeniden aranınca da bulunamadı (`TVReach`; Mac, Windows, Android ile aynı).
+    static var tvNotResponding: String { String(localized: "The TV isn't responding at this address (is it on and on the same network?)") }
+    static var tvNotRespondingHint: String { String(localized: "It was searched for on the network but not found. Pick the right TV from the list above or type its IP address (on the TV under Settings › Network).") }
+    static var lgErrTvNotFound: String { tvNotResponding + "\n\n" + tvNotRespondingHint }
     static var lgErrKeyServer: String { String(localized: "Key Server is off. Turn it on in the Developer Mode app and keep the app on screen.") }
     static var lgErrPassphrase: String { String(localized: "The passphrase is not correct. Check it on the TV screen.") }
     static var lgErrKeyRefused: String { String(localized: "The TV refused the key. Open Key Server and type the passphrase again.") }

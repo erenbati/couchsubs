@@ -17,7 +17,9 @@ internal static class SpeakerText
     /// <param name="source">Satırın özgün metni; konuşan adları buradan çıkarılır.</param>
     /// <param name="alpha">Renkli parçaların saydamlığı (yayın penceresinde soluk üst satırlar için).</param>
     /// <param name="nameOnly">Konuşan rengi yalnız adı boyar (yeni arayüz, <c>style.nameOnly</c>); satırın geri kalanı yazı renginde.</param>
-    public static void Fill(TextBlock block, string shown, string source, bool enabled, SpeakerColorBook book, byte alpha = 255, bool nameOnly = false)
+    /// <param name="wholeLine">Karakter Adı › Tüm Satır: ad ve cümle konuşanın renginde.</param>
+    public static void Fill(TextBlock block, string shown, string source, bool enabled, SpeakerColorBook book, byte alpha = 255, bool nameOnly = false,
+        bool wholeLine = false)
     {
         var names = enabled ? SpeakerColors.Speakers(source) : [];
         if (names.Count == 0)
@@ -26,10 +28,10 @@ internal static class SpeakerText
             return;
         }
         block.Inlines.Clear();
-        foreach (var segment in SpeakerColors.Segments(shown, names, book.Color))
+        foreach (var segment in SpeakerColors.Segments(shown, names, book.Color, wholeLine))
         {
             var brush = segment.Color is { } hex ? new SolidColorBrush(Parse(hex, alpha)) : null;
-            if (nameOnly && brush is not null && names.FirstOrDefault(name => segment.Text.StartsWith(name, StringComparison.Ordinal)) is { } speaker)
+            if (nameOnly && !wholeLine && brush is not null && names.FirstOrDefault(name => segment.Text.StartsWith(name, StringComparison.Ordinal)) is { } speaker)
             {
                 // Yalnız ad (ve ardındaki iki nokta) renkli.
                 var end = speaker.Length;

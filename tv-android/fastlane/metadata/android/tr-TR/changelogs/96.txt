@@ -1,0 +1,1 @@
+0.9.93: Karakter Adı > "Tüm Satır" seçiliyse konuşanın adı ve cümlesi o karakterin renginde gösteriliyor.

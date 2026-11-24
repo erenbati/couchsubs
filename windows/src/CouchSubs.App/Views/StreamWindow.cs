@@ -30,6 +30,8 @@ public sealed class StreamWindow : Window
     private readonly StackPanel linesPanel = new() { VerticalAlignment = VerticalAlignment.Bottom };
     /// <summary>Ek alanların (görev, telefon mesajı, bildirim) çevirileri; saydam penceredeki gibi üstte, alanın yanına yaslı.</summary>
     private readonly DesktopRegionsPanel regionsPanel;
+    /// <summary>Özgün stilli ekran yazısı çevirileri oyun karesindeki kendi yerlerinde (Mac ScreenTextBlocks).</summary>
+    private readonly ScreenTextCanvas screenTextLayer = new();
     private readonly Dictionary<string, (string Text, CouchSubs.Core.TextBox? Box, IReadOnlyList<ScreenTranslation.Item>? Blocks)> regions = [];
     private readonly Border linesHost;
     /// <summary>Düz zemin; telefon katmanı ve altyazı bunun üstünde.</summary>
@@ -90,7 +92,7 @@ public sealed class StreamWindow : Window
         layers.Children.Add(regionsPanel);
         layers.Children.Add(linesPanel);
         linesHost = new Border { Child = layers };
-        root = new Grid { Children = { phoneLayer, linesHost } };
+        root = new Grid { Children = { phoneLayer, screenTextLayer, linesHost } };
         root.Children.Add(BuildBar());
         Content = root;
         // Çubuk yalnız fare pencerenin üstündeyken görünür: yayın programı yakalarken görüntüye girmez.
@@ -278,7 +280,19 @@ public sealed class StreamWindow : Window
             screenRegionUntil = 0;
         }
         var lines = stack.Lines(now).ToList();
-        regionsPanel.ShowRegions(regions, MakeRegionBox);
+        // Özgün stilli ekran yazısı (Ekranı çevir ve otomatik ekran yazısı) kendi yerinde çizilir; kalanlar eskisi gibi
+        // pencerenin üstünde (Mac StreamWindow ile aynı). "Ekranı çevir" ekrandayken onun altında kalan bloklar çizilmez.
+        var shown = ScreenRegions.Visible(regions).ToList();
+        var inPlace = ScreenTranslation.Layered(shown.Where(pair => pair.Key != "game-phone")
+                                                     .SelectMany(pair => pair.Value.Blocks ?? []).Where(ScreenTextCanvas.Draws));
+        var listed = new Dictionary<string, (string Text, CouchSubs.Core.TextBox? Box, IReadOnlyList<ScreenTranslation.Item>? Blocks)>();
+        foreach (var (id, region) in shown)
+        {
+            if (id == "game-phone" || region.Blocks is not { Count: > 0 } blocks) { listed[id] = region; continue; }
+            var rest = blocks.Where(block => !ScreenTextCanvas.Draws(block)).ToList();
+            if (rest.Count > 0) listed[id] = (region.Text, region.Box, rest);
+        }
+        regionsPanel.ShowRegions(listed, MakeRegionBox);
         linesPanel.Children.Clear();
         foreach (var id in boxes.Keys.Except(lines.Select(l => l.Id)).ToList()) boxes.Remove(id);
         foreach (var line in lines)
@@ -295,6 +309,11 @@ public sealed class StreamWindow : Window
             }
             linesPanel.Children.Add(box);
         }
+        linesPanel.UpdateLayout();
+        Rect? subtitles = linesPanel.Children.Count > 0 && linesPanel.ActualHeight > 0
+            ? linesPanel.TransformToAncestor(root).TransformBounds(new Rect(linesPanel.RenderSize))
+            : null;
+        screenTextLayer.Show(inPlace, subtitles);
         timer.Stop();
         if (ScreenRegions.NextChange(stack.NextChange(now), screenRegionUntil) is { } next)
         {
@@ -329,7 +348,7 @@ public sealed class StreamWindow : Window
             Effect = boxed ? null : new DropShadowEffect { Color = Colors.Black, ShadowDepth = 2 * scale, BlurRadius = 4 * scale, Opacity = 1, Direction = 270 },
         };
         // Konuşana göre renk: "Ad: …" satırı o konuşanın renginde (ayar kapalıysa düz metin).
-        SpeakerText.Fill(text, wrapped.Text, line.Text, controller.Settings.SpeakerColors, controller.SpeakerBook, color.A, style.NameOnly);
+        SpeakerText.Fill(text, wrapped.Text, line.Text, controller.Settings.SpeakerColors, controller.SpeakerBook, color.A, style.NameOnly, style.NameColorMode == NameColorMode.Line);
         return new Border
         {
             Background = boxed ? new SolidColorBrush(SpeakerText.Rgb(style.BackgroundRgb)) : Brushes.Transparent,

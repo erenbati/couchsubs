@@ -15,9 +15,10 @@ final class DevModeInstallerTests: XCTestCase {
         }
     }
 
-    private func installer(_ runner: FakeRunner) -> DevModeInstaller {
+    private func installer(_ runner: FakeRunner, keyServerOpen: Bool = false) -> DevModeInstaller {
         DevModeInstaller(host: "192.168.1.230", keyFile: URL(fileURLWithPath: "/tmp/key"), runner: runner,
-                         pollInterval: .milliseconds(1), installTimeout: .milliseconds(200), verifyTimeout: .milliseconds(200))
+                         pollInterval: .milliseconds(1), installTimeout: .milliseconds(200), verifyTimeout: .milliseconds(200),
+                         keyServerOpen: { _ in keyServerOpen })
     }
 
     private func isInstall(_ line: String) -> Bool { line.contains("appInstallService") }
@@ -95,6 +96,30 @@ final class DevModeInstallerTests: XCTestCase {
         }
     }
 
+    /// #200, #1116: Key Server anahtarı verdi ama 9922 "Connection refused" (webOS Hub'lı TV). "TV yanıt vermedi" denmez.
+    func testRefusedSshWhileKeyServerAnswersIsReportedAsClosedDeveloperConnection() async {
+        let runner = FakeRunner()
+        let reply = "ssh: connect to host 192.168.1.230 port 9922: Connection refused"
+        runner.answers = [{ _ in CommandResult(status: 255, output: reply) }]
+        do {
+            _ = try await installer(runner, keyServerOpen: true).installedVersion()
+            XCTFail("Hata bekleniyordu")
+        } catch {
+            XCTAssertEqual(error as? DevModeFailure, DevModeFailure(.devConnectionClosed, detail: reply))
+        }
+    }
+
+    func testRefusedSshWithKeyServerClosedIsStillUnreachable() async {
+        let runner = FakeRunner()
+        runner.answers = [{ _ in CommandResult(status: 255, output: "ssh: connect to host 192.168.1.230 port 9922: Connection refused") }]
+        do {
+            _ = try await installer(runner, keyServerOpen: false).installedVersion()
+            XCTFail("Hata bekleniyordu")
+        } catch {
+            XCTAssertEqual(error as? DevModeError, .unreachable)
+        }
+    }
+
     func testUnreachableTVIsReportedSeparately() async {
         let runner = FakeRunner()
         runner.answers = [{ _ in CommandResult(status: 255, output: "ssh: connect to host port 9922: Operation timed out") }]
@@ -124,7 +149,40 @@ final class DevModeInstallerTests: XCTestCase {
         XCTAssertTrue(runner.calls[0].arguments.last!.contains("rm -f /media/developer/temp/com.couchsubs.tv_*.ipk"))
         XCTAssertTrue(runner.calls[1].arguments.last!.contains("luna://com.webos.appInstallService/dev/install"))
         XCTAssertTrue(runner.calls[1].arguments.last!.contains("\"ipkUrl\":\"\(remote)\""))
-        XCTAssertTrue(runner.calls.last!.arguments.last!.contains("rm -f '\(remote)'"))
+        XCTAssertTrue(runner.calls.dropLast().last!.arguments.last!.contains("rm -f '\(remote)'"))
+        // Kurulum doğrulandıktan sonra açık (eski) uygulama kapatılır (beta.89: webOS eski süreci tutuyordu).
+        XCTAssertEqual(runner.calls.last!.arguments.last!, DevModeInstaller.closeCommand)
+    }
+
+    /// beta.89: kurulumdan sonra çalışan uygulama kapatılır; komut iPhone, Android ve Windows'takiyle aynı.
+    func testCloseCommandIsTheSameOnEveryPlatform() throws {
+        XCTAssertEqual(DevModeInstaller.closeCommand,
+                       #"/usr/bin/luna-send-pub -n 1 'luna://com.webos.applicationManager/closeByAppId' '{"id":"com.couchsubs.tv"}'; sleep 2"#)
+        let repo = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let escaped = #"luna-send-pub -n 1 'luna://com.webos.applicationManager/closeByAppId' '{\"id\":\""#
+        for file in ["windows/src/CouchSubs.Core/LgTv/DevModeInstaller.cs",
+                     "couchsubs-android/app/src/main/java/com/couchsubs/mobile/tv/lg/LgInstaller.kt",
+                     "couchsubs-ios/CouchSubs/TVInstall/LGPhoneInstall.swift"] {
+            let source = try String(contentsOf: repo.appendingPathComponent(file), encoding: .utf8)
+            XCTAssertTrue(source.contains(escaped), file)
+            XCTAssertTrue(source.contains("closeByAppId"), file)
+        }
+    }
+
+    func testRunningCheckRestartsOnceThenReportsAStaleApp() {
+        var check = TVAppRunningCheck(expected: "0.9.86")
+        XCTAssertEqual(check.report("0.9.81"), .restartAgain)
+        XCTAssertEqual(check.report("0.9.81"), .stale)
+        var fine = TVAppRunningCheck(expected: "0.9.86")
+        XCTAssertEqual(fine.report("0.9.86"), .running)
+        var newer = TVAppRunningCheck(expected: "0.9.9")
+        XCTAssertEqual(newer.report("0.9.10"), .running)
+        var unreported = TVAppRunningCheck(expected: "0.9.86")
+        XCTAssertEqual(unreported.report(""), .restartAgain)
+        XCTAssertTrue(TVAppRunningCheck.isStale(running: "0.9.81", installed: "0.9.84"))
+        XCTAssertFalse(TVAppRunningCheck.isStale(running: "0.9.84", installed: "0.9.84"))
+        XCTAssertFalse(TVAppRunningCheck.isStale(running: "0.9.81", installed: ""))
     }
 
     func testInstallCommandKeepsTheSubscriptionOpenUntilTheTVAnswers() {
@@ -197,7 +255,8 @@ final class DevModeInstallerTests: XCTestCase {
             return line.contains("appinfo.json") ? CommandResult(status: 0, output: "\"version\": \"0.6.1\"") : nil
         }]
         try await installer(runner).install(package: URL(fileURLWithPath: "/tmp/a.ipk"), version: "0.6.1")
-        XCTAssertTrue(runner.calls.last!.arguments.last!.contains("rm -f '/media/developer/temp/a.ipk'"))
+        XCTAssertTrue(runner.calls.dropLast().last!.arguments.last!.contains("rm -f '/media/developer/temp/a.ipk'"))
+        XCTAssertEqual(runner.calls.last!.arguments.last!, DevModeInstaller.closeCommand)
     }
 
     func testInstallTimesOutWhenTheVersionNeverChanges() async {

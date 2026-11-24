@@ -29,20 +29,24 @@ extension AppModel {
     /// Pencere görünmeli mi: altyazı bilgisayar ekranında gösteriliyor ve ekranda bir satır var (ya da yeri ayarlanıyor).
     var overlayVisible: Bool {
         settings.output.showsOnComputer && (overlayAdjusting || !overlayLines.isEmpty || overlayRegions.contains { $0.items == nil }
-                                             || !overlayPhoneItems.isEmpty)
+                                             || (!overlayPhoneItems.isEmpty && !drawsPhoneInPlace))
     }
+
+    /// GTA 6 telefonu oyunun üstünde, yerinde Türkçe çiziliyor (`PhoneTwinOverlayController`): telefonun balonları altyazı
+    /// penceresinde ayrıca gösterilmez (balonlar çapanın başvuru koordinatındadır).
+    var drawsPhoneInPlace: Bool { phoneAnchor != nil }
 
     /// Pencere tıklamaları geçiriyor mu (ayarlanırken hiçbir zaman).
     var overlayIgnoresMouse: Bool { settings.overlayClickThrough && !overlayAdjusting }
 
     func overlayReceive(_ event: SubtitleEvent) {
-        guard settings.output.showsOnComputer || streamWindowOpen else { return }
+        guard settings.output.showsOnComputer || streamWindowOpen || drawsPhoneInPlace else { return }
         let now = overlayClock()
         switch event {
         case .subtitle(let text, let durationMs, let paragraphs, let replaces, let box):
             overlayScreenUntil = 0
-            // "Örtsün": oyundaki altyazının yeri gelmezse son bilinen yer örtülür; yazı boyu seçilen boyda kalır, ancak
-            // 3 satıra sığmazsa bir kademe küçülür (bkz. CoverFontScale; TV ve OBS sayfası da aynı).
+            // "Örtsün": oyundaki altyazının yeri gelmezse son bilinen yer örtülür; yazı boyu hep seçilen boyda kalır;
+            // 3 satıra sığmazsa küçülmez, daha çok satıra bölünür (bkz. CoverFontScale; TV ve OBS sayfası da aynı).
             let style = settings.style
             let covering = style.placement == .cover && style.backgroundShape != .band && !paragraphs
             overlayCover = (text: text, box: box ?? overlayCover?.box,
@@ -88,10 +92,17 @@ extension AppModel {
             overlayRegions = regions.sorted { ($0.box?.top ?? 0) < ($1.box?.top ?? 0) }
             return
         case .gamePhone(let items):
-            if overlayPhoneItems != items { overlayPhoneItems = items }
+            if overlayPhoneItems != items {
+                overlayPhoneItems = items
+                // Yerinde çizim: yazı değişti, Türkçe ikiz yeniden kurulur (silme ve çizim yalnız burada).
+                if drawsPhoneInPlace {
+                    phoneAnchorFeed.rebuild(items: items, frame: lastFrame, at: lastFrameMs, anchor: phoneAnchor)
+                }
+            }
             return
         case .regionClear:
             if !overlayPhoneItems.isEmpty { overlayPhoneItems = [] }
+            phoneAnchorFeed.rebuild(items: [], frame: nil, at: 0, anchor: phoneAnchor)
             if !overlayRegions.isEmpty { overlayRegions = [] }
             return
         }

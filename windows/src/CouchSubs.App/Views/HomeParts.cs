@@ -32,6 +32,8 @@ public sealed class HomeTile : Button
     private readonly Ellipse dot = new() { Width = 6, Height = 6, VerticalAlignment = VerticalAlignment.Center, Margin = Sp.T("xxs", "0", "0", "0") };
     private readonly TextBlock value = new() { FontSize = 15, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = 40 };
     private readonly TextBlock detail = new() { FontSize = 11, FontWeight = FontWeights.Medium, TextWrapping = TextWrapping.NoWrap, TextTrimming = TextTrimming.CharacterEllipsis };
+    /// <summary>Dikkat isteyen karo (Xbox'ta oyun seçilmedi): amber halka (Mac HomeTile highlighted).</summary>
+    private bool highlighted;
 
     public HomeTile()
     {
@@ -61,13 +63,24 @@ public sealed class HomeTile : Button
         row.Children.Add(texts);
         frame.Child = row;
         Content = frame;
-        MouseEnter += (_, _) => frame.SetResourceReference(Border.BorderBrushProperty, "borderStrongBrush");
-        MouseLeave += (_, _) => frame.SetResourceReference(Border.BorderBrushProperty, "cardEdgeBrush");
+        MouseEnter += (_, _) => { if (!highlighted) frame.SetResourceReference(Border.BorderBrushProperty, "borderStrongBrush"); };
+        MouseLeave += (_, _) => ShowEdge();
+    }
+
+    private void ShowEdge()
+    {
+        frame.SetResourceReference(Border.BorderBrushProperty, highlighted ? "amberBrush" : IsMouseOver ? "borderStrongBrush" : "cardEdgeBrush");
+        frame.BorderThickness = new Thickness(highlighted ? 1.5 : 1);
     }
 
     /// <summary>Karoyu doldurur. <paramref name="cover"/> verilirse simge karesi yerine oyunun kapağı (adından degrade).</summary>
-    public void Show(string name, string text, string? more, StatusTone tone, string glyph, IconTone iconTone, string? cover = null)
+    public void Show(string name, string text, string? more, StatusTone tone, string glyph, IconTone iconTone, string? cover = null, bool highlight = false)
     {
+        if (highlighted != highlight)
+        {
+            highlighted = highlight;
+            ShowEdge();
+        }
         key.Text = name;
         value.Text = text;
         value.ToolTip = text;
@@ -136,7 +149,7 @@ public sealed class AspectBox : Decorator
 /// Perde (Mac HomePerde): oyunun son karesi (yoksa sıcak sahne), alttan hafif kararma, durağan projeksiyon ışığı, okunan alan
 /// (kesikli amber, "Okunan Alan" etiketi; durağan), son çeviri altyazı plakasında (konuşan adı amber; okunan alanın ortasında),
 /// sağ üstte cam haplar (CANLI nabız + kare hızı). Kart çerçevesi yok; 20 köşe, ince beyaz kıl çizgi, altına düşen yumuşak
-/// amber yansıma. Kare saniyede en çok 4 kez çizilir (WriteableBitmap yeniden kullanılır).
+/// amber yansıma. Kare saniyede en çok 4 kez (pencere arka plandayken 1 kez) çizilir (WriteableBitmap yeniden kullanılır).
 /// </summary>
 public sealed class GamePreview : ContentControl
 {
@@ -258,7 +271,8 @@ public sealed class GamePreview : ContentControl
             return;
         }
         var now = Environment.TickCount64;
-        if (now - lastDraw < 250 && image.Source is not null) return;
+        // Oyun oynanırken (pencere arka planda) saniyede bir; önde saniyede dört (hareket kapısıyla aynı kural).
+        if (now - lastDraw < PreviewCadence.IntervalMs(MotionGate.WindowActive) && image.Source is not null) return;
         lastDraw = now;
         if (bitmap is null || bitmap.PixelWidth != frame.Width || bitmap.PixelHeight != frame.Height)
             bitmap = new WriteableBitmap(frame.Width, frame.Height, 96, 96, PixelFormats.Bgr32, null);

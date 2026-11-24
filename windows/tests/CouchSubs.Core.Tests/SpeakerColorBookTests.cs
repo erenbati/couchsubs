@@ -5,7 +5,7 @@ using CouchSubs.Core;
 
 namespace CouchSubs.Core.Tests;
 
-/// <summary>Konuşana göre renk v2: dört platformun ortak vektörü (docs/speaker-colors-vectors.json) birebir.</summary>
+/// <summary>Konuşana göre renk v3: dört platformun ortak vektörü (docs/speaker-colors-vectors.json) birebir.</summary>
 public class SpeakerColorBookTests
 {
     private static string Vectors()
@@ -23,21 +23,51 @@ public class SpeakerColorBookTests
     {
         using var json = JsonDocument.Parse(File.ReadAllText(Vectors()));
         Assert.Equal(SpeakerColors.Palette, json.RootElement.GetProperty("palette").EnumerateArray().Select(item => item.GetString()!));
-        foreach (var family in json.RootElement.GetProperty("families").EnumerateObject())
-            Assert.Equal(family.Value.GetString()![0], SpeakerColorBook.Families[family.Name]);
+        Assert.Equal(SpeakerColors.Hues, json.RootElement.GetProperty("hues").EnumerateArray().Select(item => item.GetInt32()));
+        Assert.Equal(SpeakerColorBook.MinHueGap, json.RootElement.GetProperty("minHueGap").GetInt32());
+        foreach (var sequence in new[] { "sequence", "gta6" })
+        {
+            var book = new SpeakerColorBook();
+            foreach (var item in json.RootElement.GetProperty(sequence).EnumerateArray())
+                Assert.Equal(item.GetProperty("color").GetString(), book.Color(item.GetProperty("name").GetString()!));
+        }
+    }
+
+    /// <summary>
+    /// Kullanıcı bildirimi (X): ad renkleri hep pembe/mavi tonlarda çıkıyor, karakterler ayırt edilmiyordu. Eski paletin on
+    /// renginden üçü mavi, ikisi pembe/mordu; GTA 6'nın iki baş karakteri Lucia pembe, Jason turkuaz çıkıyordu. Palet ton
+    /// çemberine eşit yayılır; bir sahnedeki kişiler birbirinden belirgin ayrı tonlar alır, aynı kişi hep aynı renktir
+    /// (Mac: testColorsSpreadAcrossDistinctHues).
+    /// </summary>
+    [Fact]
+    public void ColorsSpreadAcrossDistinctHues()
+    {
+        var hues = SpeakerColors.Hues;
+        Assert.Equal(SpeakerColors.Palette.Count, hues.Count);
+        Assert.Equal(SpeakerColors.Palette.Count, SpeakerColors.Palette.Distinct().Count());
+        for (var i = 0; i < hues.Count; i++)
+            Assert.Equal(36, (i + 1 == hues.Count ? hues[0] + 360 : hues[i + 1]) - hues[i]);
         var book = new SpeakerColorBook();
-        foreach (var item in json.RootElement.GetProperty("sequence").EnumerateArray())
-            Assert.Equal(item.GetProperty("color").GetString(), book.Color(item.GetProperty("name").GetString()!));
+        string[] cast = ["Lucia", "Jason", "Cal", "Yolanda", "Brian"];
+        var colors = cast.Select(name => book.Color(name)!).ToList();
+        Assert.Equal(cast.Length, colors.Distinct().Count());
+        var indices = colors.Select(color => SpeakerColors.Palette.ToList().IndexOf(color)).ToList();
+        Assert.True(SpeakerColorBook.HueGap(indices[1], [indices[0]]) >= SpeakerColorBook.MinHueGap);
+        for (var i = 1; i < indices.Count; i++) Assert.True(SpeakerColorBook.HueGap(indices[i], indices.Take(i).ToList()) >= 36, cast[i]);
+        Assert.Equal(colors[0], book.Color("LUCIA"));
+        Assert.Equal(colors[1], book.Color("Jasen"));
+        book.Reset();
+        Assert.Equal(SpeakerColors.Color("Lucia"), book.Color("Lucia"));
     }
 
     [Fact]
     public void ResetStartsANewSession()
     {
         var book = new SpeakerColorBook();
-        Assert.Equal("#90CAF9", book.Color("Mattia"));
-        Assert.Equal("#FFD54F", book.Color("Boobie"));
+        Assert.Equal("#F76AB7", book.Color("Mattia"));
+        Assert.Equal("#1EE4B2", book.Color("Boobie"));
         book.Reset();
-        Assert.Equal("#90CAF9", book.Color("Boobie"));
+        Assert.Equal("#F76AB7", book.Color("Boobie"));
         Assert.Null(book.Color(" ... "));
     }
 
@@ -54,7 +84,7 @@ public class SpeakerColorBookTests
     public void ServerSendsTheSessionColours()
     {
         var server = new SubtitleServer(0) { SpeakerColors = true };
-        Assert.Equal("#90CAF9", server.SpeakerBook.Color("Mattia"));
-        Assert.Equal("#FFD54F", server.SpeakerBook.Color("Boobie"));
+        Assert.Equal("#F76AB7", server.SpeakerBook.Color("Mattia"));
+        Assert.Equal("#1EE4B2", server.SpeakerBook.Color("Boobie"));
     }
 }

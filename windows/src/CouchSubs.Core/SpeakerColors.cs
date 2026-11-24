@@ -12,11 +12,22 @@ namespace CouchSubs.Core;
 /// </summary>
 public static class SpeakerColors
 {
-    /// <summary>Koyu zeminde okunaklı, birbirinden ayrılan renkler (beyaz yok: renksiz satır beyazdır).</summary>
+    /// <summary>
+    /// Koyu altyazı zemininde okunaklı (kontrast en az 6,5:1) on renk, OKLCH ton çemberinde 36 derece arayla: kırmızı,
+    /// turuncu, sarı, açık yeşil, yeşil, turkuaz, mavi, lavanta, mor, pembe (beyaz yok: renksiz satır beyazdır).
+    /// Kullanıcı bildirimi (X): eski paletin on renginden üçü mavi, ikisi pembe/mordu ve hepsi soluktu; adlar hep
+    /// pembe/mavi tonlarda çıkıyor, karakterler ayırt edilmiyordu (ortak vektör: docs/speaker-colors-vectors.json).
+    /// </summary>
     public static readonly IReadOnlyList<string> Palette =
     [
-        "#FFD54F", "#4FC3F7", "#81C784", "#FF8A65", "#CE93D8", "#F06292", "#4DD0E1", "#AED581", "#FFB74D", "#90CAF9",
+        "#FD736D", "#FEA757", "#FEDD3C", "#9BE759", "#1EE4B2", "#2AD5E5", "#49B5FA", "#8F9BFB", "#D482FF", "#F76AB7",
     ];
+
+    /// <summary>
+    /// <see cref="Palette"/> renklerinin OKLCH tonu (derece); renkleri ayırırken kullanılır (<see cref="SpeakerColorBook"/>).
+    /// Tamsayı tablo: platformlar tonu renkten hesaplamaz, kayan nokta farkı çıkmaz.
+    /// </summary>
+    public static readonly IReadOnlyList<int> Hues = [25, 61, 97, 133, 169, 205, 241, 277, 313, 349];
 
     /// <summary>Adın rengi ("#RRGGBB").</summary>
     public static string Color(string name) => Palette[(int)(Hash(name.Trim().ToLowerInvariant()) % (uint)Palette.Count)];
@@ -46,27 +57,39 @@ public static class SpeakerColors
     /// kalır (önceden bütün satır renkleniyor, "Yazı rengi" beyazken altyazı renkli görünüyordu). Ad yoksa tek renksiz parça.
     /// </summary>
     /// <param name="colorOf">Adın rengi (oturumun <see cref="SpeakerColorBook"/>'u); verilmezse <see cref="Color"/>.</param>
-    public static IReadOnlyList<Segment> Segments(string text, IReadOnlyList<string> names, Func<string, string?>? colorOf = null)
+    /// <param name="wholeLine">Karakter Adı › "Tüm Satır": ad ve cümle, devam satırlarıyla birlikte sonraki konuşanın adına
+    /// dek o konuşanın renginde (Mac, Android ve TV uygulamasıyla aynı).</param>
+    public static IReadOnlyList<Segment> Segments(string text, IReadOnlyList<string> names, Func<string, string?>? colorOf = null, bool wholeLine = false)
     {
         if (names.Count == 0) return [new Segment(text, null)];
         var result = new List<Segment>();
         var start = 0;
         var lineStart = 0;
+        string? running = null;
         while (lineStart <= text.Length)
         {
             var found = names.Where(name => NameEnd(text, lineStart, name) > 0).OrderByDescending(name => name.Length).FirstOrDefault();
             if (found is not null)
             {
                 var end = NameEnd(text, lineStart, found);
-                if (lineStart > start) result.Add(new Segment(text[start..lineStart], null));
-                result.Add(new Segment(text[lineStart..end], colorOf is null ? Color(found) : colorOf(found)));
-                start = end;
+                var color = colorOf is null ? Color(found) : colorOf(found);
+                if (lineStart > start) result.Add(new Segment(text[start..lineStart], running));
+                if (wholeLine)
+                {
+                    running = color;
+                    start = lineStart;
+                }
+                else
+                {
+                    result.Add(new Segment(text[lineStart..end], color));
+                    start = end;
+                }
             }
             var next = text.IndexOf('\n', lineStart);
             if (next < 0) break;
             lineStart = next + 1;
         }
-        if (start < text.Length) result.Add(new Segment(text[start..], null));
+        if (start < text.Length) result.Add(new Segment(text[start..], running));
         return result;
     }
 

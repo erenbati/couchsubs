@@ -13,7 +13,8 @@ const sources = {
   obs: path.join(__dirname, '..', 'core', 'Sources', 'CouchSubsCore', 'Resources', 'obs-overlay.html'),
 };
 
-// En küçük sahte DOM: paintSpeakers yalnız metin düğümü ve span ekler.
+// En küçük sahte DOM: paintSpeakers yalnız metin düğümü ve span ekler. TV'nin dimmedColor'ı (Koyu zeminde önceki satırı
+// soluklaştırır) burada rengi olduğu gibi bırakır; o davranış tv-solid-background.test.js'te.
 function fakeDocument() {
   return {
     createTextNode: text => ({ text, color: null }),
@@ -27,7 +28,7 @@ function load(file) {
   const end = source.indexOf('  function paintSpeakers(');
   const close = source.indexOf('\n  }\n', end) + 4;
   assert.ok(start > 0 && end > start && close > end, 'konuşan rengi işlevleri bulunamadı');
-  const context = { document: fakeDocument() };
+  const context = { document: fakeDocument(), dimmedColor: (id, color) => color };
   vm.runInNewContext(source.slice(start, close) + '\nthis.api = { speakerMap, speakerSegments, paintSpeakers };', context);
   return context.api;
 }
@@ -64,6 +65,15 @@ for (const [name, file] of Object.entries(sources)) {
     ]);
   });
 
+  test(`${name}: Tüm Satır (wholeLine) ad ve cümleyi devam satırıyla birlikte konuşanın renginde verir`, () => {
+    const map = api.speakerMap([{ name: 'Mattia', color: '#90CAF9' }, { name: 'Lucia', color: '#F06292' }]);
+    const segments = api.speakerSegments('Mattia: Bu işi bugün\nbitirmeliyiz.\nLucia: Tamam.', map, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(segments)), [
+      { text: 'Mattia: Bu işi bugün\nbitirmeliyiz.\n', color: '#90CAF9' },
+      { text: 'Lucia: Tamam.', color: '#F06292' },
+    ]);
+  });
+
   test(`${name}: ad yalnız satır başında aranır, adsız baş renksiz kalır`, () => {
     const map = api.speakerMap([{ name: 'ARTHUR', color: '#FFD54F' }]);
     const segments = api.speakerSegments('Dikkat et.\nARTHUR : Gidelim.\nSonra ARTHUR: değil', map);
@@ -95,7 +105,7 @@ test('tv: nameOnly açıkken yalnız ad renkli', () => {
   const start = source.indexOf('  function speakerMap(list)');
   const end = source.indexOf('  function paintSpeakers(');
   const close = source.indexOf('\n  }\n', end) + 4;
-  const context = { document: fakeDocument() };
+  const context = { document: fakeDocument(), dimmedColor: (id, color) => color };
   vm.runInNewContext(source.slice(start, close) + '\nthis.api = { speakerMap, paintSpeakers };', context);
   context.speakerNameOnly = true;
   const map = context.api.speakerMap([{ name: 'Jason', color: '#4FD1C5' }]);

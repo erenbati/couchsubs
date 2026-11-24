@@ -10,18 +10,18 @@ import org.junit.Test
 class SpeakerColorsTest {
     @Test
     fun colorsMatchOtherPlatforms() {
-        assertEquals("#90CAF9", SpeakerColors.color("Mattia"))
-        assertEquals("#90CAF9", SpeakerColors.color("MATTIA"))
-        assertEquals("#90CAF9", SpeakerColors.color("  Mattia "))
-        assertEquals("#F06292", SpeakerColors.color("Lucia"))
-        assertEquals("#4DD0E1", SpeakerColors.color("Jason"))
-        assertEquals("#4FC3F7", SpeakerColors.color("Cal"))
+        assertEquals("#F76AB7", SpeakerColors.color("Mattia"))
+        assertEquals("#F76AB7", SpeakerColors.color("MATTIA"))
+        assertEquals("#F76AB7", SpeakerColors.color("  Mattia "))
+        assertEquals("#2AD5E5", SpeakerColors.color("Lucia"))
+        assertEquals("#49B5FA", SpeakerColors.color("Jason"))
+        assertEquals("#FEA757", SpeakerColors.color("Cal"))
     }
 
     @Test
     fun speakersComeFromEachLineOnce() {
         val speakers = SpeakerColors.speakers("Lucia: Gidelim.\nJason: Tamam.\nLucia: Hemen.", SpeakerColorBook())
-        assertEquals(listOf(SpeakerColors.Speaker("Lucia", "#F06292"), SpeakerColors.Speaker("Jason", "#4DD0E1")), speakers)
+        assertEquals(listOf(SpeakerColors.Speaker("Lucia", "#2AD5E5"), SpeakerColors.Speaker("Jason", "#FD736D")), speakers)
         assertTrue(SpeakerColors.speakers("Hedef: Arabaya bin.").isEmpty())
         assertTrue(SpeakerColors.speakers("Saat 10:30 oldu.").isEmpty())
     }
@@ -32,19 +32,28 @@ class SpeakerColorsTest {
         val source = "Mattia: Bu çok uzun bir cümle ve bölünüyor. Lucia: Evet."
         val display = "Mattia: Bu çok uzun bir\ncümle ve bölünüyor."
         assertEquals(
-            listOf(SpeakerColors.Segment(0, 7, "#90CAF9"), SpeakerColors.Segment(7, display.length, null)),
+            listOf(SpeakerColors.Segment(0, 7, "#F76AB7"), SpeakerColors.Segment(7, display.length, null)),
             SpeakerColors.segments(display, source, SpeakerColorBook()),
         )
         val two = "Lucia: Gidelim.\nJason : Tamam."
         assertEquals(
             listOf(
-                SpeakerColors.Segment(0, 6, "#F06292"), SpeakerColors.Segment(6, 16, null),
-                SpeakerColors.Segment(16, 23, "#4DD0E1"), SpeakerColors.Segment(23, two.length, null),
+                SpeakerColors.Segment(0, 6, "#2AD5E5"), SpeakerColors.Segment(6, 16, null),
+                SpeakerColors.Segment(16, 23, "#FD736D"), SpeakerColors.Segment(23, two.length, null),
             ),
             SpeakerColors.segments(two, book = SpeakerColorBook()),
         )
         assertEquals("Jason :", two.substring(16, 23))
         assertTrue(SpeakerColors.segments("Sadece cümle.").isEmpty())
+    }
+
+    @Test
+    fun wholeLineColorsTheSentence() {
+        val two = "Lucia: Gidelim.\nJason : Tamam."
+        assertEquals(
+            listOf(SpeakerColors.Segment(0, 16, "#2AD5E5"), SpeakerColors.Segment(16, two.length, "#FD736D")),
+            SpeakerColors.segments(two, book = SpeakerColorBook(), wholeLine = true),
+        )
     }
 
     /** Telefon ekranındaki altyazı: ad renkli span, cümleye span yok (Text'in Yazı rengi geçerli). */
@@ -61,7 +70,7 @@ class SpeakerColorsTest {
         SpeakerColors.session.reset()
         val on = SubtitleServer.subtitleFrame("Mattia: Merhaba", 4000, null, at = 1, speakerColors = true)
         assertEquals(
-            "event: subtitle\ndata: {\"at\":1,\"duration\":4000,\"speakerNames\":[{\"color\":\"#90CAF9\",\"name\":\"Mattia\"}]," +
+            "event: subtitle\ndata: {\"at\":1,\"duration\":4000,\"speakerNames\":[{\"color\":\"#F76AB7\",\"name\":\"Mattia\"}]," +
                 "\"text\":\"Mattia: Merhaba\"}\n\n",
             on,
         )
@@ -71,7 +80,7 @@ class SpeakerColorsTest {
         assertFalse(SubtitleServer.subtitleFrame("Merhaba", 4000, null, at = 1, speakerColors = true).contains("speaker"))
     }
 
-    /** Konuşana göre renk v2: dört platformun ortak vektörü (docs/speaker-colors-vectors.json) birebir. */
+    /** Konuşana göre renk v3: dört platformun ortak vektörü (docs/speaker-colors-vectors.json) birebir. */
     @Test
     fun colorBookMatchesTheSharedVector() {
         val file = generateSequence(java.io.File("").absoluteFile) { it.parentFile }
@@ -79,14 +88,42 @@ class SpeakerColorsTest {
         val json = org.json.JSONObject(file.readText())
         val palette = json.getJSONArray("palette")
         assertEquals((0 until palette.length()).map { palette.getString(it) }, SpeakerColors.palette)
-        val families = json.getJSONObject("families")
-        SpeakerColors.palette.forEach { assertEquals(families.getString(it).single(), SpeakerColorBook.families[it]) }
-        val book = SpeakerColorBook()
-        val sequence = json.getJSONArray("sequence")
-        for (i in 0 until sequence.length()) {
-            val item = sequence.getJSONObject(i)
-            assertEquals(item.getString("name"), item.getString("color"), book.color(item.getString("name")))
+        val hues = json.getJSONArray("hues")
+        assertEquals((0 until hues.length()).map { hues.getInt(it) }, SpeakerColors.hues)
+        assertEquals(json.getInt("minHueGap"), SpeakerColorBook.MIN_HUE_GAP)
+        for (name in listOf("sequence", "gta6")) {
+            val book = SpeakerColorBook()
+            val sequence = json.getJSONArray(name)
+            for (i in 0 until sequence.length()) {
+                val item = sequence.getJSONObject(i)
+                assertEquals(item.getString("name"), item.getString("color"), book.color(item.getString("name")))
+            }
         }
+    }
+
+    /**
+     * Kullanıcı bildirimi (X): ad renkleri hep pembe/mavi tonlarda çıkıyor, karakterler ayırt edilmiyordu. Eski paletin on
+     * renginden üçü mavi, ikisi pembe/mordu; GTA 6'nın iki baş karakteri Lucia pembe, Jason turkuaz çıkıyordu. Palet ton
+     * çemberine eşit yayılır; bir sahnedeki kişiler birbirinden belirgin ayrı tonlar alır, aynı kişi hep aynı renktir
+     * (Mac: testColorsSpreadAcrossDistinctHues).
+     */
+    @Test
+    fun colorsSpreadAcrossDistinctHues() {
+        val hues = SpeakerColors.hues
+        assertEquals(SpeakerColors.palette.size, hues.size)
+        assertEquals(SpeakerColors.palette.size, SpeakerColors.palette.toSet().size)
+        for (i in hues.indices) assertEquals(36, (if (i + 1 == hues.size) hues[0] + 360 else hues[i + 1]) - hues[i])
+        val book = SpeakerColorBook()
+        val cast = listOf("Lucia", "Jason", "Cal", "Yolanda", "Brian")
+        val colors = cast.map { book.color(it)!! }
+        assertEquals(cast.size, colors.toSet().size)
+        val indices = colors.map { SpeakerColors.palette.indexOf(it) }
+        assertTrue(SpeakerColorBook.hueGap(indices[1], listOf(indices[0])) >= SpeakerColorBook.MIN_HUE_GAP)
+        for (i in 1 until indices.size) assertTrue(cast[i], SpeakerColorBook.hueGap(indices[i], indices.take(i)) >= 36)
+        assertEquals(colors[0], book.color("LUCIA"))
+        assertEquals(colors[1], book.color("Jasen"))
+        book.reset()
+        assertEquals(SpeakerColors.color("Lucia"), book.color("Lucia"))
     }
 
     @Test

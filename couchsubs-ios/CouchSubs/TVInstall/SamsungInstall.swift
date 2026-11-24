@@ -43,8 +43,18 @@ final class InstallLog: @unchecked Sendable {
 }
 
 enum TVPaths {
-    static let root: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    /// Uygulamanın gerçek TV klasörü (kurulum günlüğü tvinstall.log, LG anahtarları, Samsung sertifikaları).
+    static let userRoot: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("CouchSubs", isDirectory: true).appendingPathComponent("tv", isDirectory: true)
+
+    /// Testler (sahte TV'lerle kurulum) gerçek günlüğe ve anahtarlara yazmaz: test süreci kendi geçici klasörünü kullanır
+    /// (Mac'te sahte "paket 0.6.1" satırları kullanıcının tvinstall.log'una karışıyordu).
+    static let root: URL = isTesting
+        ? FileManager.default.temporaryDirectory.appendingPathComponent("CouchSubsTests-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("tv", isDirectory: true)
+        : userRoot
+
+    static var isTesting: Bool { ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || NSClassFromString("XCTestCase") != nil }
     static func directory(_ name: String) -> URL { root.appendingPathComponent(name, isDirectory: true) }
 }
 
@@ -649,6 +659,23 @@ final class SamsungInstaller {
         let device = try connect()
         defer { device.close() }
         return readInstalledVersion(device)
+    }
+
+    /// TV'deki durum (kurmadan): sürüm, kesin "CouchSubs yok" ya da bilinmiyor (liste okunamadı, aynı kimlikle başka
+    /// uygulama). TV'ye bağlanılamazsa hata. Telefonun sessiz sürüm denetimi "yok"u ayırmıyordu; TV'den silinen uygulama
+    /// telefonda "kurulu" kalıyordu (#1158).
+    func installedPresence() throws -> TVAppVersionCheck.Outcome {
+        let device = try connect()
+        defer { device.close() }
+        let version = readInstalledVersion(device)
+        return Self.presence(version: version, listRead: lastListRead,
+                             foreign: version != nil && SamsungDiagnostics.isForeign(lastListing))
+    }
+
+    /// `vd_applist` sonucundan durum: yalnız okunan listede CouchSubs yoksa "yok" (Android ile aynı kural).
+    static func presence(version: String?, listRead: Bool, foreign: Bool) -> TVAppVersionCheck.Outcome {
+        if let version { return foreign ? .unknown : .version(version) }
+        return listRead ? .missing : .unknown
     }
 
     /// Kurulu TV uygulamasını geliştirici bağlantısıyla (sdb, `was_execute`) açar; arka plandaysa öne getirir (bekçi, bkz.

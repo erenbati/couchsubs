@@ -134,4 +134,12 @@ class PromoPolicyTest {
         assertNull(PromoPolicy.parseBundled(bundledJson.replace("https://enmera", "http://enmera")))
         assertNull(PromoPolicy.parseBundled(bundledJson.replace("enmera-commerce-demo-1", "")))
     }
+
+    @Test
+    fun adBandHiddenWhileTranslating() {
+        assertTrue(PromoPolicy.adBandVisible(appPage = true, translating = false, demo = false))
+        assertFalse(PromoPolicy.adBandVisible(appPage = true, translating = true, demo = false))
+        assertFalse(PromoPolicy.adBandVisible(appPage = true, translating = false, demo = true))
+        assertFalse(PromoPolicy.adBandVisible(appPage = false, translating = false, demo = false))
+    }
 }

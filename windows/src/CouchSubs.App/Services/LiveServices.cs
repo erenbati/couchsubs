@@ -219,6 +219,8 @@ public sealed class LiveServices : IAppServices
 
     public Task<bool> IsDevModeOnAsync(string host) => DevModeInstaller.IsDevModeOnAsync(host);
 
+    public Task<bool> TvRespondsAsync(string host, TvBrand brand) => TvReach.RespondsAsync(host, brand);
+
     // LG kurulumunun adımları da tvinstall.log'a telefonlardaki satırlarla yazılır (LgInstallLog); önceden yalnız Samsung
     // ve Android TV kurulumu günlük tutuyordu.
     private static LgInstallLog LgLog => new(new TvInstall.InstallLog(TvInstallLogPath).Write);
@@ -255,6 +257,19 @@ public sealed class LiveServices : IAppServices
         }
     }
 
+    public async Task CloseTvAppAsync(string host, string devKey)
+    {
+        try
+        {
+            var reply = await WithKeyFileAsync(devKey, file => Installer(host, file).CloseAppAsync());
+            WriteTvInstallLog($"LG: TV'deki CouchSubs kapatıldı: {reply}");
+        }
+        catch (DevModeException error)
+        {
+            WriteTvInstallLog($"LG: TV'deki CouchSubs kapatılamadı: {error.Message}");
+        }
+    }
+
     public async Task<int?> RenewDevSessionAsync(string host, string devKey)
     {
         try
@@ -272,7 +287,7 @@ public sealed class LiveServices : IAppServices
 
     /// <summary>Kalıcı dosyalar: ADB anahtarı ve Samsung sertifikaları.</summary>
     private static string DataDirectory(string name) =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CouchSubs", name);
+        Path.Combine(AppDataPaths.Root, name);
 
     public BundledTvApp? BundledApp(TvBrand brand)
     {
@@ -498,6 +513,7 @@ public sealed class LiveServices : IAppServices
         public void Start(TimeSpan interval) => keeper.Start(interval);
         public void Stop() => keeper.Stop();
         public void Reconnect() => keeper.Reconnect();
+        public void ReopenApp() => keeper.ReopenApp();
     }
 
     private sealed class AndroidKeeper(AndroidTvKeeper keeper) : IKeeper
