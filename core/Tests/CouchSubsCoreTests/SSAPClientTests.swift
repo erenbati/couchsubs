@@ -360,6 +360,22 @@ final class TVKeeperTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(control.launches.count, 1 + 4)
     }
 
+    /// beta.89: kurulumdan sonra uygulama kapatıldı; sunucu kopan akışı henüz fark etmese de (bağlı görünür) bir kez açılır,
+    /// sonraki bağlantılarda #1055 kuralı sürer (bağlı uygulamaya açma gitmez).
+    func testReopenAfterCloseLaunchesOnceEvenIfTheAppStillLooksConnected() async throws {
+        let control = FakeControl(foreground: [])
+        let keeper = TVKeeper(connect: { control }, appId: "com.couchsubs.tv", params: ["server": "http://1.2.3.4:8787"],
+                              tvConnected: { true })
+        await keeper.tick()
+        XCTAssertEqual(control.launches.count, 0)
+        keeper.reopenApp()
+        await keeper.tick()
+        XCTAssertEqual(control.launches.count, 1)
+        keeper.reconnect()
+        await keeper.tick()
+        XCTAssertEqual(control.launches.count, 1)
+    }
+
     /// Çeviri başlarken uygulama zaten açık ve bağlıysa açma komutu gitmez; kapalıysa (önde HDMI) açılır.
     func testFirstOpenSkipsAConnectedAppButOpensAClosedOne() async throws {
         let open = FakeControl(foreground: [])

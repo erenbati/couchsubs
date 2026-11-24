@@ -1,0 +1,1 @@
+0.9.95: If CouchSubs on the phone or computer carries a newer TV app, the panel on the TV says the TV app is out of date.

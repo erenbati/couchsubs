@@ -1,0 +1,1 @@
+0.9.91: "Üstünde" ve "Altında"da çeviri İngilizce altyazıya değmiyor; aradaki boşluk iki katı.

@@ -108,6 +108,9 @@ object PromoPolicy {
     fun idle(moment: PromoMoment) = moment.onHome && !moment.sessionActive && !moment.demo && !moment.onboarding &&
         !moment.tour && moment.inAppMs >= SHOW_DELAY_MS
 
+    /** Alt reklam şeridi (METINLER.md › Reklam kuralları; Mac, Windows, iPhone ile aynı): çeviri sürerken ve deneme modunda gizli. */
+    fun adBandVisible(appPage: Boolean, translating: Boolean, demo: Boolean) = appPage && !translating && !demo
+
     fun shouldShow(popup: PromoPopup?, record: PromoRecord, nowMs: Long, moment: PromoMoment, platform: String = PLATFORM) =
         idle(moment) && due(popup, record, nowMs, platform)
 }

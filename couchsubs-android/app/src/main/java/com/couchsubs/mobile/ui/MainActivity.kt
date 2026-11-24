@@ -34,6 +34,7 @@ import androidx.navigation.compose.rememberNavController
 import com.couchsubs.mobile.Services
 import com.couchsubs.mobile.account.Telemetry
 import com.couchsubs.mobile.promo.PromoController
+import com.couchsubs.mobile.promo.PromoPolicy
 import com.couchsubs.mobile.service.LiveState
 import com.couchsubs.mobile.service.TranslationService
 import com.couchsubs.mobile.settings.SubtitleTarget
@@ -120,7 +121,7 @@ class MainActivity : ComponentActivity() {
                 fun AppPage(active: PhoneTab?, content: @Composable () -> Unit) {
                     CompositionLocalProvider(
                         LocalTabBar provides TabBarState(active ?: tab, ::select),
-                        LocalAdBand provides (!status.running && !status.demo),
+                        LocalAdBand provides PromoPolicy.adBandVisible(appPage = true, translating = status.running, demo = status.demo),
                         content = content,
                     )
                 }

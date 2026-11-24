@@ -29,25 +29,24 @@ final class OverlayCoverTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(size.height, 0.1 * 1080)
     }
 
-    /// Yazı boyu sabit: kısa ve orta satırda seçilen boy, 3 satıra sığmayan satırda tek kademe (%80); hiç büyümez ve
-    /// sonraki kısa satırlarda geri zıplamaz. Yazı boyu değişince kademe sıfırlanır.
-    func testCoverFontScaleIsStableAndShrinksOneStepAtMost() {
+    /// Yazı boyu sabit: her satır seçilen boyda; 3 satıra sığmayan satır da küçülmez, sonraki satırlar da (X, beta.89).
+    func testCoverFontScaleNeverShrinks() {
         var font = CoverFontScale()
         let short = "Çaldın mı?"
         let long = String(repeating: "Annenin arabası demiştin hani, unuttun mu yoksa? ", count: 4)
         XCTAssertEqual(font.scale(for: short, fontSize: 46), 1)
         XCTAssertEqual(font.scale(for: "Bu cümle iki satıra bölünecek kadar uzun ama üç satıra rahat sığıyor.", fontSize: 46), 1)
-        XCTAssertEqual(font.scale(for: long, fontSize: 46), CoverFontScale.step)
-        XCTAssertEqual(font.scale(for: short, fontSize: 46), CoverFontScale.step)
-        XCTAssertEqual(font.scale(for: long + long, fontSize: 46), CoverFontScale.step)
+        XCTAssertEqual(font.scale(for: long, fontSize: 46), 1)
+        XCTAssertEqual(font.scale(for: short, fontSize: 46), 1)
+        XCTAssertEqual(font.scale(for: long + long, fontSize: 46), 1)
         XCTAssertEqual(font.scale(for: short, fontSize: 52), 1)
     }
 
-    /// Sabit kademeyle bölme yazıyı daha fazla küçültmez; en çok 3 satır.
-    func testWrapAtAFixedScaleNeverShrinksFurther() {
+    /// Sabit boyda bölme yazıyı küçültmez; en çok 3 dengeli satır (pencere daha uzununu kendisi böler).
+    func testWrapAtAFixedScaleNeverShrinks() {
         let long = String(repeating: "Annenin arabası demiştin hani, unuttun mu yoksa? ", count: 6)
-        let wrapped = SubtitleWrap.fit(long, scale: CoverFontScale.step)
-        XCTAssertEqual(wrapped.scale, CoverFontScale.step)
+        let wrapped = SubtitleWrap.fit(long, scale: 1)
+        XCTAssertEqual(wrapped.scale, 1)
         XCTAssertEqual(wrapped.text.split(separator: "\n").count, 3)
         XCTAssertEqual(SubtitleWrap.fit("Çaldın mı?", scale: 1), SubtitleWrap.Result(text: "Çaldın mı?", scale: 1))
     }

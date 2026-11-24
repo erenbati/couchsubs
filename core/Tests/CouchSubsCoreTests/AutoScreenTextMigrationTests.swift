@@ -45,17 +45,17 @@ final class AutoScreenTextMigrationTests: XCTestCase {
     }
 
     /// beta.63–68: hazır alanlar varsayılan açıktı; otomatik ekran yazısı kapalıyken de GTA 6'da menü ve bildirimler
-    /// çevriliyordu. Göç ikisini (hazır alanlar, GTA 6 telefonu) bir kez kapatır.
-    func testPresetsAndPhoneAreTurnedOffOnceWhenAutoScreenTextIsOff() throws {
+    /// çevriliyordu. Göç hazır alanları bir kez kapatır; GTA 6 telefonuna artık dokunmaz (#1202).
+    func testPresetsAreTurnedOffOnceWhenAutoScreenTextIsOffButThePhoneStays() throws {
         var beta68 = try JSONDecoder().decode(UserSettings.self, from: Data(
             #"{"autoScreenText": false, "autoScreenTextReset": true, "gameAreaPresets": true, "autoReadGamePhone": true}"#.utf8))
         beta68.migratingAutoScreenText()
         XCTAssertTrue(beta68.migratingScreenTextExtras())
         XCTAssertFalse(beta68.gameAreaPresets)
-        XCTAssertFalse(beta68.autoReadGamePhone)
+        XCTAssertTrue(beta68.autoReadGamePhone)
         XCTAssertTrue(beta68.screenTextExtrasReset)
         XCTAssertTrue(beta68.watchedExtraAreas(game: "GTA 6").isEmpty)
-        XCTAssertFalse(beta68.readsGamePhone)
+        XCTAssertTrue(beta68.readsGamePhone)
         // Kullanıcı sonra bilerek açarsa göç tekrarlanmaz, açık kalır.
         var reopened = try JSONDecoder().decode(UserSettings.self, from: JSONEncoder().encode(beta68))
         reopened.gameAreaPresets = true
@@ -87,15 +87,37 @@ final class AutoScreenTextMigrationTests: XCTestCase {
         XCTAssertTrue(on.screenTextExtrasReset)
     }
 
-    /// Otomatik ekran yazısı kapalıyken (varsayılan) altyazı alanı dışında okunan hiçbir alan yok: hazır alan ve telefon
-    /// yok (görev satırı ve menü alanı da yalnız otomatik ekran yazısı açıkken eklenir).
+    /// Otomatik ekran yazısı kapalıyken (varsayılan) altyazı alanı dışında okunan hiçbir ek alan yok (görev satırı ve menü
+    /// alanı da yalnız otomatik ekran yazısı açıkken eklenir). GTA 6 telefonu ise varsayılan açık (#1202).
     func testNothingOutsideTheSubtitleAreaByDefault() {
         var fresh = UserSettings()
         fresh.migratingAutoScreenText()
         fresh.migratingScreenTextExtras()
         XCTAssertTrue(fresh.watchedExtraAreas(game: "GTA 6").isEmpty)
         XCTAssertTrue(fresh.watchedExtraAreas(game: "Grand Theft Auto VI").isEmpty)
-        XCTAssertFalse(fresh.readsGamePhone)
+        XCTAssertTrue(fresh.readsGamePhone)
         XCTAssertFalse(fresh.autoScreenText)
+    }
+
+    /// Eski göçle kapalı kalan GTA 6 telefonu bir kez açılır (#1202: günlükte "otomatik ekran yazısı: kapalı", telefon hiç
+    /// okunmamıştı). Kullanıcı sonra bilerek kapatırsa kapalı kalır.
+    func testGamePhoneIsTurnedOnOnceForOldRecords() throws {
+        var old = try JSONDecoder().decode(UserSettings.self, from: Data(
+            #"{"autoScreenText": false, "autoScreenTextReset": true, "screenTextExtrasReset": true, "autoReadGamePhone": false}"#.utf8))
+        XCTAssertFalse(old.readsGamePhone)
+        old.migratingAutoScreenText()
+        old.migratingScreenTextExtras()
+        XCTAssertTrue(old.migratingGamePhone())
+        XCTAssertTrue(old.autoReadGamePhone)
+        XCTAssertTrue(old.readsGamePhone)
+        XCTAssertTrue(old.gamePhoneReenabled)
+        var closed = try JSONDecoder().decode(UserSettings.self, from: JSONEncoder().encode(old))
+        closed.autoReadGamePhone = false
+        XCTAssertFalse(closed.migratingGamePhone())
+        XCTAssertFalse(closed.autoReadGamePhone)
+        // Yeni kurulum: zaten açık, değişiklik sayılmaz.
+        var fresh = UserSettings()
+        XCTAssertFalse(fresh.migratingGamePhone())
+        XCTAssertTrue(fresh.autoReadGamePhone)
     }
 }

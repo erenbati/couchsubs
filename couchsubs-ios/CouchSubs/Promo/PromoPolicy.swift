@@ -41,6 +41,10 @@ struct PromoRecord: Equatable {
 
 enum PromoPolicy {
     static let platform = "ios"
+
+    /// Alt reklam şeridi (METINLER.md › Reklam kuralları; Mac, Windows, Android ile aynı): yalnız uygulama sayfalarında;
+    /// çeviri sürerken ve deneme modunda gizli, çeviri durunca geri gelir.
+    static func adBandVisible(appPage: Bool, translating: Bool, demo: Bool) -> Bool { appPage && !translating && !demo }
     static let defaultEveryHours = 24
     /// Uygulamaya girdikten bu kadar sonra (kullanıcı boştaysa) açılır.
     static let showDelay: TimeInterval = 10

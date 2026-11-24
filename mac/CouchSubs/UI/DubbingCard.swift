@@ -39,6 +39,14 @@ struct DubbingCard: View {
                     DSUnit(title: "Play the Voice On") {
                         DSTabs(selection: $model.settings.dubbing.output, items: [(DubbingOutput.tv, "TV"), (.computer, "This Mac")])
                     }
+                    // Adından kadın mı erkek mi olduğu anlaşılmayan karakterin sesi (iPhone, Android, Windows'ta aynı seçim).
+                    DSUnit(title: "Voice for Unknown Characters",
+                           hint: "Used when the name doesn't show whether the character is a man or a woman. You can change each character's voice below.") {
+                        DSTabs(selection: Binding<DubbingVoice.Gender>(get: { model.settings.dubbing.cast.unknownGender },
+                                                                      set: { model.settings.dubbing.cast.setUnknownGender($0) }),
+                               items: [(DubbingVoice.Gender.male, LocalizedStringKey("Man")),
+                                       (DubbingVoice.Gender.female, LocalizedStringKey("Woman"))])
+                    }
                     VoiceRow(title: Text("Narrator and unnamed lines"), voice: $model.settings.dubbing.cast.narrator)
                     VoiceRow(title: Text("Second speaker in dialogue"), voice: $model.settings.dubbing.cast.partner)
                     let names = model.settings.dubbing.cast.assignments.keys.sorted()

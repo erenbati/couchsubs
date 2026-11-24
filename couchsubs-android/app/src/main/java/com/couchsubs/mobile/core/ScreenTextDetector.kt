@@ -252,11 +252,13 @@ class ScreenTextDetector(private val clock: () -> Long = monotonicClock) {
         if (!menu && wasMenu && autos.any { auto -> auto.menu && auto.tiles.any { candidate[it] && it in menuAnchors } }) menu = true
         // Menüde bir şey değişmeden (gezinme, seçim) MENU_LIFE_MS geçti: menü sayılmaz, altyazı yeniden okunur
         // (Mac/iPhone, Windows ile aynı). Karanlık sahnede birlikte beliren sabit HUD yazıları da menü sanılabiliyor.
+        var expired = false
         if (menu && wasMenu) {
             val activity = maxOf(menuEnteredAt, menuAnchors.maxOfOrNull { tiles[it].stableSince } ?: menuEnteredAt)
             if (now - activity > MENU_LIFE_MS) {
                 menu = false
                 menuFloor = now
+                expired = true
             }
         }
         // Altyazı alanındaki yazı bulucuya girmez; menü durumunda ise (altyazı duraklar) menünün oradaki etiketleri de alan olur.
@@ -268,7 +270,10 @@ class ScreenTextDetector(private val clock: () -> Long = monotonicClock) {
         // alanı, karoları aday olmaktan çıktığı ilk örnekte hemen kalkar.
         for (auto in autos) if (auto.tiles.any { candidate[it] }) auto.seen = now
         // Menüde gezinirken (seçim çerçevesi kayınca) alanlar 700 ms kuralıyla korunur, kutular yanıp sönmez.
-        autos.removeAll { now - it.seen >= GONE_MS || (it.menu && !menu && it.seen != now) }
+        // Menü durumu süresi dolduğu için bittiyse karoları yerinde dursa da bütün menü alanları kalkar (RegionWatcher
+        // çevirilerini TV'den kaldırır). Eskiden alan aday karolarıyla yaşamaya devam ediyor, menü yazısı oyundan kalksa da
+        // çevirisi ekranda kalıyordu (#1198; Mac/iPhone, Windows ile aynı).
+        autos.removeAll { now - it.seen >= GONE_MS || (it.menu && !menu && (expired || it.seen != now)) }
         // Menüde tek karoluk kısa etiketler ("OFF", "ON") de alan olur.
         var components = all
             .filter { it.size >= if (menu) 1 else 2 }

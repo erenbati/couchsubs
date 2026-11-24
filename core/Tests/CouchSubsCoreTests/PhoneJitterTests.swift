@@ -264,4 +264,98 @@ final class PhoneJitterTests: XCTestCase {
         }
         XCTAssertEqual(server.sent.last?.isEmpty, true, "uzun süren boşlukta silinir")
     }
+
+    // MARK: Yanda Panel'in yazı boyu ve yeri (#1152, GTA 6: "telefon titreyince panelin yazıları büyüyüp küçülüyor").
+
+    private static let still = GamePhoneGeometry.Pose(topX: 0.70, topY: 0.19, bottomX: 0.70, bottomY: 0.87)
+
+    /// Telefonun boyu `scale` katı, ortası (`dx`, `dy`) kaymış hâli.
+    private static func pose(scale: Double = 1, dx: Double = 0, dy: Double = 0) -> GamePhoneGeometry.Pose {
+        let cy = (still.topY + still.bottomY) / 2 + dy, half = (still.bottomY - still.topY) / 2 * scale
+        return GamePhoneGeometry.Pose(topX: still.topX + dx, topY: cy - half, bottomX: still.bottomX + dx, bottomY: cy + half)
+    }
+
+    /// Yakın kamerada el titremesi: boy ±%8, ortası boyun ±%5'i; okunan satır yüksekliği ±%20. Eski eşikler (kenarda
+    /// 0,015, boyda %3) bunların hepsini "telefon kıpırdadı" sayıyordu.
+    private static let shakes: [(scale: Double, dx: Double, dy: Double, line: Double)] = [
+        (1.08, 0.004, -0.03, 1.2), (0.93, -0.006, 0.02, 0.82), (1.05, 0.003, 0.034, 1.15), (0.95, -0.002, -0.025, 0.85),
+        (1.07, 0.005, 0.01, 1.18), (0.92, -0.004, -0.034, 0.8), (1.03, 0.006, 0.028, 1.1), (0.97, -0.006, -0.01, 0.9),
+    ]
+
+    func testPanelKeepsItsSizeAndPlaceWhileThePhoneShakes() {
+        var steady = PhonePanelSteady()
+        let first = steady.steadyPose(Self.still, now: 0)
+        XCTAssertTrue(first.resized, "ilk yer")
+        XCTAssertEqual(steady.steadyLine(0.02, now: 0), 0.02)
+        let handset = { (pose: GamePhoneGeometry.Pose) in ScreenPhoneCard.Handset(pose: pose, aspect: 16.0 / 9) }
+        func items(_ line: Double) -> [ScreenTranslation.Item] {
+            [("Where are you man", "Neredesin adamım bu saatte, herkes seni bekliyor", ScreenPhoneCard.Role.incoming, 0.2),
+             ("On my way", "Yoldayım, beş dakikaya oradayım", .outgoing, 0.4)].map { source, translation, role, top in
+                var item = ScreenTranslation.Item(source: source, translation: translation,
+                                                  box: TextBox(left: 0.75, top: top, right: 0.9, bottom: top + line), lineHeight: line)
+                item.phone = ScreenPhoneCard.Placement(role: role, spot: TextBox(left: 0.1, top: top, right: 0.8, bottom: top + 0.03))
+                return item
+            }
+        }
+        let drawn = ScreenPhoneCard.layout(items(0.02), handset: handset(first.pose), line: 0.02)
+        for (turn, shake) in Self.shakes.enumerated() {
+            let now = (turn + 1) * 450
+            let placed = steady.steadyPose(Self.pose(scale: shake.scale, dx: shake.dx, dy: shake.dy), now: now)
+            XCTAssertEqual(placed.pose, Self.still, "tur \(turn): panelin yeri kıpırdamaz")
+            XCTAssertFalse(placed.resized)
+            let measured = ScreenPhoneCard.measuredLine(items(0.02 * shake.line))
+            XCTAssertEqual(measured, 0.02 * shake.line)
+            let line = steady.steadyLine(measured, now: now)
+            XCTAssertEqual(line, 0.02, "tur \(turn): yazı boyu değişmez")
+            let laid = ScreenPhoneCard.layout(items(0.02 * shake.line), handset: handset(placed.pose), line: line)
+            XCTAssertEqual(laid, drawn, "tur \(turn): panel, balonlar ve satır bölünmeleri birebir aynı")
+        }
+    }
+
+    func testPanelFollowsARealZoomAfterItLastsASecond() {
+        var steady = PhonePanelSteady()
+        _ = steady.steadyPose(Self.still, now: 0)
+        _ = steady.steadyLine(0.02, now: 0)
+        let near = Self.pose(scale: 1.4)
+        // Kısa süren büyük oynama (kamera sarsıntısı) benimsenmez; eski yere dönen tur sayacı sıfırlar.
+        XCTAssertEqual(steady.steadyPose(near, now: 450).pose, Self.still)
+        XCTAssertEqual(steady.steadyPose(near, now: 900).pose, Self.still)
+        XCTAssertEqual(steady.steadyPose(Self.still, now: 1350).pose, Self.still)
+        XCTAssertEqual(steady.steadyPose(near, now: 1800).pose, Self.still)
+        XCTAssertEqual(steady.steadyPose(near, now: 2250).pose, Self.still)
+        // Bir saniyedir yakında: telefon gerçekten yaklaştı, panel yeni boya geçer ve yazı boyu yeniden ölçülür.
+        let zoomed = steady.steadyPose(near, now: 2800)
+        XCTAssertEqual(zoomed.pose, near)
+        XCTAssertTrue(zoomed.resized)
+        XCTAssertEqual(steady.steadyLine(0.028, now: 2800), 0.028)
+        XCTAssertEqual(steady.steadyLine(0.025, now: 3250), 0.028)
+    }
+
+    func testPanelFollowsARealMoveWithoutChangingItsTextSize() {
+        var steady = PhonePanelSteady()
+        _ = steady.steadyPose(Self.still, now: 0)
+        _ = steady.steadyLine(0.02, now: 0)
+        let moved = Self.pose(dx: -0.2)
+        XCTAssertEqual(steady.steadyPose(moved, now: 450).pose, Self.still)
+        let placed = steady.steadyPose(moved, now: 1450)
+        XCTAssertEqual(placed.pose, moved)
+        XCTAssertFalse(placed.resized)
+        XCTAssertEqual(steady.steadyLine(0.023, now: 1450), 0.02, "yazı boyu kilitli kalır")
+        // Yeni yerde titreme yine yok sayılır.
+        XCTAssertEqual(steady.steadyPose(Self.pose(scale: 1.06, dx: -0.196, dy: 0.02), now: 1900).pose, moved)
+    }
+
+    func testWrongFirstTextSizeIsCorrectedOnlyWhenTheNewSizeLasts() {
+        var steady = PhonePanelSteady()
+        XCTAssertEqual(steady.steadyLine(0.014, now: 0), 0.014)
+        XCTAssertEqual(steady.steadyLine(nil, now: 200), 0.014, "ölçüm yoksa kilitli değer")
+        XCTAssertEqual(steady.steadyLine(0.021, now: 450), 0.014)
+        XCTAssertEqual(steady.steadyLine(0.015, now: 900), 0.014, "eski boya dönen tur sayacı sıfırlar")
+        XCTAssertEqual(steady.steadyLine(0.021, now: 1350), 0.014)
+        XCTAssertEqual(steady.steadyLine(0.022, now: 2000), 0.014)
+        XCTAssertEqual(steady.steadyLine(0.021, now: 2400), 0.021, "bir saniyedir belirgin farklı: yeni ölçüm")
+        steady.reset()
+        XCTAssertNil(steady.line)
+        XCTAssertTrue(steady.steadyPose(Self.pose(dx: 0.1), now: 2500).resized, "telefon kaybolup bulununca baştan")
+    }
 }

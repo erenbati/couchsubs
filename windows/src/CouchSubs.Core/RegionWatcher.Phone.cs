@@ -35,7 +35,8 @@ public sealed partial class RegionWatcher
         state.Signature = signature;
         if (!changed)
         {
-            // İz bir tur değişmedi: okunan yazı kararlıdır.
+            // İz bir tur değişmedi: okunan yazı kararlıdır, kaydırma bitti.
+            state.PhoneScrolling = false;
             if (state.Candidate is { } stable)
             {
                 state.Candidate = null;
@@ -45,8 +46,9 @@ public sealed partial class RegionWatcher
         }
         Candidate candidate;
         try { candidate = ReadPhoneCandidate(frame, area, crop, state); }
-        catch
+        catch (Exception error)
         {
+            PhoneNote("PhoneSession", $"okunamadı ({error.Message})", "");
             // OCR hatası boş alan değildir. Eski kutuyu koru; aynı kareyi sonraki normal turda yeniden oku.
             // Başarısız kare, önceki adayın kararlılığını da doğrulayamaz.
             state.Signature = null;
@@ -55,13 +57,26 @@ public sealed partial class RegionWatcher
             return;
         }
         if (Volatile.Read(ref session) != started || area.PanelLifetime is { IsCancellationRequested: true }) return;
+        // Sohbet kaydırılıyorsa (balonların hepsi dikeyde aynı yöne kaydı) bekletme ve konum sabitleme atlanır, görünen yeni
+        // balonların hepsi tek istekte çevrilir (#1202, #1197, #1193, #1170: "kaydırınca yenilenmiyor").
+        var bubbles = PhoneBubbles(candidate, area.Region);
+        state.PhoneScrolling = bubbles is { } now && state.PhoneLastBubbles is { } before
+            && PhoneSteady.Scrolled(before, now.Bubbles, now.LineHeight);
+        if (bubbles is not null) state.PhoneLastBubbles = bubbles.Value.Bubbles;
+        if (state.PhoneScrolling)
+            PhoneNote("PhoneSteady", "kaydırma algılandı, bekletme ve konum sabitleme atlandı", string.Join(' ', candidate.Paragraphs));
         // Yerinde duran iki komşu arasından düşen balon veya uzun mesajdaki birkaç bozuk harf tek okumada silinmesin.
         // Sonraki olağan tur mutlaka yeniden okur; aynı görünen gerçek bir değişiklik de bu turda ilerler.
-        if (state.Holds < PhoneSteady.HoldTurns && !moved && state.RenderedKey == state.Shown && state.Shown != candidate.Key
+        if (!state.PhoneScrolling && state.Holds < PhoneSteady.HoldTurns && !moved && state.RenderedKey == state.Shown && state.Shown != candidate.Key
             && !string.IsNullOrEmpty(state.RenderedText)
             && (MissingInteriorPhoneBubble(state, candidate)
                 || (SamePhoneLayout(state, candidate, frame) && GamePhoneText.HasAdjacentOcrEdits(state.Shown, candidate.Key))))
         {
+            if (state.Holds == 0)
+            {
+                var why = MissingInteriorPhoneBubble(state, candidate) ? "balon düştü" : "harf oynaması";
+                PhoneNote("PhoneSteady", $"okuma {PhoneSteady.HoldTurns} tura dek bekletildi ({why})", string.Join(' ', candidate.Paragraphs));
+            }
             state.Held = candidate.Key;
             state.Holds++;
             state.Signature = null;
@@ -78,6 +93,8 @@ public sealed partial class RegionWatcher
         if (candidate.Key.Length > 0 || (state.LastRead == candidate.Key
             && (string.IsNullOrEmpty(state.RenderedText) || empties >= PhoneSteady.MissTurns)))
         {
+            if (candidate.Key.Length == 0 && !string.IsNullOrEmpty(state.RenderedText))
+                PhoneNote("PhoneSteady", $"{PhoneSteady.MissTurns} tur boş okundu, çeviri silindi", state.Shown);
             state.LastRead = candidate.Key;
             state.Candidate = null;
             await CommitPhoneAsync(candidate, area, state, started, frame).ConfigureAwait(false);
@@ -91,6 +108,26 @@ public sealed partial class RegionWatcher
         }
         if (candidate.Key.Length > 0) state.PhoneEmpties = 0;
     }
+
+    /// <summary>
+    /// Okumanın balonları telefon bölgesine oranlı (yazı, üst kenar) ve satır yüksekliklerinin ortancası; balon yoksa null.
+    /// </summary>
+    private static ((string Text, double Top)[] Bubbles, double LineHeight)? PhoneBubbles(Candidate candidate, CropRegion region)
+    {
+        double height = region.Bottom - region.Top;
+        if (candidate.Blocks is not { Count: > 0 } blocks || height <= 0) return null;
+        var bubbles = blocks.Select(block => (string.Join('\n', candidate.Paragraphs.Skip(block.Start).Take(block.Count)),
+                                              (block.Box.Top - region.Top) / height)).ToArray();
+        var heights = blocks.Select(block => block.LineHeight / height).Order().ToArray();
+        return (bubbles, heights[heights.Length / 2]);
+    }
+
+    /// <summary>
+    /// Telefon mesajının düşürülme ya da bekletilme nedeni (<see cref="DropLog"/>: aynı neden + metin yinelenmez, dakikada
+    /// sınırlı). Mac/iPhone ve Android PhoneRegionSession ile aynı satırlar.
+    /// </summary>
+    private void PhoneNote(string component, string reason, string text) =>
+        drops.Note(component, reason, IconText.Plain(text), Log);
 
     private Candidate ReadPhoneCandidate(Frame frame, WatchedArea area, Frame crop, State state)
     {
@@ -289,7 +326,8 @@ public sealed partial class RegionWatcher
                     }
                 }
                 bool showFirstBubble = false;
-                if (!translator.TranslatesTogether && state.RenderedKey != candidate.Key
+                // Kaydırılırken görünen yeni balonların hepsi tek istekte çevrilir.
+                if (!translator.TranslatesTogether && !state.PhoneScrolling && state.RenderedKey != candidate.Key
                     && missing.Count > 1 && candidate.Blocks is { } phoneBlocks)
                 {
                     // Yerel motor satırları sırayla üretir. Yeni sohbet kısa sürede kapanabilir:
@@ -311,7 +349,17 @@ public sealed partial class RegionWatcher
                     ? GamePhoneText.EnglishModelInput(prepared[i].Text) : prepared[i].Text).ToList();
                 var translations = await translator.TranslateAllAsync(texts, area.PanelLifetime ?? default).ConfigureAwait(false);
                 if (translations.Count == missing.Count)
-                    for (var i = 0; i < missing.Count && i < translations.Count; i++) result[missing[i]] = translations[i];
+                {
+                    for (var i = 0; i < missing.Count && i < translations.Count; i++)
+                    {
+                        result[missing[i]] = translations[i];
+                        if (string.IsNullOrWhiteSpace(translations[i]))
+                            PhoneNote("PhoneSession", "motor boş çeviri döndü, gösterilmedi", candidate.Paragraphs[missing[i]]);
+                    }
+                }
+                else
+                    PhoneNote("PhoneSession", $"çevrilemedi (motor {translations.Count}/{missing.Count} yanıt)",
+                        string.Join(' ', missing.Select(i => candidate.Paragraphs[i])));
                 if (area.PanelLifetime is { IsCancellationRequested: true }) return;
                 for (var i = 0; i < result.Length; i++)
                     if (!string.IsNullOrWhiteSpace(result[i])) state.RememberPhoneTranslation(candidate.Paragraphs[i], result[i]!);

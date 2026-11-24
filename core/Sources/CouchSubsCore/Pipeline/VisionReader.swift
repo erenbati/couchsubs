@@ -78,8 +78,8 @@ public struct VisionReader: TextReader {
         return try Self.recognize(image, language: language, fast: Self.useFastLevel)
     }
 
-    /// Okuyucu bu oturumda yinelenerek takıldıysa (`ReadQueue`) okumalar hızlı düzeyde yapılır; uygulama yeniden
-    /// açılınca isabetli düzeye dönülür.
+    /// Okuyucu yinelenerek takıldıysa (`ReadQueue`) okumalar bir süre (`ReadQueue.fastLevelHoldMs`) hızlı düzeyde
+    /// yapılır; süre dolunca `ReadQueue` isabetli düzeye döner (#1210; eskiden uygulama yeniden açılana dek kalıcıydı).
     public static var useFastLevel: Bool {
         get { fastLevel.withLock { $0 } }
         set { fastLevel.withLock { $0 = newValue } }

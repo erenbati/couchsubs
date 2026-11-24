@@ -1,0 +1,1 @@
+0.9.98: The info panel shows the sound state: volume, mute, connected audio outputs (TV speaker, ARC/eARC, Bluetooth) and the HDMI audio track, to find out why some TVs play no sound in the in-app view.

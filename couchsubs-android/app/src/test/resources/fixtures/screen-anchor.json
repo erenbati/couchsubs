@@ -1,0 +1,66 @@
+{
+  "note": "ScreenAnchor ortak vakaları (Mac/iPhone ScreenAnchorTests.swift, Windows ScreenAnchorTests.cs, Android ScreenAnchorTest.kt). Kare yapay çizilir: width×height gri kare, her piksel 2×2 alt örneğin ortalaması (yuvarlanır). Alt örnek (x, y) karenin dönüşümle telefonun başvuru koordinatına (ters) götürülmüş yeri (u, v) dörtgenin içindeyse (|u| ≤ w/2, |v| ≤ h/2; u, v ortaya göre) telefon deseni, değilse arka plan deseni. Telefon deseni 128 + 50 sin(0.21 u) cos(0.17 v) + 40 sin(0.05 (u + 2 v)); 'content' dikdörtgeni içinde (u, v aralığı) 'content' etkin karelerde 120 + 60 sin(0.33 u + 0.11 v). Arka plan 60 + 30 sin(0.13 x + 0.07 y + 0.4 k) (k kare sırası; telefonla gitmez). Değer 'gain' ile çarpılıp 0–255'e kırpılır. motions: başvurudan karelere [a, b, c, d, dx, dy, g, h] (ScreenAnchor.Motion; ortası rect'in ortası). İzleyici 0. karede rect ile başlar, sonraki her karede izler; 'lostFrom' verilmişse o kareden itibaren nil beklenir, öncesinde her karede dörtgenin köşelerinin hatası 'tolerance' pikselden az olmalı.",
+  "cases": [
+    {
+      "name": "Alt piksel öteleme",
+      "width": 320, "height": 240,
+      "rect": [120, 50, 80, 150],
+      "tolerance": 0.05,
+      "motions": [[1,0,0,1,0,0,0,0], [1,0,0,1,0.3,-0.2,0,0], [1,0,0,1,0.75,-0.6,0,0], [1,0,0,1,1.6,-1.1,0,0], [1,0,0,1,3.25,0.4,0,0], [1,0,0,1,5.5,2.25,0,0], [1,0,0,1,5.7,2.3,0,0]]
+    },
+    {
+      "name": "Ölçek ve dönme (el titremesi)",
+      "width": 320, "height": 240,
+      "rect": [120, 50, 80, 150],
+      "tolerance": 0.08,
+      "motions": [[1,0,0,1,0,0,0,0], [1.004,-0.006,0.006,1.004,0.4,0.2,0,0], [1.012,-0.017,0.017,1.012,1.1,0.6,0,0], [1.02,-0.03,0.03,1.02,1.8,-0.4,0,0], [1.03,-0.035,0.035,1.03,2.4,-1.3,0,0]]
+    },
+    {
+      "name": "Perspektif (telefon öne eğiliyor)",
+      "width": 320, "height": 240,
+      "rect": [120, 50, 80, 150],
+      "tolerance": 0.1,
+      "motions": [[1,0,0,1,0,0,0,0], [1,0,0,1,0.2,0.1,0,0.0002], [1.005,0,0,1,0.5,0.3,0.0001,0.0005], [1.01,0.002,0,1.004,0.9,0.4,0.0002,0.0009]]
+    },
+    {
+      "name": "Pozlama değişimi izlemeyi bozmaz",
+      "width": 320, "height": 240,
+      "rect": [120, 50, 80, 150],
+      "tolerance": 0.08,
+      "gain": [1, 1, 0.75, 0.75, 1.15],
+      "motions": [[1,0,0,1,0,0,0,0], [1,0,0,1,0.4,0.3,0,0], [1,0,0,1,0.8,0.5,0,0], [1,0,0,1,1.3,0.9,0,0], [1,0,0,1,1.5,1.2,0,0]]
+    },
+    {
+      "name": "Telefonda yeni mesaj (ekranın bir parçası değişiyor)",
+      "width": 320, "height": 240,
+      "rect": [120, 50, 80, 150],
+      "tolerance": 0.16,
+      "content": [-30, 10, 30, 55],
+      "contentFrom": 2,
+      "motions": [[1,0,0,1,0,0,0,0], [1,0,0,1,0.5,0.2,0,0], [1,0,0,1,0.9,0.4,0,0], [1,0,0,1,1.4,0.5,0,0], [1,0,0,1,2.0,0.7,0,0], [1,0,0,1,2.2,0.9,0,0]]
+    },
+    {
+      "name": "Telefon indirildi (çapa kaybolur)",
+      "width": 320, "height": 240,
+      "rect": [120, 50, 80, 150],
+      "tolerance": 0.05,
+      "lostFrom": 3,
+      "motions": [[1,0,0,1,0,0,0,0], [1,0,0,1,0.3,0.1,0,0], [1,0,0,1,0.6,0.2,0,0], [1,0,0,1,0,130,0,0], [1,0,0,1,0,130,0,0]]
+    }
+  ],
+  "smoother": [
+    {
+      "name": "Ölü bölge: 0,15 pikselden az oynama gösterilmez, fazlası gecikmesiz gösterilir; sıçrama bildirilir",
+      "rect": [120, 50, 80, 150],
+      "steps": [
+        {"raw": [1,0,0,1,0,0,0,0], "shown": [1,0,0,1,0,0,0,0], "jumped": false},
+        {"raw": [1,0,0,1,0.1,-0.05,0,0], "shown": [1,0,0,1,0,0,0,0], "jumped": false},
+        {"raw": [1,0,0,1,0.2,0,0,0], "shown": [1,0,0,1,0.2,0,0,0], "jumped": false},
+        {"raw": [1,0,0,1,0.25,0.05,0,0], "shown": [1,0,0,1,0.2,0,0,0], "jumped": false},
+        {"raw": [1,0,0,1,3,1,0,0], "shown": [1,0,0,1,3,1,0,0], "jumped": false},
+        {"raw": [1,0,0,1,3,30,0,0], "shown": [1,0,0,1,3,30,0,0], "jumped": true},
+        {"raw": [1,0,0,1,3.05,30,0,0], "shown": [1,0,0,1,3,30,0,0], "jumped": false}
+      ]
+    }
+  ]
+}

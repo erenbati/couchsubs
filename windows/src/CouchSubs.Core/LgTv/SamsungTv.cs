@@ -221,8 +221,47 @@ public static class SamsungAppKnowledge
     public static void Forget(string? host)
     {
         if (string.IsNullOrWhiteSpace(host)) return;
-        lock (hosts) hosts.Remove(host.Trim());
+        lock (hosts)
+        {
+            hosts.Remove(host.Trim());
+            unconfirmed.Remove(host.Trim());
+            staleReported.Remove(host.Trim());
+        }
     }
+
+    /// <summary>İki adres aynı TV mi (boşluk ve büyük/küçük harf gözetmeden).</summary>
+    public static bool SameHost(string? a, string? b) =>
+        !string.IsNullOrWhiteSpace(a) && !string.IsNullOrWhiteSpace(b) && string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// TV, CouchSubs'ın artık kurulu olmadığını söyledi; uygulama katmanı kendi "kurulu" kaydını siler
+    /// (<c>TvAppVersion</c>, <c>TvAppSeen</c>).
+    /// </summary>
+    public static Action<string>? Missing { get; set; }
+
+    /// <summary>
+    /// Kurulu olduğu bilinen TV'de son listesiz açmadan sonra uygulama bağlanmadı ve TV'nin kurulu uygulama listesi de
+    /// CouchSubs yok diyor: uygulama TV'den silinmiş (güncelleme sırasında ya da elle, #1158). "Kurulu" bilgisi kalınca
+    /// uygulama kurulu görünüyor, kurulum adımı hiç önerilmiyordu. Bilgi silinir, <see cref="Missing"/> çağrılır; true:
+    /// bilgi silindi. Mac/iPhone ve Android ile aynı.
+    /// </summary>
+    public static bool AppMissing(string? host)
+    {
+        if (!IsKnown(host)) return false;
+        var key = host!.Trim();
+        Forget(key);
+        var line = MissingLine(key);
+        Log?.Invoke(line);
+        InstallLog?.Invoke(line);
+        Missing?.Invoke(key);
+        return true;
+    }
+
+    /// <summary>Listedeki "CouchSubs yok" kurulu bilgisini siler mi: yalnız kesin "yok" (yanıtsız liste silmez).</summary>
+    public static bool ForgetsOnList(SamsungAppPresence? presence) => presence is { IsInstalled: false };
+
+    public static string MissingLine(string host) =>
+        $"Samsung {host}: TV'nin kurulu uygulama listesinde CouchSubs yok; TV uygulaması silinmiş, \"kurulu\" bilgisi silindi (kurulum adımı önerilecek).";
 
     /// <summary>Açma komutundan önce TV'nin kurulu uygulama listesine bakılsın mı: yalnız kurulu olduğu bilinmeyen TV'de.</summary>
     public static bool ChecksList(bool knownInstalled) => !knownInstalled;
@@ -388,6 +427,8 @@ public sealed class SamsungClient(Uri url, TimeSpan? approvalTimeout = null) : I
             return;
         }
         var presence = await InstalledAppAsync(socket, appId, cancellationToken);
+        // Bilinen TV'de bayat bilgi yüzünden listeye bakıldıysa ve liste "yok" diyorsa uygulama silinmiş (#1158).
+        if (KnownInstalled is null && SamsungAppKnowledge.ForgetsOnList(presence)) SamsungAppKnowledge.AppMissing(host);
         if (SamsungAppKnowledge.ActionFor(false, presence) is null)
         {
             SamsungAppKnowledge.ReportNotSent(host, presence);

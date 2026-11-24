@@ -18,6 +18,15 @@ final class NewDesignTests: XCTestCase {
     }
 
     /// tasarim.json v2 (Perde): koyu tema varsayılan, yeni renk/efekt/hareket belirteçleri okunuyor, eski anahtarlar duruyor.
+    /// Reklam şeridi çeviri sürerken ve deneme modunda görünmez; çeviri durunca geri gelir (Windows, iPhone, Android ile aynı).
+    func testAdBandHiddenWhileTranslating() {
+        XCTAssertTrue(AdCatalog.bandVisible(appPage: true, hasAds: true, translating: false, demo: false))
+        XCTAssertFalse(AdCatalog.bandVisible(appPage: true, hasAds: true, translating: true, demo: false))
+        XCTAssertFalse(AdCatalog.bandVisible(appPage: true, hasAds: true, translating: false, demo: true))
+        XCTAssertFalse(AdCatalog.bandVisible(appPage: false, hasAds: true, translating: false, demo: false))
+        XCTAssertFalse(AdCatalog.bandVisible(appPage: true, hasAds: false, translating: false, demo: false))
+    }
+
     func testPerdeTokensLoad() {
         let tokens = DS.tokens
         XCTAssertEqual(tokens.version, 2)

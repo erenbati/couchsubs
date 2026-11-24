@@ -116,7 +116,7 @@ final class ComputerScreenTests: XCTestCase {
         XCTAssertTrue(alone.canStart)
     }
 
-    /// "Örtsün": yeri gelmeyen satır son bilinen yeri örter; yazı boyu bir kademeden fazla küçülmez ve geri zıplamaz.
+    /// "Örtsün": yeri gelmeyen satır son bilinen yeri örter; yazı boyu hep seçilen boyda (uzun satırda da küçülmez).
     func testCoverKeepsTheLastBoxAndAStableFontScale() {
         let model = AppModel(services: FakeServices(), store: storeWithoutTV(), defaults: .isolated())
         model.settings.output = .computer
@@ -128,9 +128,9 @@ final class ComputerScreenTests: XCTestCase {
         let long = String(repeating: "Annenin arabası demiştin hani, unuttun mu yoksa? ", count: 4)
         model.overlayReceive(.subtitle(text: long, durationMs: 4000, paragraphs: false))
         XCTAssertEqual(model.overlayCover?.box, box)
-        XCTAssertEqual(model.overlayCover?.scale, CoverFontScale.step)
+        XCTAssertEqual(model.overlayCover?.scale, 1)
         model.overlayReceive(.subtitle(text: "Evet.", durationMs: 4000, paragraphs: false))
-        XCTAssertEqual(model.overlayCover?.scale, CoverFontScale.step)
+        XCTAssertEqual(model.overlayCover?.scale, 1)
     }
 
     func testTVOnlyWithoutTVCannotStart() async {

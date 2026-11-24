@@ -336,6 +336,26 @@ public class TvKeeperTests
         Assert.Single(closed.Launches);
     }
 
+    /// <summary>
+    /// beta.89: kurulumdan sonra uygulama kapatıldı; sunucu kopan akışı henüz fark etmese de (bağlı görünür) bir kez açılır,
+    /// sonraki bağlantılarda #1055 kuralı sürer (Mac ile aynı).
+    /// </summary>
+    [Fact]
+    public async Task ReopenAfterCloseLaunchesOnceEvenIfTheAppStillLooksConnected()
+    {
+        var control = new FakeControl();
+        var keeper = new TvKeeper(() => Task.FromResult<ITvControl>(control), "com.couchsubs.tv", new Dictionary<string, string>(),
+            tvConnected: () => true);
+        await keeper.TickAsync();
+        Assert.Empty(control.Launches);
+        keeper.ReopenApp();
+        await keeper.TickAsync();
+        Assert.Single(control.Launches);
+        keeper.Reconnect();
+        await keeper.TickAsync();
+        Assert.Single(control.Launches);
+    }
+
     [Fact]
     public async Task PsButtonOnTheConsoleInputIsNeverCountedAsInsisting()
     {
