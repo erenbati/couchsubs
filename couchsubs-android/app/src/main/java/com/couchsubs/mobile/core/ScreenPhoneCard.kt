@@ -243,9 +243,11 @@ object ScreenPhoneCard {
      * döner. Çevrilmemiş öğeler ([ScreenTranslation.Item.unchanged]: kişi adı, "ok") kartta aslıyla görünür; kart
      * dışındakiler sonra atılır. Balonlar arasında en az [BUBBLE_SPACING] satır boşluk kalır; mesajlar telefon boyuna
      * sığmazsa kart uzar, yine sığmazsa en eski mesajlar düşer. Kartın altında kalan başka bir çeviri kartın dışına,
-     * yanına alınır.
+     * yanına alınır. [lockedLine]: telefondaki satır yüksekliği yerine kullanılacak kilitli ölçüm
+     * ([PhonePanelSteady.steadyLine], #1152); verilmezse bu karenin ölçümü ([measuredLine]).
      */
-    fun layout(items: List<ScreenTranslation.Item>, handset: Handset, textScale: Double = 1.0): List<ScreenTranslation.Item> {
+    fun layout(items: List<ScreenTranslation.Item>, handset: Handset, textScale: Double = 1.0,
+               lockedLine: Double? = null): List<ScreenTranslation.Item> {
         val onPhone = items.filter { it.phone?.role?.inCard == true }.sortedBy { it.phone!!.spot.top }
         if (onPhone.none { !it.unchanged }) return items
         val others = items.filter { it.phone?.role?.inCard != true }
@@ -253,8 +255,8 @@ object ScreenPhoneCard {
         var cardTop = start.top
         var cardBottom = start.bottom
         val cardWidth = start.right - start.left
-        val heights = onPhone.map { it.lineHeight }.sorted()
-        val line = maxOf(MIN_LINE * minOf(MAX_SCALE, maxOf(MIN_SCALE, textScale)), heights[heights.size / 2])
+        val measured = lockedLine ?: measuredLine(onPhone) ?: 0.0
+        val line = maxOf(MIN_LINE * minOf(MAX_SCALE, maxOf(MIN_SCALE, textScale)), measured)
         val pad = cardWidth * 0.05
         val padY = line * 0.4
         val spacing = line * BUBBLE_SPACING
@@ -349,6 +351,12 @@ object ScreenPhoneCard {
             result.add(row.item.copy(box = TextBox(left, tops[index], left + row.width, tops[index] + row.height)))
         }
         return result
+    }
+
+    /** Kartta dizilecek telefon yazılarının satır yüksekliklerinin ortancası (panelin yazı boyu); yoksa null. */
+    fun measuredLine(items: List<ScreenTranslation.Item>): Double? {
+        val heights = items.filter { it.phone?.role?.inCard == true }.map { it.lineHeight }.sorted()
+        return if (heights.isEmpty()) null else heights[heights.size / 2]
     }
 
     /** Metni sözcük sözcük en çok [perLine] harflik satırlara böler (çok uzun sözcük kendi satırında kalır). */

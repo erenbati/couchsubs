@@ -570,6 +570,70 @@ class AreasTest {
         assertEquals(listOf("Board the train"), calls)
     }
 
+    /** İzin yalnız bir örneği değişmiş hâli: iz değişti sayılır ama görüntü bütünüyle değişmedi ([RegionWatcher.BIG_CHANGE_SHARE]). */
+    private fun nudged(step: Int) = signature(10).also { it[0] = (10 + step * 40).toByte() }
+
+    /**
+     * #1198: çevirisi gösterilen alanda okuma 3 tur art arda değişip doğrulanamazsa (yazı gitti, yerinde sahne oynuyor)
+     * çeviri kaldırılır. Gösterilen yazıya benzeyen yeniden okumalar kaldırmaz.
+     */
+    @Test
+    fun unsteadyReadsClearTheShownTranslationButSimilarRereadsDoNot() {
+        val scene = Scene()
+        scene.show("Find the blacksmith", 10)
+        assertEquals(listOf("TR: Find the blacksmith"), scene.sent)
+        listOf("Find the blacksmlth", "Find the blacksmith", "Find the blacksmlth", "Find the blacksmith", "Find the blacksmlth")
+            .forEachIndexed { i, text ->
+                scene.text = text
+                scene.watcher.pass(setOf(quest.id), listOf(quest to RegionWatcher.Crop(Unit, nudged(i + 1))))
+            }
+        assertEquals(listOf("TR: Find the blacksmith"), scene.sent)
+        // Değişmeyen iz sayacı sıfırlar.
+        scene.watcher.pass(setOf(quest.id), listOf(quest to RegionWatcher.Crop(Unit, nudged(5))))
+        listOf("Dlorp wenk", "Sarn uvvet kir", "Pmolt").forEachIndexed { i, text ->
+            scene.text = text
+            scene.watcher.pass(setOf(quest.id), listOf(quest to RegionWatcher.Crop(Unit, nudged(i))))
+            if (i < 2) assertEquals(1, scene.sent.size)
+        }
+        assertEquals(listOf("TR: Find the blacksmith", ""), scene.sent)
+    }
+
+    /**
+     * #1198: asılı çeviri isteği turu kilitlemez; süre dolunca tur biter (bir şey gösterilmez), sonraki turda çalışan
+     * çevirmenle çeviri gösterilir.
+     */
+    @Test
+    fun hangingTranslatorTimesOutAndALaterPassShowsTheTranslation() {
+        val release = CountDownLatch(1)
+        var hang = true
+        val recorder = Recorder()
+        var now = 0L
+        val watcher = RegionWatcher({ Reading.fromText("Board the train") }, {
+            // Kesilmeyi dinlemeyen çevirmen: yalnız test bırakınca döner.
+            while (hang && release.count > 0) try { release.await() } catch (error: InterruptedException) {}
+            "TR: $it"
+        }, recorder, clock = { now }).apply { translationTimeoutMs = 200 }
+        val crop = RegionWatcher.Crop(Unit, signature(10))
+        fun offer() {
+            assertTrue(watcher.offer(listOf(quest), { crop }) { it.run() })
+            now += 1000
+        }
+        try {
+            offer()
+            val started = System.currentTimeMillis()
+            offer()
+            assertTrue(System.currentTimeMillis() - started < 3000)
+            assertFalse(watcher.isBusy)
+            assertTrue(recorder.sent.isEmpty())
+            hang = false
+            release.countDown()
+            offer()
+            assertEquals(listOf("q" to "TR: Board the train"), recorder.sent)
+        } finally {
+            release.countDown()
+        }
+    }
+
     @Test
     fun resetDropsAnOldPassBeforeItCanClearCurrentRegions() {
         val recorder = Recorder()

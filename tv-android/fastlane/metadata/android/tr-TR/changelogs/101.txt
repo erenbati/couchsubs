@@ -1,0 +1,1 @@
+0.9.98: Bilgi panelinde ses durumu: ses düzeyi, kısık mı, bağlı ses çıkışları (TV hoparlörü, ARC/eARC, Bluetooth) ve HDMI ses parçası. Uygulama içinde ses gelmeyen TV'lerde nedeni bulmak için.

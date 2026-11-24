@@ -1,0 +1,1 @@
+0.9.93: With Character Name > "Whole Line", the speaker's name and line are shown in that character's color.

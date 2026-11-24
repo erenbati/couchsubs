@@ -136,7 +136,7 @@ final class GamePackTests: XCTestCase {
     @MainActor
     func testGameChoiceLimitsPacksToTheChosenGame() throws {
         let library = try eldenAndRdr()
-        let choice = GameChoice(defaults: try XCTUnwrap(UserDefaults(suiteName: "game-choice-\(UUID().uuidString)")))
+        let choice = GameChoice(defaults: TestDefaults.make("game-choice"))
         choice.packs = library
         choice.start(console: nil) { false }
         choice.choose("Marvel's Wolverine")
@@ -152,7 +152,7 @@ final class GamePackTests: XCTestCase {
     /// vurgulanır (`xboxNeedsGame`) ve günlüğe tek satır gider; seçilince vurgu kalkar, "elle seçildi" yazılır.
     @MainActor
     func testXboxRemembersTheLastChosenGameAndFlagsAnUnknownGame() throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "game-choice-\(UUID().uuidString)"))
+        let defaults = TestDefaults.make("game-choice")
         var log: [String] = []
         let first = GameChoice(defaults: defaults)
         first.onLog = { log.append($0) }

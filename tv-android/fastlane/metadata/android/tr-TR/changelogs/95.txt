@@ -1,0 +1,1 @@
+0.9.92: Konuşma altyazısı hiçbir modda sıkışmıyor ve küçülmüyor; uzun satır bölünüyor, yazı boyu aynı kalıyor. Uzun ekran yazısı da sıkışmıyor; kısa etiketler en çok %10 daralıyor.

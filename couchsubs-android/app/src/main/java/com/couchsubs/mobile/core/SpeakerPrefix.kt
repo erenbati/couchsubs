@@ -23,11 +23,27 @@ object SpeakerPrefix {
         val match = pattern.find(trimmed) ?: return null
         val name = match.groupValues[1]
         val body = trimmed.substring(match.range.last + 1).trim()
-        if (name.length > MAX_NAME_LENGTH) return null
-        if (!name.contains(' ') && name.lowercase(Locale.ROOT) in SubtitleSegmenter.notNames) return null
+        if (!isName(name)) return null
         if (body.none { it.isLetter() } || body.startsWith("/")) return null
         return Split(name, body)
     }
+
+    /**
+     * Tek başına okunan konuşan adı ("Lucia:", "JASON :"): ardında cümle yok; ad değilse ("Note:", "10:") null. Yazı
+     * tanıma renkli adı cümleden ayrı satır okuyabiliyor; ad cümleye katılmazsa düşüyordu ([Reading.joiningRows]).
+     * Mac (SpeakerPrefix.nameOnly) ve Windows (SpeakerPrefix.NameOnly) ile aynı.
+     */
+    fun nameOnly(text: String): String? {
+        val trimmed = text.trim()
+        val match = pattern.find(trimmed) ?: return null
+        if (match.range.last + 1 != trimmed.length) return null
+        val name = match.groupValues[1]
+        return if (isName(name)) name else null
+    }
+
+    /** Ad uzunluğu aşılmamış ve tek sözcükse oyun başlığı ("Note", "Objective") değil. */
+    private fun isName(name: String): Boolean =
+        name.length <= MAX_NAME_LENGTH && (name.contains(' ') || name.lowercase(Locale.ROOT) !in SubtitleSegmenter.notNames)
 
     /**
      * Gösterilecek metin: çeviri [source]'un baştaki adıyla başlar ("ARTHUR: Gitmeliyiz."); [show] kapalıysa İngilizcede

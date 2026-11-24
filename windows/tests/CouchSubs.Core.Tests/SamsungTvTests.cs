@@ -79,6 +79,44 @@ public class SamsungTvTests
         }
     }
 
+    /// <summary>
+    /// Uygulama TV'den silinince (#1158) "kurulu" görünüyor, kurulum adımı önerilmiyordu: bayat bilgide liste "CouchSubs
+    /// yok" derse bilgi silinir ve uygulama katmanına bildirilir. Yanıtsız liste silmez (Mac/iPhone ve Android ile aynı).
+    /// </summary>
+    [Fact]
+    public void MissingListForgetsAStaleInstalledTv()
+    {
+        var host = "203.0.113." + Random.Shared.Next(1, 250);
+        var reported = new List<string>();
+        var before = SamsungAppKnowledge.Missing;
+        SamsungAppKnowledge.Missing = reported.Add;
+        try
+        {
+            Assert.True(SamsungAppKnowledge.ForgetsOnList(new SamsungAppPresence(false, null)));
+            Assert.False(SamsungAppKnowledge.ForgetsOnList(null));
+            Assert.False(SamsungAppKnowledge.ForgetsOnList(new SamsungAppPresence(true, 2)));
+            // Bilinmeyen TV'de silinecek bir şey yok, bildirim de yok.
+            Assert.False(SamsungAppKnowledge.AppMissing(host));
+            SamsungAppKnowledge.Mark(host, notify: false);
+            Assert.True(SamsungAppKnowledge.AllowsDirect(host));
+            Assert.False(SamsungAppKnowledge.AllowsDirect(host));
+            Assert.True(SamsungAppKnowledge.AppMissing(" " + host + " "));
+            Assert.False(SamsungAppKnowledge.IsKnown(host));
+            Assert.Equal(new[] { host }, reported);
+            Assert.Contains("TV uygulaması silinmiş", SamsungAppKnowledge.MissingLine("1.2.3.4"));
+            Assert.True(SamsungAppKnowledge.SameHost(" 1.2.3.4 ", "1.2.3.4"));
+            Assert.False(SamsungAppKnowledge.SameHost(null, "1.2.3.4"));
+            // Yeniden kurulunca bilgi ve listesiz açma hakkı geri gelir.
+            SamsungAppKnowledge.Mark(host, notify: false);
+            Assert.True(SamsungAppKnowledge.AllowsDirect(host));
+        }
+        finally
+        {
+            SamsungAppKnowledge.Missing = before;
+            SamsungAppKnowledge.Forget(host);
+        }
+    }
+
     [Fact]
     public void ConnectedTvIsRememberedAsInstalled()
     {

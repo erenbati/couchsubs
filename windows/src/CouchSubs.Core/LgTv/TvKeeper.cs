@@ -47,6 +47,8 @@ public sealed class TvKeeper(Func<Task<ITvControl>> connect, string appId, IRead
     /// <summary>Uygulama bu kadar kesintisiz bağlı kalınca geri çekilme sıfırlanır.</summary>
     public static readonly TimeSpan HealthyReset = TimeSpan.FromMinutes(10);
     private bool opened;
+    /// <summary>LG: uygulama kurulumdan sonra kapatıldı (<see cref="ReopenApp"/>); yeni bağlantıda bağlı görünse de açılır.</summary>
+    private bool launchAfterClose;
     private int reopens;
     private DateTime? lastReopen;
     private DateTime? connectedSince;
@@ -173,6 +175,15 @@ public sealed class TvKeeper(Func<Task<ITvControl>> connect, string appId, IRead
     {
         var time = now();
         NoteHealth(time);
+        if (launchAfterClose)
+        {
+            // Kurulumdan sonra uygulama kapatıldı: sunucu kopan akışı henüz fark etmemiş olabilir, bağlı sayılmaz.
+            launchAfterClose = false;
+            await fresh.LaunchAsync(appId, parameters);
+            opened = true;
+            onOpenResult?.Invoke(null);
+            return;
+        }
         if (tvConnected?.Invoke() == true)
         {
             opened = true;
@@ -304,6 +315,16 @@ public sealed class TvKeeper(Func<Task<ITvControl>> connect, string appId, IRead
         forced.Clear();
         consoleReturns.Clear();
         lastForced = null;
+    }
+
+    /// <summary>
+    /// LG: TV uygulaması kurulumdan sonra (ya da eski sürümde çalıştığı için) kapatıldı; bağlantı yeniden kurulur ve uygulama
+    /// bağlı görünse de bir kez açılır (adres ve anahtar parametreyle). Mac TVKeeper.reopenApp ile aynı.
+    /// </summary>
+    public void ReopenApp()
+    {
+        Reconnect();
+        launchAfterClose = true;
     }
 
     public void Stop()

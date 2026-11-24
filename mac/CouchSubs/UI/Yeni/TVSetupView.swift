@@ -228,7 +228,7 @@ struct TVSetupStep: View {
                 if let lastPaired { Button("Try Again") { Task { await pair(lastPaired) } }.buttonStyle(DSButtonStyle(kind: .compact)) }
             }
         } else if case .failed(let error, let reason) = model.tvApp {
-            DSErrorBox(title: TVErrorTitle.title(error), message: TVAppCard.message(for: error, brand: brand, reason: reason)) {
+            DSErrorBox(title: TVErrorTitle.title(error), message: TVAppCard.message(for: error, brand: brand, reason: reason, address: model.computerAddress)) {
                 Button("Try Again") { Task { await model.refreshTVApp() } }.buttonStyle(DSButtonStyle(kind: .compact))
                 if error == .foreignApp {
                     Button("Remove the Old App on the TV") { Task { await model.replaceForeignTVApp() } }
@@ -592,6 +592,7 @@ enum TVErrorTitle {
         case .packageBlocked: "The TV Blocks CouchSubs"
         case .connectionLost: "The Connection Dropped"
         case .foreignApp: "Another App Is Installed"
+        case .tvNotResponding: "The TV Isn't Responding"
         }
     }
 }

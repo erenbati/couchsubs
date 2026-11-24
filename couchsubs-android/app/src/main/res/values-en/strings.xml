@@ -23,7 +23,7 @@
     <string name="phase_reconnecting">Connection lost, reconnecting…</string>
     <string name="reconnect">Reconnect</string>
     <string name="phase_in_use">PS5 is in another Remote Play session. Close the other device.</string>
-    <string name="phase_not_found_host">PS5 not found at %1$s. Make sure it is on and on the same network. Reconnecting…</string>
+    <string name="phase_not_found_host">PS5 not found at %1$s. Searching the network for it. Make sure it is on and on the same network; if its address changed, use Enter IP Address in Settings &gt; Console. Reconnecting…</string>
     <string name="phase_network">Lost the connection to the PS5. Reconnecting… If this keeps happening, connect the PS5 to the router with a cable.</string>
     <string name="phase_remote_play_disabled">Remote Play is turned off on the PS5 (code %1$s). On the PS5, go to Settings › System › Remote Play and turn on Enable Remote Play.</string>
     <string name="phase_rejected_code">The PS5 rejected the connection (code %1$s). Another Remote Play app (PS Remote Play) may be open, or the PS5 may be in another session. Close PS Remote Play, restart the PS5, then try again.</string>
@@ -241,6 +241,8 @@
     <string name="psn_why">Why a second account?</string>
     <string name="psn_why_body">When Remote Play connects with the same account, it takes over your session and controller. The second account only receives the picture; you keep playing with your own account and controller. The account is free, no PS Plus needed.</string>
     <string name="subtitle_off_tip">Turn on the game\'s own subtitles: CouchSubs reads the English subtitles on screen, not the audio.</string>
+    <string name="game_phone_hint">The phone translation is off. Turn it on?</string>
+    <string name="game_phone_hint_turn_on">Turn On</string>
     <string name="psn_main_account_steps">To play without the connection dropping: 1. On the PS5, start the game with your MAIN account first. 2. Then start translating. 3. Don\'t switch users during the game; when you turn on the controller, choose your MAIN account. Don\'t play with the second account CouchSubs signs in with, or the controller will turn off by itself or won\'t work in the game.</string>
     <string name="psn_main_account">When you turn on the controller to play, choose your MAIN account on the PS5. Don\'t play with the second account CouchSubs signs in with, or the controller will turn off by itself or won\'t work in the game.</string>
     <string name="pair_found">%1$s found</string>
@@ -353,7 +355,7 @@
     <string name="running_from_pack">From ready translation</string>
     <string name="subtitle_connected">PS5 connected</string>
     <string name="subtitle_waiting">Connecting</string>
-    <string name="subtitle_screen_note">Screen stays on · brightness dims automatically</string>
+    <string name="subtitle_screen_note">Keep the phone screen on while you play; translation stops when the screen turns off. Keep it plugged in.</string>
     <string name="subtitle_screen_gesture_hint">Drag the subtitle up or down; pinch to change the text size.</string>
     <string name="packs_auto">The pack is chosen automatically when the game opens. Lines not in the pack are translated with your chosen engine. Packs are free; new ones and fixes download automatically.</string>
     <string name="packs_now">now</string>
@@ -415,6 +417,7 @@
     <string name="tvapp_update_body">CouchSubs on the %1$s TV is %2$s, this phone has %3$s. Updating takes about a minute; keep the TV on and on the same Wi-Fi.</string>
     <string name="tvapp_update_button">Update the TV app</string>
     <string name="tvapp_update_short">Update available: %1$s</string>
+    <string name="tvapp_stale_running">CouchSubs on the TV is still running an old version (%1$s). On the TV, close CouchSubs and open it again.</string>
     <string name="tvinstall_title">Install the TV app</string>
     <string name="tvinstall_body">Installs the CouchSubs TV app on your Samsung TV from this phone, without a computer. The phone and the TV must be on the same Wi-Fi.</string>
     <string name="tvinstall_supported">Samsung TVs and smart monitors (2016 and later; 2016–2018 models are experimental).</string>
@@ -467,6 +470,7 @@
     <string name="tvinstall_err_not_restarted">The TV\'s settings are right (Developer mode on, Host PC IP %1$s), but the TV has not fully restarted since then, so it does not accept the phone yet. Hold the power button on the remote until the TV turns off and comes back on with the Samsung logo (about 5 seconds), or unplug the TV for 30 seconds, then try again.</string>
     <string name="tvinstall_err_other_ip">The TV\'s Host PC IP is %1$s, but this phone\'s address is %2$s. In the TV\'s Developer mode window, set Host PC IP to %2$s, then restart the TV fully (hold the power button until the Samsung logo appears, about 5 seconds).</string>
     <string name="tvinstall_err_dev_off">Developer mode is off on the TV. Turn it on with the steps above, type this phone\'s address (%1$s) as Host PC IP, then restart the TV fully (hold the power button until the Samsung logo appears, about 5 seconds).</string>
+    <string name="tvinstall_host_pc_steps">On the TV: Apps › press 1 2 3 4 5 › Developer mode On, Host PC IP = this device\'s IP (%1$s), then restart the TV.</string>
     <string name="tvinstall_err_too_old">This Samsung TV is too old for the CouchSubs TV app (2016 models and later are supported).</string>
     <string name="tvinstall_err_login">Samsung sign-in did not complete. Try again and finish signing in on the page that opens.</string>
     <string name="tvinstall_err_certificate">Samsung did not issue the signing certificate. Try again in a few minutes.</string>
@@ -497,7 +501,7 @@
     <string name="tvinstall_lg_err_unreachable">The TV did not respond. Make sure the TV is on and on the same Wi-Fi as this phone, and that Dev Mode Status is on in the Developer Mode app.</string>
     <string name="tvinstall_lg_err_restart_needed">Developer mode looks on (the TV\'s Key Server answers), but the TV refuses the install connection. Unplug the TV for 30 seconds and plug it back in (or press RESTART in the Developer Mode app), then open the Developer Mode app, check that Dev Mode Status is on, turn on Key Server and try again. On some TVs that use webOS Hub this connection may be closed in the TV\'s software; the TV app then cannot be installed this way.</string>
     <string name="tvinstall_lg_err_dev_mode_off">The TV is on at this address, but developer mode is off. Open the Developer Mode app on the TV: Dev Mode Status must be on (it turns off by itself when its time runs out; turn it on again and the TV restarts). Then turn on Key Server and try again.</string>
-    <string name="tvinstall_lg_err_tv_not_found">No TV responds at this address. The TV may be off, on another Wi-Fi, or its address may have changed. Turn the TV on, check its IP address in the TV\'s Settings › Network, and pick the right TV from the list above.</string>
+    <string name="tvinstall_lg_err_tv_not_found">The TV isn\'t responding at this address (is it on and on the same network?) It wasn\'t found on the network either. Turn the TV on, check its IP address in the TV\'s Settings › Network, and pick the right TV from the list above.</string>
     <string name="tvinstall_lg_err_key_server">Key Server is off. Turn it on in the Developer Mode app and keep the app on screen.</string>
     <string name="tvinstall_lg_err_passphrase">The passphrase is not correct. Check it on the TV screen.</string>
     <string name="tvinstall_lg_err_key_refused">The TV refused the key. Open Key Server and type the passphrase again.</string>
@@ -647,6 +651,10 @@
     <string name="dubbing_output">Play the voice on</string>
     <string name="dubbing_narrator">Narrator and unnamed lines</string>
     <string name="dubbing_partner">Second speaker in dialogue</string>
+    <string name="dubbing_unknown">Voice for unknown characters</string>
+    <string name="dubbing_unknown_hint">Used when the name doesn\'t show whether the character is a man or a woman. You can change each character\'s voice below.</string>
+    <string name="dubbing_man">Man</string>
+    <string name="dubbing_woman">Woman</string>
     <string name="dubbing_characters">Characters</string>
     <string name="dubbing_listen">Listen</string>
     <string name="dubbing_voice_female_1">Woman 1 (bright)</string>
@@ -793,6 +801,7 @@
     <string name="set_name_same">Same as Text</string>
     <string name="set_name_single">Single Color</string>
     <string name="set_name_speaker">By Character</string>
+    <string name="set_name_line">Whole Line</string>
     <string name="set_name_same_note">The character name is shown in the same color as the text.</string>
     <string name="set_characters_empty">Characters you meet while playing appear here.</string>
     <string name="set_characters_more">New characters get colors in turn.</string>
@@ -891,4 +900,15 @@
     <string name="perde_not_set_up">Not set up</string>
     <string name="perde_on_this_screen">On this screen</string>
     <string name="perde_ready_translation">Ready translation</string>
+    <string name="tv_not_responding">The TV isn\'t responding at this address (is it on and on the same network?)</string>
+    <string name="tv_not_responding_at">The TV isn\'t responding at %1$s. Its address may have changed.</string>
+    <string name="tv_searching_again">Not responding — searching again…</string>
+    <string name="tv_search_again">Search for the TV Again</string>
+    <string name="tv_enter_ip">Enter IP Address</string>
+    <string name="tv_use_address">Add</string>
+    <string name="tv_ip_not_recognised">No TV was recognised at this address.</string>
+    <string name="tv_change">Change the TV</string>
+    <string name="tv_remove_pairing">Remove Pairing</string>
+    <string name="tv_remove_pairing_title">Remove Pairing?</string>
+    <string name="tv_remove_pairing_confirm">The paired TV will be removed. You can choose a TV again with Change the TV.</string>
 </resources>

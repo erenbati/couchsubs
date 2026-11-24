@@ -35,7 +35,7 @@ public enum RegionTranslation {
     public static func translateOnce(_ frame: CGImage, region: CropRegion, reader: TextReader,
                                      translator: TextTranslator) async throws -> Result? {
         let area = RegionCropper.crop(frame, to: region)
-        let reading = try await ReadQueue.shared.run(priority: .background, detail: ReadQueue.detail("alanı çevir", area)) {
+        let reading = try await ReadQueue.shared.run(priority: .background, detail: ReadQueue.detail("alanı çevir", area), droppable: false) {
             try reader.readLines(area, deep: true)
         }.withoutButtonPrompts()
         guard !reading.lines.isEmpty else { return nil }

@@ -94,9 +94,13 @@ protocol AppServices: AnyObject {
     /// Uygulamayla gelen TV paketinin sürümü (geliştirici derlemesinde paket olmayabilir).
     var bundledTVAppVersion: String? { get }
     func isDevModeOn(host: String) async -> Bool
+    /// Kayıtlı TV adresinde bir şey yanıt veriyor mu (kapı açık ya da reddediyor); hepsi zaman aşımındaysa hayır (`TVReach`).
+    func tvResponds(host: String, brand: TVBrand) async -> Bool
     func fetchDevKey(host: String, passphrase: String) async throws -> String
     func installedTVAppVersion(host: String, devKey: String) async throws -> String?
     func installTVApp(host: String, devKey: String) async throws
+    /// LG: TV'de açık CouchSubs'ı kapatır (eski sürümde çalışıyorsa; kurulum bunu kendisi de yapar).
+    func closeTVApp(host: String, devKey: String) async
     /// LG geliştirici modunun süresini baştan başlatır; kalan saati döner (bilinmiyorsa nil).
     func renewDevSession(host: String, devKey: String) async -> Int?
 
@@ -123,6 +127,8 @@ protocol AppServices: AnyObject {
 }
 
 extension AppServices {
+    func closeTVApp(host: String, devKey: String) async {}
+
     func installTVApp(host: String, devKey: String, replaceForeign: Bool) async throws {
         try await installTVApp(host: host, devKey: devKey)
     }
@@ -178,11 +184,15 @@ protocol StreamControlling: AnyObject {
     func setPlayAudio(_ enabled: Bool)
     /// PS5: bağlanırken son adım; "Bağlanıyor…" 30 sn'yi geçince nedeni söylenir (Xbox ve pencereden okumada yok).
     var connectStep: ConnectStep? { get }
+    /// Karelerin kopyalanma sıklığı (`FrameCadence`; Windows IStreamSession.UseCadence ile aynı): oturum kareyi kendi
+    /// belleğimize kopyalamadan önce sorar. Vermeyen oturum kendi hızında gönderir.
+    func useCadence(_ cadence: FrameCadence)
 }
 
 extension StreamControlling {
     func setPlayAudio(_ enabled: Bool) {}
     var connectStep: ConnectStep? { nil }
+    func useCadence(_ cadence: FrameCadence) {}
 }
 
 /// TV uygulamasını açık tutan görevli (gerçekte `TVKeeper`).
@@ -190,6 +200,12 @@ protocol KeeperControlling: AnyObject {
     func start(interval: Duration)
     func stop()
     func reconnect()
+    /// LG: uygulama kapatıldı (kurulumdan sonra); bağlı görünse de bir kez açılır (TVKeeper.reopenApp).
+    func reopenApp()
+}
+
+extension KeeperControlling {
+    func reopenApp() { reconnect() }
 }
 
 extension StreamSession: StreamControlling {}
@@ -345,6 +361,8 @@ final class LiveServices: AppServices {
 
     func isDevModeOn(host: String) async -> Bool { await DevModeInstaller.isDevModeOn(host: host) }
 
+    func tvResponds(host: String, brand: TVBrand) async -> Bool { await TVReach.responds(host: host, brand: brand) }
+
     func fetchDevKey(host: String, passphrase: String) async throws -> String {
         try await DevModeInstaller.fetchKey(host: host, passphrase: passphrase, runner: ProcessRunner())
     }
@@ -369,6 +387,13 @@ final class LiveServices: AppServices {
                 TVInstallLog.write("LG: kullanıcı onayıyla TV'deki com.couchsubs.tv kaldırıldı: \(try await installer.removeApp())")
             }
             try await installer.install(package: package, version: version)
+        }
+    }
+
+    func closeTVApp(host: String, devKey: String) async {
+        _ = try? await withKeyFile(devKey) { file in
+            let reply = await DevModeInstaller(host: host, keyFile: file, runner: ProcessRunner()).closeApp()
+            TVInstallLog.write("LG: TV'deki CouchSubs kapatıldı: \(reply)")
         }
     }
 
@@ -629,7 +654,16 @@ final class AppModel: ObservableObject {
     /// TV'ye bağlı uygulama bu Mac'teki TV paketinden eski (sürümü altyazı akışıyla öğrenilir; bildirmeyen TV 0.9.69'den
     /// eskidir). LG'de geliştirici modu kapalıyken ya da anahtar bu Mac'te değilken TV'deki sürüm başka yoldan okunamıyor,
     /// TV uygulaması eski kalıyor ve hiç uyarı çıkmıyordu (GitHub #884, #891). Ana ekrandaki TV kartı güncellemeyi önerir.
-    @Published private(set) var tvAppOutdated: TVAppOutdated?
+    @Published private(set) var tvAppOutdated: TVAppOutdated? {
+        didSet { if tvAppOutdated == nil { tvAppStaleRunning = false } }
+    }
+    /// LG: TV'deki paket güncel ama çalışan uygulama kapatıp açtıktan sonra da eski sürümde (beta.89). Ana ekrandaki not
+    /// "TV'de CouchSubs'ı kapatıp yeniden açın" der (tvAppOutdated o sürümleri taşır).
+    @Published private(set) var tvAppStaleRunning = false
+    /// LG: kurulumdan ya da kapat-aç'tan sonra çalışan uygulamanın sürümü bekleniyor.
+    private var runningCheck: TVAppRunningCheck?
+    /// Bağlı TV uygulamasının son bildirdiği sürüm (boş: sürüm bildirmeyen eski uygulama); bağlı uygulama yoksa nil.
+    private var runningTVAppVersion: String?
     /// LG geliştirici modunun kalan süresi (saat); CouchSubs uzattıktan sonra bilinir.
     @Published var devModeHoursLeft: Int?
     /// Son eşleşmede TV uygulaması açılamadı.
@@ -696,7 +730,12 @@ final class AppModel: ObservableObject {
                 || settings.localAIBaseURL != oldValue.localAIBaseURL || settings.localAIModel != oldValue.localAIModel
                 || settings.aiInstruction != oldValue.aiInstruction
             if translationChanged { Task { await refreshTranslatorStatus() } }
-            if settings.readsGamePhone != oldValue.readsGamePhone { configureGamePhone() }
+            if settings.readsGamePhone != oldValue.readsGamePhone
+                || settings.drawScreenInPlace != oldValue.drawScreenInPlace { configureGamePhone() }
+            if settings.drawScreenInPlace != oldValue.drawScreenInPlace {
+                capturedWindow?.setFastFrames(settings.drawScreenInPlace)
+            }
+            if settings.readsGamePhone { showsGamePhoneHint = false }
             if settings.misreadWaitMs != oldValue.misreadWaitMs || settings.partialWaitMs != oldValue.partialWaitMs {
                 pipeline?.applyWaits(from: settings)
             }
@@ -738,7 +777,10 @@ final class AppModel: ObservableObject {
     @Published var tvClients = 0 {
         // Eski uygulama TV'den kalktı (silindi, kapandı): "TV uygulamasını güncelle" bellekte kalmıyor; ana ekran "TV
         // uygulaması bekleniyor / Yeniden kur" der. Eski uygulama yeniden bağlanırsa sürümünü yine bildirir.
-        didSet { if tvClients == 0, tvAppOutdated != nil { tvAppOutdated = nil } }
+        didSet {
+            if tvClients == 0, tvAppOutdated != nil { tvAppOutdated = nil }
+            if tvClients == 0 { runningTVAppVersion = nil }
+        }
     }
     /// TV uygulamasını kendiliğinden açmanın son denemesi neden olmadı (ana ekranda tek satır); açıldıysa nil.
     @Published private(set) var tvOpenProblem: TVOpenProblem?
@@ -755,6 +797,10 @@ final class AppModel: ObservableObject {
     /// Otomatik ekran yazısı göçle kapatıldı (beta.63'te açıktı): bu oturumda bir kez "deneysel; Ayarlar'dan
     /// açabilirsiniz" bilgisi görünür. Kullanıcı ayarı değiştirince kalkar.
     @Published private(set) var showsAutoScreenTextNotice = false
+    /// Telefon çevirisi kapalıyken GTA 6'nın telefon listesi altyazı yolunda sahne yazısı sayılıp atıldı: oturumda bir kez
+    /// "Telefon çevirisi kapalı, açmak ister misiniz?" (`GamePhoneHint`, #1202).
+    @Published private(set) var showsGamePhoneHint = false
+    private var gamePhoneHint = GamePhoneHint()
     private var subtitleOffTip = SubtitleOffTip()
     /// Bu ve önceki oturumlarda çevrilen son 200 altyazı (history.json); kaçırılan satır ana pencereden ve "Geçmiş"ten
     /// yeniden okunur.
@@ -792,6 +838,8 @@ final class AppModel: ObservableObject {
     /// bir okur.
     private(set) var frameCount = 0
     private(set) var lastFrameAt: Date?
+    /// Son karenin geldiği an (ms, `SubtitleStabilizer.uptimeMs`): yerinde çizimde çapanın o karedeki yeri bununla bulunur.
+    private(set) var lastFrameMs = 0
     @Published var showAbout = false
     /// Uygulama menüsündeki "Sürüm Notları".
     @Published var showReleaseNotes = false
@@ -841,6 +889,14 @@ final class AppModel: ObservableObject {
     /// Ek alanları (görev, telefon, bildirim) okuyup çeviren; çeviri sürerken var.
     private var regionWatcher: RegionWatcher?
     private var gamePhoneTracker: GamePhoneTracker?
+    /// Telefona yapışık çeviri (deneysel, önce Mac): GTA 6 telefonunun çapası (`PhoneAnchorSession`). Yalnız ayar açık ve
+    /// oyun görüntüsü bu Mac'teki bir pencereden okunurken kurulur (bkz. `configureGamePhone`).
+    private(set) var phoneAnchor: PhoneAnchorSession?
+    /// Çapanın gösterilen yeri; oyun penceresinin üstündeki katman ve yayın penceresi izler (saniyede 30'a kadar değişir,
+    /// AppModel'in kendisini yayımlamaz).
+    let phoneAnchorFeed = PhoneAnchorFeed()
+    /// Görüntüyü okunan pencere (PS Remote Play, chiaki-ng ya da seçilen OBS/oyun penceresi); konsoldan okunurken nil.
+    var capturedWindow: RemotePlayWindowStream? { session as? RemotePlayWindowStream }
     /// Ekran yazılarını kendiliğinden bulan (ayar açık ve çeviri sürerken var); örnek arka planda, tek uçuşta alınır.
     private var screenTextDetector: ScreenTextDetector?
     private var screenTextBusy = false
@@ -854,6 +910,8 @@ final class AppModel: ObservableObject {
     private var lastSubtitleBox: TextBox?
     /// Hatta aynı anda tek kare girer. Durdurma ve yeni hat kapıyı sıfırlar; takılan okuma hattı yeniden kurdurur.
     private var frameGate = FrameGate()
+    /// Oturumların kare kopyalama sıklığı (oyun takılmasın): okuma süresi buradan bildirilir (bkz. `FrameCadence`).
+    let frameCadence = FrameCadence()
     /// Okuma sürerken atlanan son kare; okuma bitince okunur (bkz. `FrameGate.leave`).
     private var skippedFrame: (frame: CGImage, capturedAt: Int)?
     private var wakeObserver: NSObjectProtocol?
@@ -975,6 +1033,8 @@ final class AppModel: ObservableObject {
         let autoScreenTextNotice = curated.migratingAutoScreenText()
         // Otomatik ekran yazısı kapalıyken hazır alanlar ve GTA 6 telefonu da bir kez kapatılır (altyazı dışında çeviri yok).
         curated.migratingScreenTextExtras()
+        // GTA 6 telefonu eski göçle kapalı kaldıysa bir kez açılır (#1202; iPhone, Windows, Android ile aynı).
+        curated.migratingGamePhone()
         // Önceki sürümden gelen kurulumda eski ⌥⌘T ve ⌥⌘L ikinci tuş olarak kalır (bir kez; kayıtla birlikte yazılır).
         if LegacyMacHotkeys.isLegacy(saved) { curated.hotkeys = LegacyMacHotkeys.apply(curated.hotkeys) }
         settings = curated
@@ -1239,6 +1299,7 @@ final class AppModel: ObservableObject {
         server.onTVAppVersion = { [weak self] version in
             Task { @MainActor [weak self] in self?.tvAppReported(version) }
         }
+        shareLatestTVAppVersion()
 
         server.onClientsChanged = { [weak self] count in
             if let self, self.tvClients == 0, count > 0, self.isRunning {
@@ -1253,6 +1314,11 @@ final class AppModel: ObservableObject {
         }
         // Bu Mac'in daha önce kurduğu Samsung uygulaması da bilinen sayılır.
         if let tv, tv.brand == .samsung, installedAppVersion != nil { SamsungAppKnowledge.shared.mark(host: tv.host) }
+        // TV'nin listesi uygulamanın silindiğini söyledi (#1158): bu Mac'in kurduğu sürümün kaydı da silinir; yoksa açılışta
+        // bilgi yeniden işaretleniyor, kart "güncel" gösteriyor ve sdb reddedilince kurulum adımı hiç çıkmıyordu.
+        SamsungAppKnowledge.onMissing = { [weak self] host in
+            Task { @MainActor [weak self] in self?.samsungAppMissing(host: host) }
+        }
         server.onTVStale = { [weak self] in
             Task { @MainActor [weak self] in self?.tvLost(stale: true) }
         }
@@ -1615,6 +1681,9 @@ final class AppModel: ObservableObject {
     /// Eskiyse ana ekran "TV uygulamasını güncelle" der; geliştirici modu açık ve anahtar kayıtlıysa (LG) ya da TV'ye
     /// ulaşılıyorsa (Samsung, Android TV) güncelleme hemen, sorulmadan kurulur (önceki sürüm denetimiyle aynı yol).
     func tvAppReported(_ version: String) {
+        runningTVAppVersion = version
+        shareLatestTVAppVersion()
+        if tv?.brand == .lg, lgRunningReported(version) { return }
         guard let bundled = bundledVersionForTV, SubtitleServer.isTVAppOutdated(reported: version, bundled: bundled) else {
             tvAppOutdated = nil
             return
@@ -1632,6 +1701,42 @@ final class AppModel: ObservableObject {
         lastTVAppAutoUpdate = Date()
         SubtitleLog.write("TV uygulaması eski: TV \(installed), bu Mac'teki paket \(bundled); güncelleme deneniyor.")
         Task { await refreshTVApp() }
+    }
+
+    /// LG, kurulumdan ya da kapat-aç'tan sonraki ilk sürüm bildirimi (`runningCheck`): çalışan uygulama kurulan sürümdeyse
+    /// denetim biter; eskiyse bir kez daha kapatılıp açılır, yine eskiyse ana ekran "TV'de CouchSubs'ı kapatıp yeniden
+    /// açın" der (fiş çekmek gerekmez). true: bildirim burada ele alındı. iPhone, Windows ve Android ile aynı.
+    private func lgRunningReported(_ version: String) -> Bool {
+        guard var check = runningCheck else { return false }
+        let verdict = check.report(version)
+        runningCheck = check
+        let shown = version.isEmpty ? TVAppOutdated.unreported : version
+        switch verdict {
+        case .running:
+            runningCheck = nil
+            tvAppStaleRunning = false
+            TVInstallLog.write("TV'de çalışan CouchSubs: \(shown) (kurulan \(check.expected)).")
+            return false
+        case .restartAgain:
+            if let tv, let devKey = store.load(String.self, for: StoreKey.tvDevKey) {
+                TVInstallLog.write("TV'de çalışan CouchSubs hâlâ \(shown), kurulu \(check.expected); uygulama bir kez daha kapatılıp açılıyor.")
+                Task { await restartLGApp(tv, devKey: devKey) }
+                return true
+            }
+            fallthrough
+        case .stale:
+            runningCheck = nil
+            TVInstallLog.write("TV'de çalışan CouchSubs kapatıp açtıktan sonra da \(shown), kurulu \(check.expected); kullanıcıdan TV'de kapatıp açması isteniyor.")
+            tvAppOutdated = TVAppOutdated(installed: shown, bundled: check.expected)
+            tvAppStaleRunning = true
+            return true
+        }
+    }
+
+    /// LG: TV'deki CouchSubs'ı kapatır ve yeniden açar (adres ve anahtar parametreyle).
+    private func restartLGApp(_ tv: LGTV, devKey: String) async {
+        await services.closeTVApp(host: tv.host, devKey: devKey)
+        await openTVAppAfterInstall(tv)
     }
 
     /// Eski TV uygulamasının sessiz güncellemesi en son ne zaman denendi (en çok saatte bir).
@@ -1653,6 +1758,14 @@ final class AppModel: ObservableObject {
 
     /// Ana ekrandaki TV uygulaması kartını kapatır ("Tamam").
     func dismissTVAppUpdate() { tvAppUpdating = false }
+
+    /// Telefon ipucundaki "Aç": GTA 6 telefonunu otomatik çevir açılır.
+    func enableGamePhone() {
+        settings.autoReadGamePhone = true
+        showsGamePhoneHint = false
+    }
+
+    func dismissGamePhoneHint() { showsGamePhoneHint = false }
 
     // MARK: - TV uygulamasını kurma
 
@@ -1676,6 +1789,15 @@ final class AppModel: ObservableObject {
     /// Samsung ya da Android TV'ye daha önce CouchSubs'ın kurduğu sürüm.
     private var installedAppVersion: String? { store.load(String.self, for: StoreKey.tvAppVersion) }
 
+    /// Samsung TV'nin kurulu uygulama listesi CouchSubs'ın silindiğini söyledi (bkz. `SamsungAppKnowledge.appMissing`):
+    /// "kurulu" kaydı silinir, kart kurulum adımlarını gösterir. iPhone, Windows ve Android ile aynı.
+    func samsungAppMissing(host: String) {
+        guard let tv, tv.brand == .samsung, SamsungAppKnowledge.sameHost(tv.host, host) else { return }
+        store.remove(StoreKey.tvAppVersion)
+        tvAppMissing = true
+        if case .upToDate = tvApp { tvApp = .unknown }
+    }
+
     private func needsInstall(_ bundled: BundledTVApp) -> Bool {
         guard let installed = installedAppVersion else { return true }
         return DevModeInstaller.isNewer(bundled.version, than: installed)
@@ -1690,12 +1812,30 @@ final class AppModel: ObservableObject {
             lgSkipped("TV'nin adresi yok")
             return
         }
-        let devModeOn = await services.isDevModeOn(host: tv.host)
+        var tv = tv
+        var devModeOn = await services.isDevModeOn(host: tv.host)
+        // Geliştirici modu kapalı görünüyorsa önce adres: TV'nin adresi değiştiyse eski adres hiç yanıt vermez; "geliştirici
+        // modu kapalı" denmez, TV ağda yeniden aranır (beta.89, 192.168.1.238 → .156).
+        var silent = false
+        if !devModeOn {
+            switch await locateTV() {
+            case .moved(let moved):
+                tv = moved
+                devModeOn = await services.isDevModeOn(host: moved.host)
+            case .silent: silent = true
+            case .here: break
+            }
+        }
         // Beklerken parola kartından kurulum başladıysa kart geri "geliştirici modu kapalı"ya dönmez.
         if tvApp == .working { return }
         // Eski TV uygulaması da eksik gibi kurulum adımlarını gösterir: bağlı (eski) uygulamada kart boş kalıyor, "TV
         // uygulamasını güncelle" TV adımını açıp yalnız eşleştirme/test gösteriyor, ana ekrana dönülüyordu (sonsuz döngü).
         let needsSteps = tvAppMissing || tvAppOutdated != nil
+        if silent {
+            if needsSteps { lgSkipped("\(TVReach.notRespondingLine) (\(tv.host))") }
+            tvApp = needsSteps ? .failed(.tvNotResponding) : .unknown
+            return
+        }
         guard devModeOn else {
             if needsSteps { lgSkipped("geliştirici modu kapalı ya da TV'ye ulaşılamıyor (\(tv.host):9922)") }
             tvApp = needsSteps ? .devModeOff : .unknown
@@ -1730,6 +1870,18 @@ final class AppModel: ObservableObject {
         let check = await services.checkSamsung(host: tv.host)
         let devModeOn: Bool
         if check.info?.developerMode == false { devModeOn = false } else { devModeOn = await services.isSamsungDevModeOn(host: tv.host) }
+        // TV 8001'de de yanıt vermediyse adres değişmiş olabilir: TV ağda aranır, bulunursa yeni adresle denetlenir.
+        if !devModeOn, check.info == nil {
+            switch await locateTV() {
+            case .moved(let moved):
+                await refreshSamsungApp(moved)
+                return
+            case .silent:
+                tvApp = remembered ? current : .failed(.tvNotResponding)
+                return
+            case .here: break
+            }
+        }
         guard devModeOn else {
             // Geliştirici modu kapalıyken TV'ye sorulamaz; bu Mac'in kurduğu sürüme bakılır.
             tvApp = remembered ? current : .devModeOff
@@ -1794,6 +1946,12 @@ final class AppModel: ObservableObject {
             androidTVChoice = nil
             switch AndroidTVPick.pick(found: await services.scanAndroidTVs(), preferred: [choice, tv.host].compactMap { $0 }) {
             case .none:
+                // Kayıtlı adres hiç yanıt vermiyorsa "hata ayıklama kapalı" denmez: TV ağda aranır (bulunursa adres
+                // güncellenir; hata ayıklama orada da kapalıysa adımlar gösterilir), bulunamazsa "TV bu adreste yanıt vermiyor".
+                if case .silent = await locateTV() {
+                    tvApp = .failed(.tvNotResponding)
+                    return
+                }
                 tvApp = .devModeOff
                 return
             case .ask(let hosts):
@@ -1815,6 +1973,7 @@ final class AppModel: ObservableObject {
             // TV'nin adresi bundan sonra sürüm denetimi için kullanılır.
             let located = LGTV(name: tv.name, host: host, brand: .androidTV)
             let addressChanged = self.tv?.host != located.host
+            if addressChanged, let old = self.tv?.host, !old.isEmpty { TVInstallLog.write(TVReach.movedLine(from: old, to: host)) }
             self.tv = located
             store.save(located, for: StoreKey.tv)
             store.save(version, for: StoreKey.tvAppVersion)
@@ -1930,6 +2089,17 @@ final class AppModel: ObservableObject {
         // Kurulum adımları görünsün: TV uygulaması bağlı değil, kullanıcı yeniden kurmak istiyor.
         tvAppMissing = true
         tvApp = .working
+        var tv = tv
+        if !(await services.isDevModeOn(host: tv.host)) {
+            switch await locateTV(force: true) {
+            case .moved(let moved): tv = moved
+            case .silent:
+                lgSkipped("\(TVReach.notRespondingLine) (\(tv.host))")
+                tvApp = .failed(.tvNotResponding)
+                return
+            case .here: break
+            }
+        }
         guard await services.isDevModeOn(host: tv.host) else {
             lgSkipped("geliştirici modu kapalı ya da TV'ye ulaşılamıyor (\(tv.host):9922)")
             tvApp = .devModeOff
@@ -1974,17 +2144,36 @@ final class AppModel: ObservableObject {
 
     /// Key Server'dan anahtarı alır (TV ekranındaki parolayla) ve uygulamayı kurar.
     func installTVApp(passphrase: String) async {
-        guard let tv, let bundled = services.bundledTVAppVersion else { return }
+        guard var tv, let bundled = services.bundledTVAppVersion else { return }
         tvApp = .working
-        do {
-            TVInstallLog.lgKeyRequest(host: tv.host)
-            let devKey = try await services.fetchDevKey(host: tv.host, passphrase: passphrase.trimmingCharacters(in: .whitespacesAndNewlines))
-            TVInstallLog.write("Key Server'dan anahtar alındı.")
-            store.save(devKey, for: StoreKey.tvDevKey)
-            await install(tv: tv, devKey: devKey, bundled: bundled)
-        } catch {
-            TVInstallLog.failure(error)
-            tvApp = .needsPassphrase(error: (error as? DevModeFailure)?.error ?? error as? DevModeError ?? .installFailed)
+        var relocated = false
+        while true {
+            do {
+                TVInstallLog.lgKeyRequest(host: tv.host)
+                let devKey = try await services.fetchDevKey(host: tv.host, passphrase: passphrase.trimmingCharacters(in: .whitespacesAndNewlines))
+                TVInstallLog.write("Key Server'dan anahtar alındı.")
+                store.save(devKey, for: StoreKey.tvDevKey)
+                await install(tv: tv, devKey: devKey, bundled: bundled)
+            } catch {
+                TVInstallLog.failure(error)
+                let failed = (error as? DevModeFailure)?.error ?? error as? DevModeError ?? .installFailed
+                // "Key Server kapalı" ancak TV bu adreste yanıt veriyorsa: adres hiç yanıt vermiyorsa TV ağda aranır, yeni
+                // adreste bulunursa anahtar oradan bir kez daha istenir; bulunamazsa "TV bu adreste yanıt vermiyor".
+                if !relocated, failed == .keyServerOff || failed == .unreachable {
+                    relocated = true
+                    switch await locateTV(force: true) {
+                    case .moved(let moved):
+                        tv = moved
+                        continue
+                    case .silent:
+                        tvApp = .needsPassphrase(error: .tvNotResponding)
+                        return
+                    case .here: break
+                    }
+                }
+                tvApp = .needsPassphrase(error: failed)
+            }
+            return
         }
     }
 
@@ -2006,6 +2195,13 @@ final class AppModel: ObservableObject {
             if force { TVInstallLog.write("Yeniden kurulum istendi; TV'deki sürüme bakılmadan kuruluyor.") }
             if !force, let installed, !DevModeInstaller.isNewer(bundled, than: installed) {
                 tvApp = .upToDate(installed)
+                // Paket güncel ama TV'de çalışan uygulama eski (beta.89: webOS kurulumdan sonra eski süreci tuttu):
+                // yeniden kurmak gerekmez, uygulama kapatılıp açılır.
+                if tvClients > 0, let running = runningTVAppVersion, TVAppRunningCheck.isStale(running: running, installed: installed) {
+                    TVInstallLog.write("TV'deki paket \(installed), çalışan CouchSubs \(running.isEmpty ? TVAppOutdated.unreported : running); uygulama kapatılıp yeniden açılıyor.")
+                    runningCheck = TVAppRunningCheck(expected: installed)
+                    await restartLGApp(tv, devKey: devKey)
+                }
                 await renewDevSessionIfDue(tv: tv, devKey: devKey)
                 return
             }
@@ -2013,6 +2209,8 @@ final class AppModel: ObservableObject {
             TVInstallLog.write("Kurulum tamam.")
             tvApp = .upToDate(bundled)
             tvAppMissing = false
+            // Açılan uygulamanın bildirdiği sürüm denetlenir (lgRunningReported).
+            runningCheck = TVAppRunningCheck(expected: bundled)
             await renewDevSessionIfDue(tv: tv, devKey: devKey)
             await openTVAppAfterInstall(tv)
         } catch DevModeError.keyRefused {
@@ -2045,7 +2243,8 @@ final class AppModel: ObservableObject {
 
     private func openTVAppAfterInstall(_ tv: LGTV) async {
         if let keeper {
-            keeper.reconnect()
+            // Kurulum uygulamayı kapattı: sunucu kopan akışı henüz fark etmese de uygulama açılır.
+            keeper.reopenApp()
         } else {
             _ = try? await services.pairTV(tv, key: store.load(String.self, for: StoreKey.tvKey), server: serverAddress(for: tv), accessKey: server.accessKey)
         }
@@ -2185,6 +2384,8 @@ final class AppModel: ObservableObject {
         lastMetrics = nil
         subtitleOffTip.reset()
         updateSubtitleOffTip()
+        gamePhoneHint.reset()
+        showsGamePhoneHint = false
         if settings.dubbing.enabled, dubbingReady { makeDubber().prepare() }
         SubtitleLog.write("oturum başladı: CouchSubs \(AppIdentity.version), \(settings.sourceLanguage)→\(settings.targetLanguage), "
             + "motor: \(onlineTranslationActive ? settings.onlineEngine.rawValue : "ücretsiz"), "
@@ -2217,6 +2418,9 @@ final class AppModel: ObservableObject {
         attach(session)
         // Oturum başlamadan atanır: hemen gelen durum "eski oturumun" sayılıp atılmasın (bkz. `attach`).
         self.session = session
+        // Yapışık çeviri açıkken pencere saniyede 30 kare yakalanır (çapa izlemesi için; okuma yine en çok 10).
+        capturedWindow?.setFastFrames(settings.drawScreenInPlace)
+        configureGamePhone()
         session.start()
         reconnectOffer.reset(now: Date())
 
@@ -2277,6 +2481,7 @@ final class AppModel: ObservableObject {
                 await self.handle(frame, capturedAt: capturedAt)
             }
         }
+        session.useCadence(frameCadence)
     }
 
     /// "Yeniden bağlan" (ve oturumun bıraktığı bağlantıda uykudan uyanış): konsol oturumu kapatılıp yenisi açılır, TV
@@ -2292,6 +2497,7 @@ final class AppModel: ObservableObject {
         session?.stop()
         session = nil
         frameGate.reset()
+        frameCadence.reset()
         skippedFrame = nil
         guard let session = makeConsoleSession(xbox: xbox) else { return }
         attach(session)
@@ -2346,6 +2552,7 @@ final class AppModel: ObservableObject {
     /// TV durumunun yazısı: bağlı, yeniden bağlanılıyor ya da TV uygulaması bekleniyor.
     var tvStatusText: String {
         tvClients > 0 ? String(localized: "Connected")
+            : tvNotResponding ? String(localized: "Not responding — searching again…")
             : tvReconnecting ? String(localized: "Reconnecting…") : String(localized: "Waiting for the TV app")
     }
 
@@ -2595,7 +2802,7 @@ final class AppModel: ObservableObject {
         let panelScale = ScreenPhoneCard.textScale(fontSize: settings.style.fontSize)
         screenTask = Task { [weak self] in
             do {
-                let read = try await ReadQueue.shared.run(priority: .background, detail: ReadQueue.detail("ekranı çevir", frame)) {
+                let read = try await ReadQueue.shared.run(priority: .background, detail: ReadQueue.detail("ekranı çevir", frame), droppable: false) {
                     try reader.readLines(frame, deep: false)
                 }
                 // Altyazı zaten kendi yerinde çevriliyor: ekran çevirisinde ikinci kez çizilmez (bkz. SubtitleEcho).
@@ -2742,9 +2949,126 @@ final class AppModel: ObservableObject {
     }
 
     func tvMoved(to moved: LGTV) {
+        if let old = tv?.host, old != moved.host {
+            TVInstallLog.write(TVReach.movedLine(from: old, to: moved.host))
+            SubtitleLog.write(TVReach.movedLine(from: old, to: moved.host))
+        }
         if moved.brand == .samsung { SamsungAppKnowledge.shared.carry(from: tv?.host, to: moved.host) }
         tv = moved
         store.save(moved, for: StoreKey.tv)
+        tvNotResponding = false
+        tvUnreachableHost = nil
+    }
+
+    // MARK: - TV'nin adresi değişince
+
+    /// Kayıtlı TV adresi hiç yanıt vermiyor (kart "Yanıt vermiyor — yeniden aranıyor…" der). beta.89: modem TV'ye yeni
+    /// adres verince kart "TV uygulaması bekleniyor", kurulum "geliştirici modu kapalı" ve "Key Server kapalı" diyordu.
+    @Published private(set) var tvNotResponding = false
+    /// "TV'yi Eşleştir" ya da "Deneme Altyazısı Gönder" TV'ye ulaşamadı, TV ağda da bulunamadı: kartta açık hata,
+    /// "TV'yi Yeniden Ara" ve "IP Adresi Gir". Önceden düğmeye basınca hiçbir şey olmuyordu.
+    @Published private(set) var tvUnreachableHost: String?
+    /// "IP Adresi Gir"e yazılan adreste TV tanınmadı.
+    @Published private(set) var tvAddressRejected = false
+    /// Ağ en son ne zaman arandı (kendiliğinden yeniden bulma en çok 30 sn'de bir arar; düğmeler beklemez).
+    private var lastTVSearch: Date?
+    static let tvSearchInterval: TimeInterval = 30
+
+    /// Kayıtlı TV adresini yoklar; yanıt yoksa TV'yi ağda arar (`force` yoksa en çok 30 sn'de bir). Aynı TV bulunursa
+    /// adres güncellenir ("TV'nin adresi değişmiş: eski → yeni") ve iş yeni adresle sürer. Windows, iPhone ve Android'de
+    /// aynı adım (`TvReach`).
+    func locateTV(force: Bool = false) async -> TVReach.Location {
+        guard let saved = tv, !saved.host.isEmpty else { return .here }
+        guard !(await services.tvResponds(host: saved.host, brand: saved.brand)) else {
+            tvNotResponding = false
+            return .here
+        }
+        // Yoklama sürerken TV değiştirildiyse (eşleşme kaldırıldı, başka TV seçildi) eski kayıt için aranmaz.
+        guard tv == saved else { return .here }
+        tvNotResponding = true
+        if !force, let last = lastTVSearch, Date().timeIntervalSince(last) < Self.tvSearchInterval { return .silent }
+        lastTVSearch = Date()
+        TVInstallLog.write("Kayıtlı TV adresi \(saved.host) yanıt vermiyor; TV ağda yeniden aranıyor.")
+        let found = await services.discoverTVs()
+        guard tv == saved else { return .here }
+        guard let moved = TVReach.relocated(saved, among: found) else {
+            TVInstallLog.write("\(TVReach.notRespondingLine) (\(saved.host)); TV ağda bulunamadı.")
+            return .silent
+        }
+        adoptMovedTV(moved)
+        return .moved(moved)
+    }
+
+    /// Yeni adreste bulunan TV kaydedilir; çeviri sürüyorsa TV bekçisi yeni adresle yeniden kurulur.
+    private func adoptMovedTV(_ moved: LGTV) {
+        tvMoved(to: moved)
+        keeper?.stop()
+        keeper = nil
+        if isRunning && settings.output.showsOnTV { startKeeper(refreshApp: false) }
+    }
+
+    /// Eşli TV kartı görünürken ~10 sn'de bir: TV uygulaması bağlı değilse adres yoklanır, gerekirse TV yeniden bulunur.
+    func checkTVReachable() async {
+        guard tv != nil, tvClients == 0 else {
+            tvNotResponding = false
+            return
+        }
+        _ = await locateTV()
+    }
+
+    /// "TV'yi Eşleştir" ve "Deneme Altyazısı Gönder"den önce: TV'ye ulaşılıyor mu (adresi değiştiyse yeni adresle evet).
+    /// Ulaşılamazsa kart açık hatayı gösterir.
+    func ensureTVReachable() async -> Bool {
+        guard tv != nil else { return true }
+        switch await locateTV(force: true) {
+        case .here, .moved:
+            tvUnreachableHost = nil
+            return true
+        case .silent:
+            tvUnreachableHost = tv?.host
+            return false
+        }
+    }
+
+    /// Kartta "TV'yi Yeniden Ara".
+    @discardableResult
+    func searchTVAgain() async -> Bool { await ensureTVReachable() }
+
+    /// Kartta "IP Adresi Gir": yazılan adresteki TV tanınırsa eşli TV o adrese taşınır (anahtarı korunur).
+    @discardableResult
+    func useTVAddress(_ text: String) async -> Bool {
+        guard let host = ManualAddress.normalize(text), let found = await services.identifyTV(host: host) else {
+            tvAddressRejected = true
+            return false
+        }
+        tvAddressRejected = false
+        guard let saved = tv else {
+            tv = found
+            store.save(found, for: StoreKey.tv)
+            return true
+        }
+        let moved = found.brand == saved.brand ? LGTV(name: saved.name, host: found.host, brand: saved.brand) : found
+        if moved.brand != saved.brand { store.remove(StoreKey.tvAppVersion) }
+        adoptMovedTV(moved)
+        return true
+    }
+
+    /// Kartta "Eşleşmeyi Kaldır": eşli TV, TV izni/jetonu ve TV uygulaması kaydı silinir; altyazı TV'ye gidiyorsa bu
+    /// Mac'in ekranına geçer. Önceden eşli TV hiçbir yerden kaldırılamıyordu (yalnız "Kurulumu sıfırla").
+    func removeTVPairing() {
+        if let tv { TVInstallLog.write("Eşleşme kaldırıldı: \(tv.name) (\(tv.host)).") }
+        keeper?.stop()
+        keeper = nil
+        [StoreKey.tv, StoreKey.tvKey, StoreKey.tvAppVersion].forEach(store.remove)
+        tv = nil
+        tvKeySaved = false
+        tvApp = .unknown
+        tvAppOutdated = nil
+        tvAppMissing = false
+        tvNotResponding = false
+        tvUnreachableHost = nil
+        tvAddressRejected = false
+        if settings.output.showsOnTV { settings.output = .computer }
     }
 
     /// Okuma hattını güncel dillerle (yeniden) kurar.
@@ -2752,6 +3076,7 @@ final class AppModel: ObservableObject {
         pipeline?.reset()
         // Eski hatta süren okuma beklenmez; yeni hat ilk karesini hemen alır.
         frameGate.reset()
+        frameCadence.reset()
         skippedFrame = nil
         let scheduler = ReadScheduler(maxReuse: settings.fastSubtitleDetection
             ? ReadScheduler.fastMaxReuse : ReadScheduler.defaultMaxReuse)
@@ -2788,6 +3113,12 @@ final class AppModel: ObservableObject {
         pipeline.onReadResult = { [weak self] error in self?.noteRead(error) }
         pipeline.onSpeech = { [weak self] lines in self?.speak(lines) }
         pipeline.onLog = { SubtitleLog.write($0) }
+        pipeline.onSceneTextDropped = { [weak self] reason in
+            guard let self, self.gamePhoneHint.observe(reason: reason, readsPhone: self.settings.readsGamePhone,
+                                                       game: self.gameChoice.game?.name) else { return }
+            SubtitleLog.write("telefon ipucu: telefon çevirisi kapalı, telefon listesi altyazı yolunda atıldı (\(reason))")
+            self.showsGamePhoneHint = true
+        }
         watchReadQueue()
         onlineIssue = nil
         pipeline.warmUp()
@@ -2808,9 +3139,36 @@ final class AppModel: ObservableObject {
         } else {
             gamePhoneTracker = nil
         }
+        // Telefona yapışık çeviri: yalnız oyun görüntüsü bu Mac'teki bir pencereden okunurken (çeviri oyunun üstünde,
+        // kendi yerinde çizilebilir). PS5'ten doğrudan okurken eski davranış (Sinan Bey kararı, 24 Kas: önce Mac).
+        setPhoneAnchor(gamePhoneTracker != nil && settings.drawScreenInPlace && capturedWindow != nil
+                       ? PhoneAnchorSession() : nil)
         // Altyazı hattı telefonu yalnız GTA 6'da ve telefon ayarı açıkken arar: başka oyunda ya da karanlık sahnede yanlış
         // bulunan telefon alt şeritteki altyazıyı silmesin (iPhone, Windows, Android ile aynı).
         pipeline?.findsPhone = gamePhoneTracker != nil
+    }
+
+    /// Çapayı değiştirir: okuma, pencere yakalaması ve çizim yeni çapaya bağlanır; eskisi bırakılır.
+    private func setPhoneAnchor(_ anchor: PhoneAnchorSession?) {
+        phoneAnchor?.reset(reason: "telefon okuması yeniden kuruldu")
+        phoneAnchor?.onChange = nil
+        phoneAnchor = anchor
+        regionWatcher?.phoneAnchor = anchor
+        capturedWindow?.trackAnchor = anchor
+        phoneAnchorFeed.reset()
+        guard let anchor else { return }
+        let server = self.server, feed = phoneAnchorFeed
+        anchor.onLog = { SubtitleLog.write($0) }
+        anchor.onChange = { [weak anchor] change in
+            server.sendAnchor(change)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let anchor else { return }
+                    feed.receive(change, from: anchor)
+                }
+            }
+        }
+        feed.current = anchor
     }
 
     /// Ek alanlar aynı dil, motor ve paketlerle okunur; ayrı bir okuyucu ve çevirmenle (altyazının sırasını beklemez).
@@ -2818,6 +3176,7 @@ final class AppModel: ObservableObject {
         let watcher = RegionWatcher(reader: VisionReader(language: settings.sourceLanguage), translator: makeTranslator(), server: server)
         watcher.packLookup = packLookup
         watcher.subtitleEcho = .shared
+        watcher.phoneAnchor = phoneAnchor
         // Ayarlar'daki ekran yazısı türleri (telefon, görev, yardım/eylemler, menüler, diğer).
         watcher.allows = { [weak self] kind in self?.settings.screenTextAllows(kind) ?? true }
         // "GTA 6 Telefon Mesajları: Yanda Panel / Balonların Üstünde"; panelin yazısı altyazı boyutuyla (Windows, Android ile aynı).
@@ -3058,8 +3417,10 @@ final class AppModel: ObservableObject {
         regionWatcher = nil
         screenTextDetector?.reset()
         gamePhoneTracker = nil
+        setPhoneAnchor(nil)
         // Yeni "Başlat" eski oturumdan kalan (belki takılmış) okumayı beklemeden temiz başlar.
         frameGate.reset()
+        frameCadence.reset()
         skippedFrame = nil
         activeLanguages = nil
         subtitlesPaused = false
@@ -3154,7 +3515,11 @@ final class AppModel: ObservableObject {
             case .rescueFailed(let stall, let failures):
                 SubtitleLog.write("yedek okuyucu da takıldı (\(failures). kez): \(stall.logText); yeniden kuruluyor")
             case .degraded(let stalls):
-                SubtitleLog.write("okuma \(stalls) kez takıldı; bu oturumda hızlı düzeyde okunacak (Neural Engine yolu bırakıldı)")
+                SubtitleLog.write("okuma \(stalls) kez takıldı; \(queue.fastLevelHoldMs / 1000) sn hızlı düzeyde okunacak (Neural Engine yolu bırakıldı), sonra isabetli düzey yeniden denenecek")
+            case .restored(let ms):
+                SubtitleLog.write("hızlı düzeyin süresi doldu (\(ms / 1000) sn); okuma yeniden isabetli düzeyde")
+            case .backgroundYielded(let stall, let dropped, let rescued):
+                SubtitleLog.write("altyazı arka plan okumasını bekledi (takılma sayılmadı): \(stall.logText); sıradaki \(dropped) arka plan okuması düşürüldü; \(rescued ? "altyazı bu tur yedekten okunuyor" : "altyazı sırada öne geçti")")
             case .abandonedFinished(let still):
                 SubtitleLog.write("bırakılan takılı okuma sonunda bitti (bitmeyen bırakılmış okuma: \(still))")
             }
@@ -3301,7 +3666,7 @@ final class AppModel: ObservableObject {
         case .noPicture: return String(localized: "No picture from the PS5. Is Remote Play turned off, or is the PS5 in rest mode? Check, then start again.")
         // Eskiden ağ hatası, bulunamayan PS5 ve diğer nedenler hep yalnız "Yeniden bağlanılıyor…" idi.
         case .notFound(let host):
-            return String(format: String(localized: "PS5 not found at %@. Make sure it is on and on the same network. Reconnecting…"), host)
+            return String(format: String(localized: "PS5 not found at %@. Searching the network for it. Make sure it is on and on the same network; if its address changed, use Enter IP Address in Settings > Console. Reconnecting…"), host)
         // Kablosuz ağda akış sık kopuyordu (GitHub #388, #401): yeniden bağlanılır, kalıcı çözüm kablodur.
         case .network:
             return String(localized: "Lost the connection to the PS5. Reconnecting… If this keeps happening, connect the PS5 to the router with a cable.")
@@ -3325,6 +3690,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Ayarlar'da "IP Adresi Gir": PS5'in yeni adresi elle yazılır (modem adresi değiştirip PS5 ağda bulunamadığında).
+    /// Geçersiz adres ya da kayıtlı PS5 yoksa false. Kayıt (anahtar) korunur; bağlıysa yeni adresle yeniden bağlanılır.
+    @discardableResult
+    func enterConsoleAddress(_ text: String) -> Bool {
+        guard let host = ManualAddress.normalize(text), let current = console else { return false }
+        if host != current.host {
+            RemotePlayLog.write("PS5 adresi elle girildi: \(current.host) -> \(host)")
+            consoleMoved(RegisteredConsole(host: host, name: current.name, registKey: current.registKey, morning: current.morning))
+        }
+        reconnect(reason: "PS5 adresi elle girildi")
+        return true
+    }
+
     /// PS5'in adresi değişti: sonraki açılışlar yeni adresle başlasın.
     private func consoleMoved(_ moved: RegisteredConsole) {
         guard console != nil else { return }
@@ -3340,8 +3718,12 @@ final class AppModel: ObservableObject {
 
     private func handle(_ frame: CGImage, capturedAt: Int) async {
         lastFrame = frame
+        lastFrameMs = capturedAt
         frameCount &+= 1
         lastFrameAt = Date()
+        // Çevirisi gösterilen ekran yazıları hâlâ yerinde mi: özgün yazı kalkınca çevirisi de bu karede kalkar
+        // (`ScreenPresence`; Windows/Android aynı).
+        server.observe(frame)
         subtitleOffTip.frameArrived(at: Date(), streaming: sessionState == .streaming)
         updateSubtitleOffTip()
         // Num 0 ile duraklatıldı: altyazı da ek alanlar da okunmaz (kare yine alınır: kısayolla tek seferlik okuma ve
@@ -3360,7 +3742,10 @@ final class AppModel: ObservableObject {
         if regionWatcher == nil, !areas.isEmpty || pose != nil, let pipeline {
             regionWatcher = makeRegionWatcher(packLookup: pipeline.packLookup)
         }
-        regionWatcher?.offer(frame, areas: areas, phone: pose)
+        // Yapışık çeviri: pencere yakalaması her kareyi çapaya kendisi verir (okuma sıklığından bağımsız, saniyede 30);
+        // konsoldan okunurken kare burada verilir.
+        if let anchor = phoneAnchor, capturedWindow?.trackAnchor !== anchor { anchor.feed(frame, at: capturedAt) }
+        regionWatcher?.offer(frame, areas: areas, phone: pose, capturedAt: capturedAt)
         // Ekranda menü açık (otomatik ekran yazısı menü durumunda): menü satırları altyazıya karışmasın, altyazı okunmaz.
         let inMenu = screenTextDetector?.inMenu == true
         if inMenu != loggedMenu {
@@ -3384,6 +3769,8 @@ final class AppModel: ObservableObject {
         var next = (frame: frame, capturedAt: capturedAt)
         while true {
             await pipeline.process(next.frame, region: settings.region, capturedAt: next.capturedAt)
+            // Okuma kare aralığından uzun sürüyorsa oturum kareleri o kadar seyrek kopyalar (atılacak kare kopyalanmaz).
+            frameCadence.reportReadMs(pipeline.lastOcrMs)
             // Okuma sürerken atlanan son kare hemen okunur: pencere yakalaması değişmeyen ekranda kare göndermez; altyazı
             // belirirken gelen son kare atlanınca yeni satır kamera oynatılana dek okunmuyordu (GitHub #1019).
             guard frameGate.leave(token), let skipped = skippedFrame else { return }
@@ -3441,7 +3828,15 @@ final class AppModel: ObservableObject {
         sessionStartedAt.map { history.entries(since: $0) } ?? history.entries
     }
 
+    /// Bu Mac'teki TV paketinin sürümü altyazı akışının `link` olayıyla TV'ye gider; TV'deki uygulama daha eskiyse TV'nin
+    /// paneli "TV uygulaması eski" der (GitHub #1199). TV seçilmemişse LG paketi (sürümler aynı). Windows, iPhone ve
+    /// Android ile aynı.
+    private func shareLatestTVAppVersion() {
+        server.latestTVAppVersion = bundledVersionForTV ?? services.bundledTVAppVersion
+    }
+
     private func startServer() async throws {
+        shareLatestTVAppVersion()
         guard !serverStarted else { return }
         do {
             serverPort = try await server.start()

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import CoreGraphics
 import Foundation
 import Network
 
@@ -32,6 +33,11 @@ public enum SubtitleTextColor: String, Codable, CaseIterable, Sendable {
 /// Karakter adının rengi (Altyazı Görünümü › Karakter Adı): yazıyla aynı, herkes tek renk ya da karaktere göre.
 public enum NameColorMode: String, Codable, CaseIterable, Sendable {
     case text, single, speaker
+    /// "Tüm Satır": karaktere göre renk; ad ve cümle o karakterin renginde (TV'ye `style.wholeLine`).
+    case line
+
+    /// Ad renkleri karaktere göre mi (Karaktere Göre ya da Tüm Satır).
+    public var perCharacter: Bool { self == .speaker || self == .line }
 }
 
 /// Android TV'de PS5 görüntüsünün nasıl gösterildiği (Windows TvDisplayMode, Android TvDisplayMode ile aynı).
@@ -147,7 +153,7 @@ public struct SubtitleStyle: Codable, Equatable, Sendable {
         ["fontSize": fontSize, "bottomPercent": bottomPercent, "placement": placement.rawValue,
          "background": max(0, min(100, background)), "backgroundShape": backgroundShape.rawValue, "bold": bold, "textColor": textColor.rawValue,
          "displayMode": displayMode.rawValue, "stackPrevious": stackPrevious,
-         "backgroundColor": backgroundColor, "nameOnly": nameOnly]
+         "backgroundColor": backgroundColor, "nameOnly": nameOnly, "wholeLine": nameColorMode == .line]
             .merging(textHex.map { ["textHex": $0] } ?? [:]) { $1 }
             .merging(hdmiInput.map { ["hdmiInput": $0] } ?? [:]) { $1 }
     }
@@ -188,6 +194,16 @@ public final class SubtitleServer: @unchecked Sendable {
     private var viewers: Set<ObjectIdentifier> = []
     private var lastStyle: SubtitleStyle?
     private var pingTimer: DispatchSourceTimer?
+    /// Gösterilen ek alanların son `region` olayları (sunucunun kuyruğunda). TV yeniden bağlanınca bunlar yeniden
+    /// gönderilir, gösterilmeyenler kaldırılır (`region-sync`); her `regionRefreshInterval`'da telefon kartı dışındakiler
+    /// `keep` bayrağıyla yenilenir. TV, yenilenmeyen alanı 15 sn sonra kendisi kaldırır (#1198; tv-webos/app.js
+    /// REGION_LIFE_MS). Windows: SubtitleServer.liveRegions, Android: SubtitleServer.liveRegions.
+    private var liveRegions: [String: [String: Any]] = [:]
+    /// Telefona yapışık çevirinin son `anchor` olayı (kaybolunca nil); yeni bağlanan TV'ye yinelenir. Sunucunun kuyruğunda.
+    private var liveAnchor: [String: Any]?
+    private var regionTimer: DispatchSourceTimer?
+    /// Gösterilen ek alanların TV'de yenilenme aralığı (TV'deki 15 sn'lik ömrün üçte biri).
+    var regionRefreshInterval: TimeInterval = 5
     /// `GET` ile verilen dosyalar: dublaj sesleri ve seslendirme modelinin ses örnekleri.
     private var files: [String: (data: Data, type: String)] = [:]
     private var speechPaths: [String] = []
@@ -247,6 +263,15 @@ public final class SubtitleServer: @unchecked Sendable {
         set { queue.sync { apart = newValue } }
     }
     private var apart = true
+
+    /// Bu cihazın paketindeki TV uygulamasının sürümü: `link` olayının `latest` alanıyla TV'ye bildirilir. TV'deki
+    /// uygulama bundan eskiyse TV'nin paneli "TV uygulaması eski" der (GitHub #1199: LG'de 0.9.71 kalmıştı, düzeltme
+    /// 0.9.94'teydi). nil ya da boş: alan gönderilmez. Windows ve Android ile aynı.
+    public var latestTVAppVersion: String? {
+        get { queue.sync { latestVersion } }
+        set { queue.sync { latestVersion = newValue } }
+    }
+    private var latestVersion: String?
 
     /// Bağlantı canlı tutma çerçevesi: yorum satırını EventSource görmez; adlı "ping" olayını TV görür ve
     /// bir süre gelmezse yarı açık kalmış bağlantıyı kapatıp yeniden bağlanır (Windows ile aynı).
@@ -437,6 +462,7 @@ public final class SubtitleServer: @unchecked Sendable {
                     if case .failed(let error) = state, self.listener === listener {
                         self.listening = false
                         self.pingTimer?.cancel()
+                        self.regionTimer?.cancel()
                         self.pingTimer = nil
                         listener.cancel()
                         self.onListenerFailed?(error.localizedDescription)
@@ -448,6 +474,7 @@ public final class SubtitleServer: @unchecked Sendable {
                     self.startContinuation = nil
                     self.listening = true
                     self.pingTimer?.cancel()
+                    self.regionTimer?.cancel()
                     self.startPing()
                     continuation.resume(returning: listener.port?.rawValue ?? 0)
                 case .failed(let error), .waiting(let error):
@@ -477,6 +504,7 @@ public final class SubtitleServer: @unchecked Sendable {
         queue.sync {
             listening = false
             pingTimer?.cancel()
+            regionTimer?.cancel()
             pingTimer = nil
             listener?.cancel()
             listener = nil
@@ -486,6 +514,7 @@ public final class SubtitleServer: @unchecked Sendable {
             legacyClients.removeAll()
             linkIds.removeAll()
             ackMisses.removeAll()
+            if !keepPairing { liveRegions.removeAll() }
         }
     }
 
@@ -522,6 +551,9 @@ public final class SubtitleServer: @unchecked Sendable {
         let line = Decimal(Int((max(0, min(1, item.lineHeight)) * 10000).rounded())) / 10000
         var result: [String: Any] = ["box": Self.json(item.box), "line": line, "text": item.translation]
         if item.paragraphs { result["paragraphs"] = true }
+        // Yerleşim (`ScreenFit`): kutunun genişleyebileceği alan ve özgün satır sayısı (eski TV yok sayar).
+        if let room = item.room { result["room"] = Self.json(room) }
+        if item.rows > 1 { result["rows"] = item.rows }
         if phone || item.look != nil, let style = item.style, isRGB(style.background), isRGB(style.foreground) {
             var surface: [String: Any] = ["background": style.background, "foreground": style.foreground]
             if let look = item.look { surface["flat"] = look.flat }
@@ -576,7 +608,17 @@ public final class SubtitleServer: @unchecked Sendable {
     /// kumanda simgeleri varsa `icons` her simgenin düz metindeki yerini (`at`) ve PNG'sini (`src`) taşır; eski TV
     /// uygulamaları alanı yok sayıp düz metni gösterir (Windows ile aynı).
     public func sendScreen(_ items: [ScreenTranslation.Item], durationMs: Int) {
-        let items = items.filter { Self.area($0.box) <= Self.maxBoxArea }
+        let items = steadied(items.filter { Self.area($0.box) <= Self.maxBoxArea })
+        let shown: [ScreenTranslation.Item] = screenStyleGuard.withLock {
+            screenEpoch += 1
+            screenShown = (items, Self.uptimeMs() + durationMs)
+            screenVisible = items.map { !presence.hidden($0) }
+            return items.filter { !presence.hidden($0) }
+        }
+        emitScreen(shown, durationMs: durationMs)
+    }
+
+    private func emitScreen(_ items: [ScreenTranslation.Item], durationMs: Int) {
         broadcast(event: "screen", json: ["duration": durationMs, "items": items.map { Self.json($0) }])
         // Altyazı yalnız bilgisayardaysa (TV yok) çeviriler başka hiçbir yere gitmiyordu: tuşa basınca yalnız
         // "Ekran çevriliyor…" görünüyordu.
@@ -603,8 +645,39 @@ public final class SubtitleServer: @unchecked Sendable {
     /// uygulamaları birleşik `text`'i tek kutuda gösterir (Windows ile aynı).
     public func sendRegion(id: String, text: String, box: TextBox?, lineHeight: Double?, icons: [IconPlacement]?,
                            blocks: [ScreenTranslation.Item]?) {
-        let (text, blocks) = Self.guarded(text: text, box: box, blocks: blocks)
+        sendRegion(id: id, text: text, box: box, lineHeight: lineHeight, icons: icons, blocks: blocks, anchor: nil)
+    }
+
+    /// `anchor`: telefona yapışık çeviri (deneysel, önce Mac). Bloklar bu çapa kuşağının başvuru koordinatındadır;
+    /// `region` olayı `anchor: {gen, ref}` taşır, yer her karede `anchor` olayıyla gelir (`sendAnchor`). Alanı tanımayan
+    /// TV blokları başvuru yerinde (çapanın kurulduğu okumadaki telefonun yerinde) gösterir.
+    public func sendRegion(id: String, text: String, box: TextBox?, lineHeight: Double?, icons: [IconPlacement]?,
+                           blocks: [ScreenTranslation.Item]?, anchor: AnchorPose?) {
+        var (text, blocks) = Self.guarded(text: text, box: box, blocks: blocks)
+        if id != "game-phone", let shown = blocks { blocks = steadied(shown) }
+        if id != "game-phone" {
+            let sent = (text: text, box: box, lineHeight: lineHeight, icons: icons, blocks: blocks)
+            let visible: [ScreenTranslation.Item]? = screenStyleGuard.withLock {
+                regionShown[id] = text.isEmpty || (blocks ?? []).isEmpty ? nil : sent
+                regionVisible[id] = regionShown[id] == nil ? nil : blocks?.map { !presence.hidden($0) }
+                return blocks?.filter { !presence.hidden($0) }
+            }
+            if let all = blocks, let visible, visible.count != all.count {
+                emitRegion(id: id, text: visible.isEmpty ? "" : text, box: box, lineHeight: lineHeight, icons: icons, blocks: visible)
+                return
+            }
+        }
+        emitRegion(id: id, text: text, box: box, lineHeight: lineHeight, icons: icons, blocks: blocks, anchor: anchor)
+    }
+
+    private func emitRegion(id: String, text: String, box: TextBox?, lineHeight: Double?, icons: [IconPlacement]?,
+                            blocks: [ScreenTranslation.Item]?, anchor: AnchorPose? = nil) {
         var json: [String: Any] = ["id": id, "text": text]
+        if let anchor, !text.isEmpty {
+            json["anchor"] = ["gen": anchor.generation,
+                              "ref": Self.json(TextBox(left: anchor.reference.left, top: anchor.reference.top,
+                                                       right: anchor.reference.right, bottom: anchor.reference.bottom))]
+        }
         if let icons, !icons.isEmpty { json["icons"] = Self.json(icons) }
         if let blocks, !blocks.isEmpty, !text.isEmpty { json["blocks"] = blocks.map { Self.json($0, phone: id == "game-phone") } }
         if let box { json["box"] = Self.json(box) }
@@ -614,6 +687,105 @@ public final class SubtitleServer: @unchecked Sendable {
         else if let blocks, !blocks.isEmpty, !text.isEmpty, blocks.contains(where: { $0.look != nil }) {
             onEvent?(.screenText(id: id, items: blocks))
         } else { onEvent?(.region(id: id, text: text, box: box)) }
+    }
+
+    /// Ekran yazısı çevirilerinin görünüşü oturum boyunca kilitli (`ScreenStyleLock`); "Ekranı çevir" ve otomatik ekran
+    /// yazısı aynı kilidi paylaşır (Windows: SubtitleServer.Steadied, Android: SubtitleServer.steadied).
+    private let screenStyleGuard = NSLock()
+    private var screenStyle = ScreenStyleLock()
+    /// Ekrandaki çeviriler ve özgün yazılarının takibi (`ScreenPresence`): yazı kalkınca çevirisi de aynı karede kalkar.
+    private var presence = ScreenPresence()
+    /// `ScreenPresence`'ın kaldırma ve geri getirme kararları altyazı günlüğüne (`DropLog`; sınırlı, tekrarsız).
+    private let presenceDrops = DropLog()
+    private var screenShown: (items: [ScreenTranslation.Item], until: Int)?
+    /// Her `sendScreen` ve `clearScreen` bir üst numara verir. `observe` değişikliği kilidin dışında gönderir; arada çeviri
+    /// kaldırıldıysa eski öğeler yeniden gönderilmez (kaldırılan çeviri TV'de geri çiziliyordu, #1182).
+    private var screenEpoch = 0
+    private var screenVisible: [Bool] = []
+    private var regionShown: [String: (text: String, box: TextBox?, lineHeight: Double?, icons: [IconPlacement]?,
+                                       blocks: [ScreenTranslation.Item]?)] = [:]
+    private var regionVisible: [String: [Bool]] = [:]
+
+    static func uptimeMs() -> Int { Int(ProcessInfo.processInfo.systemUptime * 1000) }
+
+    /// Her karede çağrılır: çevirisi gösterilen yazılar hâlâ yerinde mi (`ScreenPresence`). Özgün yazısı kalkan öğe TV'den
+    /// ve masaüstünden aynı karede kalkar; geri gelirse yeniden gösterilir. Windows: SubtitleServer.Observe, Android:
+    /// SubtitleServer.observe.
+    public func observe(_ frame: CGImage) {
+        observe { box in ScreenPresence.patch(frame, box: box) }
+    }
+
+    func observe(patch: (TextBox) -> [Int]?) {
+        let now = Self.uptimeMs()
+        screenStyleGuard.lock()
+        let epoch = screenEpoch
+        if let shown = screenShown, shown.until <= now { screenShown = nil }
+        let screen = screenShown?.items ?? []
+        let regions = regionShown.sorted { $0.key < $1.key }
+        let all = screen + regions.flatMap { $0.value.blocks ?? [] }
+        guard all.contains(where: ScreenPresence.tracks) || !screenVisible.isEmpty || !regionVisible.isEmpty else {
+            screenStyleGuard.unlock()
+            return
+        }
+        let visible = presence.visible(all, patch: patch)
+        var screenChange: [ScreenTranslation.Item]?
+        let screenFlags = Array(visible.prefix(screen.count))
+        let screenBefore = screenVisible.isEmpty ? screen.map { _ in true } : screenVisible
+        if screenFlags != screenBefore, !screen.isEmpty {
+            screenChange = zip(screen, screenFlags).filter(\.1).map(\.0)
+        }
+        // Kaldırma ya da geri getirme kararı günlüğe (`DropLog`): periyodik kopmalarda hangi yazının izinin kaçtığı görünsün.
+        var flips: [(source: String, visible: Bool)] = []
+        for (index, item) in screen.enumerated() where index < screenBefore.count && screenBefore[index] != screenFlags[index] {
+            flips.append((item.source, screenFlags[index]))
+        }
+        screenVisible = screen.isEmpty ? [] : screenFlags
+        var regionChanges: [(String, String, TextBox?, Double?, [IconPlacement]?, [ScreenTranslation.Item])] = []
+        var offset = screen.count
+        var flagsById: [String: [Bool]] = [:]
+        for (id, sent) in regions {
+            let blocks = sent.blocks ?? []
+            let flags = Array(visible[offset..<(offset + blocks.count)])
+            offset += blocks.count
+            flagsById[id] = flags
+            let before = regionVisible[id] ?? blocks.map { _ in true }
+            for (index, block) in blocks.enumerated() where index < before.count && before[index] != flags[index] {
+                flips.append((block.source, flags[index]))
+            }
+            if flags != before {
+                let kept = zip(blocks, flags).filter(\.1).map(\.0)
+                regionChanges.append((id, kept.isEmpty ? "" : sent.text, sent.box, sent.lineHeight, sent.icons, kept))
+            }
+        }
+        regionVisible = flagsById
+        let until = screenShown?.until ?? now
+        screenStyleGuard.unlock()
+        for flip in flips {
+            presenceDrops.note("ScreenPresence", flip.visible ? "özgün yazı geri geldi, çeviri yeniden gösterildi"
+                               : "özgün yazının izi kaçtı, çeviri kaldırıldı", flip.source)
+        }
+        if let screenChange, screenStyleGuard.withLock({ screenEpoch == epoch }) {
+            emitScreen(screenChange, durationMs: max(1, until - now))
+        }
+        for change in regionChanges {
+            emitRegion(id: change.0, text: change.1, box: change.2, lineHeight: change.3, icons: change.4,
+                       blocks: change.5.isEmpty ? nil : change.5)
+        }
+    }
+
+    func steadied(_ items: [ScreenTranslation.Item]) -> [ScreenTranslation.Item] {
+        let now = Int(ProcessInfo.processInfo.systemUptime * 1000)
+        screenStyleGuard.lock()
+        defer { screenStyleGuard.unlock() }
+        return screenStyle.steady(items, now: now)
+    }
+
+    /// Ekranı çevir'in yerleşimi yeniden ölçülsün (oturum yeniden başladı).
+    public func resetScreenStyle() {
+        screenStyleGuard.lock()
+        screenStyle.reset()
+        presence.reset()
+        screenStyleGuard.unlock()
     }
 
     /// Ekranın bu oranından büyük çeviri kutusu gönderilmez. TV ve OBS kutuyu opak zeminle çizer; yanlış bir algılamanın
@@ -643,13 +815,42 @@ public final class SubtitleServer: @unchecked Sendable {
     }
 
     /// Bütün ek alan kutularını kaldırır.
+    /// Telefona yapışık çevirinin yeri (deneysel, önce Mac; docs/ekran-capasi.md "Sunucu olayı"). Çapa kıpırdadıkça
+    /// (ölü bölgeyi aşan her karede) `anchor` olayı: `{"gen": kuşak, "m": [a, b, c, d, dx, dy, g, h]}`; dönüşüm kareye
+    /// oranlı, merkezi `region` olayındaki `anchor.ref` dörtgeninin ortası. Kaybolunca `{"gen": kuşak, "lost": true}`:
+    /// o kuşağın balon çevirileri hemen gizlenir. Olayı tanımayan TV yok sayar. Son olay yeni bağlanan TV'ye bölgelerden
+    /// sonra yinelenir.
+    public func sendAnchor(_ change: PhoneAnchorSession.Change) {
+        broadcast(event: "anchor", json: Self.json(change))
+    }
+
+    static func json(_ change: PhoneAnchorSession.Change) -> [String: Any] {
+        func rounded(_ value: Double) -> Decimal { Decimal(Int((value * 1_000_000).rounded())) / 1_000_000 }
+        switch change {
+        case .moved(let pose):
+            let m = pose.motion
+            return ["gen": pose.generation, "m": [m.a, m.b, m.c, m.d, m.dx, m.dy, m.g, m.h].map(rounded)]
+        case .lost(let generation, _):
+            return ["gen": generation, "lost": true]
+        }
+    }
+
     public func clearRegions() {
+        screenStyleGuard.withLock {
+            regionShown = [:]
+            regionVisible = [:]
+        }
         broadcast(event: "region-clear", json: [:])
         onEvent?(.regionClear)
     }
 
     /// TV'deki "ekranı çevir" çevirilerini kaldırır (altyazıya dokunmaz).
     public func clearScreen() {
+        screenStyleGuard.withLock {
+            screenEpoch += 1
+            screenShown = nil
+            screenVisible = []
+        }
         broadcast(event: "screen-clear", json: [:])
         onEvent?(.screenClear)
     }
@@ -680,7 +881,7 @@ public final class SubtitleServer: @unchecked Sendable {
     public func sendStyle(_ style: SubtitleStyle) {
         queue.async { self.lastStyle = style }
         speakerBook.configure(fixed: style.nameColorMode == .single ? style.nameHex : nil,
-                              overrides: style.nameColorMode == .speaker ? style.characterColors : [:])
+                              overrides: style.nameColorMode.perCharacter ? style.characterColors : [:])
         var json = style.json
         json["setApart"] = setApart
         broadcast(event: "style", json: json)
@@ -827,8 +1028,11 @@ public final class SubtitleServer: @unchecked Sendable {
         if !viewer {
             let link = Self.makeLinkId()
             linkIds[link] = id
-            head += Self.frame(event: "link", json: ["id": link])
+            var json: [String: Any] = ["id": link]
+            if let latest = latestVersion, !Self.tvAppVersion(latest).isEmpty { json["latest"] = latest }
+            head += Self.frame(event: "link", json: json)
         }
+        head += regionReplay(tv: viewer || tvEnabled)
         connection.send(content: Data(head.utf8), completion: .contentProcessed { _ in })
 
         clients[id] = connection
@@ -894,9 +1098,17 @@ public final class SubtitleServer: @unchecked Sendable {
         let data = Data(Self.frame(event: event, json: json).utf8)
         // Dublaj sesi altyazı yerinden bağımsızdır; yalnız altyazı olayları kapatılır.
         let subtitle = Self.subtitleEvents.contains(event)
+        let regionId = event == "region" ? json["id"] as? String : nil
         let now = Date()
         let hold = event == "subtitle" ? Self.legacyClearHold(textLength: (json["text"] as? String)?.count ?? 0) : 0
         queue.async {
+            if let regionId {
+                self.liveRegions[regionId] = (json["text"] as? String ?? "").isEmpty ? nil : json
+            } else if event == "region-clear" {
+                self.liveRegions.removeAll()
+            } else if event == "anchor" {
+                self.liveAnchor = json["lost"] == nil ? json : nil
+            }
             let tvs = !subtitle || self.tvEnabled
             if event == "subtitle" {
                 self.legacyHoldGeneration += 1
@@ -916,7 +1128,8 @@ public final class SubtitleServer: @unchecked Sendable {
         }
     }
 
-    static let subtitleEvents: Set<String> = ["subtitle", "clear", "screen", "screen-clear", "style", "region", "region-clear"]
+    static let subtitleEvents: Set<String> = ["subtitle", "clear", "screen", "screen-clear", "style", "region", "region-clear",
+                                              "anchor"]
 
     /// Gönderim hatası alan bağlantı kopmuş sayılır ve listeden çıkarılır. `includingTVs` false ise yalnız izleyiciler
     /// (OBS) alır.
@@ -931,7 +1144,41 @@ public final class SubtitleServer: @unchecked Sendable {
         }
     }
 
+    /// Yeni bağlanan TV'ye (ya da OBS'e) gösterilen ek alanlar: önce `region-sync` (listede olmayan alanları TV kaldırır;
+    /// kopukken kaçan temizleme komutları), sonra her alanın son `region` olayı `keep` bayrağıyla (TV'de duran aynı alan
+    /// yeniden çizilmez). Sunucunun kuyruğunda.
+    func regionReplay(tv: Bool) -> String {
+        let live = tv ? liveRegions.sorted { $0.key < $1.key } : []
+        var frames = Self.frame(event: "region-sync", json: ["ids": live.map(\.key)])
+        for (_, json) in live {
+            var kept = json
+            kept["keep"] = true
+            frames += Self.frame(event: "region", json: kept)
+        }
+        if tv, liveRegions["game-phone"]?["anchor"] != nil, let anchor = liveAnchor {
+            frames += Self.frame(event: "anchor", json: anchor)
+        }
+        return frames
+    }
+
+    /// Gösterilen ek alanları (telefon kartı hariç) `keep` bayrağıyla yeniden gönderir: TV'de sahnede kalan yazının
+    /// çevirisi 15 sn'lik ömrü dolup kalkmasın. Sunucunun kuyruğunda.
+    func refreshRegions() {
+        guard tvEnabled || !viewers.isEmpty else { return }
+        for (id, json) in liveRegions.sorted(by: { $0.key < $1.key }) where id != "game-phone" {
+            var kept = json
+            kept["keep"] = true
+            sendToAll(Data(Self.frame(event: "region", json: kept).utf8), includingTVs: tvEnabled)
+        }
+    }
+
     private func startPing() {
+        let refresh = DispatchSource.makeTimerSource(queue: queue)
+        refresh.schedule(deadline: .now() + regionRefreshInterval, repeating: regionRefreshInterval)
+        refresh.setEventHandler { [weak self] in self?.refreshRegions() }
+        refresh.resume()
+        regionTimer = refresh
+
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + pingInterval, repeating: pingInterval)
         timer.setEventHandler { [weak self] in

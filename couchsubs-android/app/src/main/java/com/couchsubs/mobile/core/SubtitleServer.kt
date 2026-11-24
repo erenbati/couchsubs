@@ -68,7 +68,11 @@ data class SubtitleStyle(
 }
 
 /** Karakter adının rengi (Mac/iPhone NameColorMode, Windows NameColorMode ile aynı). */
-enum class NameColorMode { TEXT, SINGLE, SPEAKER }
+enum class NameColorMode {
+    TEXT, SINGLE, SPEAKER,
+    /** "Tüm Satır": karaktere göre renk; ad ve cümle o karakterin renginde (TV'ye `style.wholeLine`). */
+    LINE,
+}
 
 /** Altyazıları TV'ye ileten taraf. */
 interface SubtitleSender {
@@ -236,7 +240,13 @@ class SubtitleServer(
         fun regionFrame(
             id: String, text: String, box: TextBox?, lineHeight: Double?, icons: List<IconPlacement>? = null,
             blocks: List<ScreenTranslation.Item>? = null,
-        ): String {
+        ): String = frame("region", regionJson(id, text, box, lineHeight, icons, blocks))
+
+        /** [regionFrame]'in verisi; gösterilen alanlar TV'ye yeniden gönderilmek üzere saklanır ([liveRegions]). */
+        fun regionJson(
+            id: String, text: String, box: TextBox?, lineHeight: Double?, icons: List<IconPlacement>? = null,
+            blocks: List<ScreenTranslation.Item>? = null,
+        ): Map<String, Any?> {
             val (text, blocks) = guarded(text, box, blocks)
             val json = mutableMapOf<String, Any?>("id" to id, "text" to text)
             if (!icons.isNullOrEmpty()) json["icons"] = iconsJson(icons)
@@ -244,8 +254,14 @@ class SubtitleServer(
             if (!blocks.isNullOrEmpty() && text.isNotEmpty()) json["blocks"] = blocks.map { itemJson(it, phone = id == GAME_PHONE_ID) }
             if (box != null) json["box"] = boxJson(box)
             if (lineHeight != null) json["line"] = Json.Decimal(Math.round(lineHeight.coerceIn(0.0, 1.0) * 10000) / 10000.0)
-            return frame("region", json)
+            return json
         }
+
+        /** Saklanan alanın yeniden gönderimi: `keep` ile TV aynı alanı yeniden çizmez, yalnız ömrünü uzatır. */
+        private fun keptFrame(json: Map<String, Any?>) = frame("region", json + ("keep" to true))
+
+        /** Gösterilen ek alanların TV'de yenilenme aralığı (TV'deki 15 sn'lik ömrün üçte biri; tv-webos REGION_LIFE_MS). */
+        const val REGION_REFRESH_MS = 5_000L
 
         /**
          * "Ekranı çevir" sonuçları: her çeviri yazının yeri (`box`), tipik satır yüksekliği (`line`, ekrana oranla) ve
@@ -289,6 +305,9 @@ class SubtitleServer(
                 "text" to item.translation,
             )
             if (item.paragraphs) json["paragraphs"] = true
+            // Yerleşim ([ScreenFit]): kutunun genişleyebileceği alan ve özgün satır sayısı (eski TV yok sayar).
+            item.room?.let { json["room"] = boxJson(it) }
+            if (item.rows > 1) json["rows"] = item.rows
             item.icons?.takeIf { it.isNotEmpty() }?.let { json["icons"] = iconsJson(it) }
             // Otomatik ekran yazısının özgün görünüşü; eski TV uygulamaları bu alanları yok sayar.
             // Oyun telefonunun balonu yalnız zemin ve yazı rengini taşır (Mac/iPhone ve Windows ile aynı; `flat` yok).
@@ -333,6 +352,7 @@ class SubtitleServer(
                 // Mac/iPhone SubtitleStyle.json ile aynı alanlar; textHex ve hdmiInput yalnız seçildiyse gider.
                 "backgroundColor" to (SubtitleStyle.hex(style.backgroundColor) ?: SubtitleStyle.DEFAULT_BACKGROUND_COLOR),
                 "nameOnly" to style.nameOnly,
+                "wholeLine" to (style.nameColorMode == NameColorMode.LINE),
             ) + listOfNotNull(
                 SubtitleStyle.hex(style.textHex)?.let { "textHex" to it },
                 style.hdmiInput?.takeIf { it in 1..4 }?.let { "hdmiInput" to it },
@@ -355,6 +375,17 @@ class SubtitleServer(
     private var listener: ServerSocket? = null
     private var pinger: ScheduledExecutorService? = null
     private var lastStyle: SubtitleStyle? = null
+
+    /**
+     * Gösterilen ek alanların son `region` olayları ([lock] ile). TV yeniden bağlanınca bunlar yeniden gönderilir,
+     * gösterilmeyenler kaldırılır (`region-sync`); her [regionRefreshMs]'de telefon kartı dışındakiler `keep` bayrağıyla
+     * yenilenir. TV, yenilenmeyen alanı 15 sn sonra kendisi kaldırır: kopukken kaçan boşaltma olayı yüzünden menü ve
+     * tabela çevirisi ekranda kalıyordu (#1198; Mac/iPhone ve Windows SubtitleServer.liveRegions ile aynı).
+     */
+    private val liveRegions = HashMap<String, Map<String, Any?>>()
+
+    /** [liveRegions]'ın yenilenme aralığı; [start]'tan önce ayarlanır (testler kısaltır). */
+    internal var regionRefreshMs = REGION_REFRESH_MS
 
     /** "Ekran yazılarını altyazıdan ayır" (bkz. [styleFrame]); değişince [sendStyle] yeniden çağrılmalı. */
     @Volatile var setApart: Boolean = true
@@ -405,6 +436,13 @@ class SubtitleServer(
     /** TV uygulaması altyazı akışına her bağlandığında bildirdiği sürümle (boş: eski TV uygulaması) çağrılır (sunucunun iş parçacığında). */
     @Volatile var onTvAppVersion: ((String) -> Unit)? = null
 
+    /**
+     * Bu telefonun paketindeki TV uygulamasının sürümü: `link` olayının `latest` alanıyla TV'ye bildirilir. TV'deki
+     * uygulama bundan eskiyse TV'nin paneli "TV uygulaması eski" der (GitHub #1199: LG'de 0.9.71 kalmıştı, düzeltme
+     * 0.9.94'teydi). null ya da boş: alan gönderilmez. Windows ve Mac/iPhone ile aynı.
+     */
+    @Volatile var latestTvAppVersion: String? = null
+
     /** Sunucuyu başlatır ve dinlenen portu döner (port 0 ise rastgele seçilen). */
     fun start(): Int {
         val socket = ServerSocket()
@@ -418,6 +456,7 @@ class SubtitleServer(
                     dropSilentTvs()
                     broadcast(PING_FRAME)
                 }, pingIntervalMs, pingIntervalMs, TimeUnit.MILLISECONDS)
+                it.scheduleWithFixedDelay(::refreshRegions, regionRefreshMs, regionRefreshMs, TimeUnit.MILLISECONDS)
             }
         return socket.localPort
     }
@@ -435,7 +474,11 @@ class SubtitleServer(
         } catch (error: IOException) {
         }
         listener = null
-        val closing = synchronized(lock) { clients.toList().also { clients.clear() } }
+        val closing = synchronized(lock) {
+            // Sunucu hemen yeniden açılacaksa TV yeniden bağlanınca gösterilen alanlar geri gelsin.
+            if (!keepPairing) liveRegions.clear()
+            clients.toList().also { clients.clear() }
+        }
         closing.forEach { closeQuietly(it.socket) }
         sender.shutdown()
     }
@@ -484,7 +527,36 @@ class SubtitleServer(
         id: String, text: String, box: TextBox?, lineHeight: Double?, icons: List<IconPlacement>?,
         blocks: List<ScreenTranslation.Item>?,
     ) {
-        broadcast(regionFrame(id, text, box, lineHeight, icons, blocks), subtitle = true)
+        val blocks = if (id != GAME_PHONE_ID && blocks != null) steadied(blocks.filter { area(it.box) <= MAX_BOX_AREA }) else blocks
+        if (id != GAME_PHONE_ID) {
+            val visible = synchronized(screenStyle) {
+                if (text.isEmpty() || blocks.isNullOrEmpty()) {
+                    regionShown.remove(id)
+                    regionVisible.remove(id)
+                } else {
+                    regionShown[id] = RegionSent(text, box, lineHeight, icons, blocks)
+                    regionVisible[id] = blocks.map { !presence.hidden(it) }
+                }
+                blocks?.filter { !presence.hidden(it) }
+            }
+            if (blocks != null && visible != null && visible.size != blocks.size) {
+                emitRegion(id, if (visible.isEmpty()) "" else text, box, lineHeight, icons, visible)
+                return
+            }
+        }
+        emitRegion(id, text, box, lineHeight, icons, blocks)
+    }
+
+    private fun emitRegion(
+        id: String, text: String, box: TextBox?, lineHeight: Double?, icons: List<IconPlacement>?,
+        blocks: List<ScreenTranslation.Item>?,
+    ) {
+        val json = regionJson(id, text, box, lineHeight, icons, blocks)
+        // Sıra gönderimle aynı kalsın: yeni bağlanan TV, kuyruktaki son olaydan eskisini almasın.
+        synchronized(lock) {
+            if ((json["text"] as String).isEmpty()) liveRegions.remove(id) else liveRegions[id] = json
+            broadcast(frame("region", json), subtitle = true)
+        }
         if (id == GAME_PHONE_ID) {
             // Telefon ekranında oyun telefonunun çevirisi ek alan kutusu gibi tek kutuda görünür (iPhone ile aynı); büyük
             // kutu korumasından geçen balonlar gösterilir.
@@ -498,18 +570,127 @@ class SubtitleServer(
     }
 
     override fun clearRegions() {
-        broadcast(frame("region-clear", emptyMap()), subtitle = true)
+        synchronized(screenStyle) {
+            regionShown.clear()
+            regionVisible.clear()
+        }
+        synchronized(lock) {
+            liveRegions.clear()
+            broadcast(frame("region-clear", emptyMap()), subtitle = true)
+        }
         onEvent?.invoke(SubtitleEvent.RegionsCleared)
+    }
+
+    /**
+     * Ekran yazısı çevirilerinin görünüşü oturum boyunca kilitli ([ScreenStyleLock]); "Ekranı çevir" ve otomatik ekran yazısı
+     * aynı kilidi paylaşır (Mac: SubtitleServer.steadied, Windows: SubtitleServer.Steadied).
+     */
+    private val screenStyle = ScreenStyleLock()
+
+    internal fun steadied(items: List<ScreenTranslation.Item>): List<ScreenTranslation.Item> =
+        synchronized(screenStyle) { screenStyle.steady(items, monotonicClock()) }
+
+    /** Ekran yazısının görünüşü yeniden ölçülsün (oturum yeniden başladı). */
+    fun resetScreenStyle() = synchronized(screenStyle) {
+        screenStyle.reset()
+        presence.reset()
+    }
+
+    /** Ekrandaki çeviriler ve özgün yazılarının takibi ([ScreenPresence]). */
+    private val presence = ScreenPresence()
+    /** [ScreenPresence]'ın kaldırma ve geri getirme kararları altyazı günlüğüne ([DropLog]; sınırlı, tekrarsız). */
+    private val presenceDrops = DropLog()
+    private var screenShown: Pair<List<ScreenTranslation.Item>, Long>? = null
+    /**
+     * Her [sendScreen] ve [clearScreen] bir üst numara verir. [observe] değişikliği kilidin dışında gönderir; arada
+     * çeviri kaldırıldıysa eski öğeler yeniden gönderilmez (kaldırılan çeviri TV'de ve telefonda geri çiziliyordu, #1182).
+     */
+    private var screenEpoch = 0L
+    private var screenVisible: List<Boolean> = emptyList()
+    private data class RegionSent(
+        val text: String, val box: TextBox?, val lineHeight: Double?, val icons: List<IconPlacement>?,
+        val blocks: List<ScreenTranslation.Item>,
+    )
+    private val regionShown = java.util.TreeMap<String, RegionSent>()
+    private val regionVisible = mutableMapOf<String, List<Boolean>>()
+
+    /**
+     * Her karede çağrılır: çevirisi gösterilen yazılar hâlâ yerinde mi ([ScreenPresence]). Özgün yazısı kalkan öğe TV'den ve
+     * telefon ekranından aynı karede kalkar; geri gelirse yeniden gösterilir (Mac: SubtitleServer.observe, Windows:
+     * SubtitleServer.Observe). [patch]: kutunun bu karedeki izi ([ScreenPresence.patch]).
+     */
+    fun observe(patch: (TextBox) -> List<Int>?) {
+        val now = monotonicClock()
+        var screenChange: List<ScreenTranslation.Item>? = null
+        val regionChanges = mutableListOf<Triple<String, RegionSent, List<ScreenTranslation.Item>>>()
+        var until = now
+        val flips = mutableListOf<Pair<String, Boolean>>()
+        var epoch = 0L
+        synchronized(screenStyle) {
+            epoch = screenEpoch
+            screenShown?.let { if (it.second <= now) screenShown = null }
+            val screen = screenShown?.first ?: emptyList()
+            val regions = regionShown.entries.map { it.key to it.value }
+            val all = screen + regions.flatMap { it.second.blocks }
+            if (all.none { ScreenPresence.tracks(it) } && screenVisible.isEmpty() && regionVisible.isEmpty()) return
+            val visible = presence.visible(all, patch)
+            val flags = visible.take(screen.size)
+            val before = if (screenVisible.isEmpty()) screen.map { true } else screenVisible
+            if (screen.isNotEmpty() && flags != before) screenChange = screen.filterIndexed { i, _ -> flags[i] }
+            // Kaldırma ya da geri getirme kararı günlüğe ([DropLog]): periyodik kopmalarda hangi yazının izinin kaçtığı görünsün.
+            for (i in screen.indices) if (i < before.size && before[i] != flags[i]) flips.add(screen[i].source to flags[i])
+            screenVisible = if (screen.isEmpty()) emptyList() else flags
+            var offset = screen.size
+            val previous = regionVisible.toMap()
+            regionVisible.clear()
+            for ((id, sent) in regions) {
+                val part = visible.subList(offset, offset + sent.blocks.size).toList()
+                offset += sent.blocks.size
+                regionVisible[id] = part
+                val was = previous[id] ?: sent.blocks.map { true }
+                for (i in sent.blocks.indices) if (i < was.size && was[i] != part[i]) flips.add(sent.blocks[i].source to part[i])
+                if (part != was) {
+                    regionChanges.add(Triple(id, sent, sent.blocks.filterIndexed { i, _ -> part[i] }))
+                }
+            }
+            until = screenShown?.second ?: now
+        }
+        for ((source, shown) in flips) {
+            presenceDrops.note("ScreenPresence",
+                if (shown) "özgün yazı geri geldi, çeviri yeniden gösterildi" else "özgün yazının izi kaçtı, çeviri kaldırıldı", source)
+        }
+        screenChange?.let { items ->
+            if (synchronized(screenStyle) { screenEpoch == epoch }) emitScreen(items, maxOf(1L, until - now).toInt())
+        }
+        for ((id, sent, kept) in regionChanges) {
+            emitRegion(id, if (kept.isEmpty()) "" else sent.text, sent.box, sent.lineHeight, sent.icons, kept.ifEmpty { null })
+        }
     }
 
     /** "Ekranı çevir" sonuçlarını TV'ye (ve telefon ekranına) gönderir. */
     fun sendScreen(items: List<ScreenTranslation.Item>, durationMs: Int) {
+        val items = steadied(items.filter { area(it.box) <= MAX_BOX_AREA })
+        val shown = synchronized(screenStyle) {
+            screenEpoch += 1
+            screenShown = items to monotonicClock() + durationMs
+            screenVisible = items.map { !presence.hidden(it) }
+            items.filter { !presence.hidden(it) }
+        }
+        emitScreen(shown, durationMs)
+    }
+
+    private fun emitScreen(items: List<ScreenTranslation.Item>, durationMs: Int) {
         broadcast(screenFrame(items, durationMs), subtitle = true)
         onEvent?.invoke(SubtitleEvent.Screen(items, durationMs))
     }
 
     /** TV'deki ve telefondaki "ekranı çevir" çevirilerini kaldırır (altyazıya dokunmaz). */
     fun clearScreen() {
+        synchronized(screenStyle) {
+            screenEpoch += 1
+            screenShown = null
+            screenVisible = emptyList()
+        }
         broadcast(frame("screen-clear", emptyMap()), subtitle = true)
         onEvent?.invoke(SubtitleEvent.ScreenCleared)
     }
@@ -540,7 +721,7 @@ class SubtitleServer(
         // Karakter adı renkleri (Mac SubtitleServer.updateStyle gibi): tek renk ya da kullanıcının seçtiği kişi renkleri.
         SpeakerColors.session.configure(
             fixed = if (style.nameColorMode == NameColorMode.SINGLE) SubtitleStyle.hex(style.nameHex) ?: SubtitlePalette.names[0].hex else null,
-            overrides = if (style.nameColorMode == NameColorMode.SPEAKER) style.characterColors else emptyMap(),
+            overrides = if (style.nameColorMode == NameColorMode.SPEAKER || style.nameColorMode == NameColorMode.LINE) style.characterColors else emptyMap(),
         )
         broadcast(styleFrame(style, setApart), subtitle = true)
     }
@@ -677,7 +858,12 @@ class SubtitleServer(
                 if (accessKey != checkedKey) { closeQuietly(socket); return }
                 lastStyle?.let { head.append(styleFrame(it, setApart)) }
                 // Bağlantı kimliği stilden sonra (Mac/iPhone ve Windows ile aynı sıra; bkz. onTvStale).
-                if (!viewer) head.append("event: link\ndata: ").append(Json.write(mapOf("id" to link))).append("\n\n")
+                if (!viewer) {
+                    val latest = tvAppVersion(latestTvAppVersion)
+                    val json = if (latest.isEmpty()) mapOf("id" to link) else mapOf("id" to link, "latest" to latest)
+                    head.append("event: link\ndata: ").append(Json.write(json)).append("\n\n")
+                }
+                head.append(regionReplay(tv = viewer || sendsToTv))
                 clients.add(client)
                 clients.count { !it.viewer }
             }
@@ -717,6 +903,30 @@ class SubtitleServer(
         silent.forEach { remove(it) }
         if (remaining == 0) onTvStale?.invoke()
         return true
+    }
+
+    /**
+     * Yeni bağlanan TV'ye (ya da OBS'e) gösterilen ek alanlar: önce `region-sync` (listede olmayan alanları TV kaldırır;
+     * kopukken kaçan boşaltma olayları), sonra her alanın son `region` olayı `keep` bayrağıyla (TV'de duran aynı alan
+     * yeniden çizilmez). [lock] tutulurken çağrılır.
+     */
+    private fun regionReplay(tv: Boolean): String {
+        val live = if (tv) liveRegions.entries.sortedBy { it.key } else emptyList()
+        val out = StringBuilder(frame("region-sync", mapOf("ids" to live.map { it.key })))
+        for ((_, json) in live) out.append(keptFrame(json))
+        return out.toString()
+    }
+
+    /**
+     * Gösterilen ek alanları (telefon kartı hariç) `keep` bayrağıyla yeniden gönderir: sahnede kalan yazının çevirisi TV'deki
+     * 15 sn'lik ömrü dolup kalkmasın. Telefon kartı kendi okumasıyla sık güncellenir.
+     */
+    internal fun refreshRegions() {
+        synchronized(lock) {
+            for ((id, json) in liveRegions.entries.sortedBy { it.key }) {
+                if (id != GAME_PHONE_ID) broadcast(keptFrame(json), subtitle = true)
+            }
+        }
     }
 
     private fun remove(client: Client) {

@@ -30,6 +30,7 @@ final class RegionWatcherTests: XCTestCase {
         var failuresRemaining = 0
         func translate(_ text: String) async throws -> String {
             calls.append(text)
+            if hangNs > 0 { try? await Task.sleep(nanoseconds: hangNs) }
             if failuresRemaining > 0 {
                 failuresRemaining -= 1
                 throw Failure.expected
@@ -37,6 +38,8 @@ final class RegionWatcherTests: XCTestCase {
             return map(text)
         }
         var map: (String) -> String = { "TR: " + $0 }
+        /// Doluysa çeviri bu kadar ns bekler (asılı motor).
+        var hangNs: UInt64 = 0
 
         private enum Failure: Error { case expected }
     }
@@ -284,6 +287,74 @@ final class RegionWatcherTests: XCTestCase {
         await watcher.pass(frame(90), areas: [quest])
         XCTAssertEqual(translator.calls, ["Talk to Arthur", "Meet Arthur at the barn", "Meet Arthur at the barn"])
         XCTAssertEqual(server.sent.map(\.text), ["TR: Talk to Arthur", "TR: Meet Arthur at the barn"])
+    }
+
+    /// Görev alanının yalnız sol dörtte biri `shade` olan kare: iz değişir ama alanın çoğu aynı kalır (`bigChangeShare` altı).
+    private func partly(_ shade: UInt8) -> CGImage {
+        let width = 320, height = 180
+        var pixels = [UInt8](repeating: 10, count: width * height)
+        let region = quest.region
+        let left = Int(region.left * Double(width)), right = left + Int((region.right - region.left) * Double(width) / 4)
+        for y in 0..<height { for x in left..<right { pixels[y * width + x] = shade } }
+        let context = pixels.withUnsafeMutableBytes { buffer in
+            CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width,
+                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)
+        }
+        return context!.makeImage()!
+    }
+
+    /// #1198: yazı gidip yerinde sahne oynayınca okuma hiç kararlı olmuyordu; eski çeviri TV'de kalıyordu. Üç tur art arda
+    /// doğrulanamayan, gösterilene benzemeyen okumada çeviri kalkar; benzer okumalar (OCR titremesi) kaldırmaz.
+    func testUnsteadyReadsRemoveTheShownTranslationOnlyWhenTheTextIsGone() async {
+        let reader = Reader(), translator = Translator(), server = Server()
+        let watcher = RegionWatcher(reader: reader, translator: translator, server: server)
+        reader.lines = [line("Talk to Arthur at the camp")]
+        await watcher.pass(partly(10), areas: [quest])
+        await watcher.pass(partly(10), areas: [quest])
+        XCTAssertEqual(server.sent.map(\.text), ["TR: Talk to Arthur at the camp"])
+        for (shade, text) in [(40, "Talk to Arthur at the cam"), (80, "Talk to Arthur at the camp."), (120, "Talk to Arthr at the camp"),
+                              (160, "Talk to Arthur at the cam")] as [(UInt8, String)] {
+            reader.lines = [line(text)]
+            await watcher.pass(partly(shade), areas: [quest])
+        }
+        XCTAssertEqual(server.sent.map(\.text), ["TR: Talk to Arthur at the camp"])
+        for (shade, text) in [(40, "Grass and trees"), (80, "Sky above the hills"), (120, "Dust road ahead")] as [(UInt8, String)] {
+            reader.lines = [line(text)]
+            await watcher.pass(partly(shade), areas: [quest])
+        }
+        XCTAssertEqual(server.sent.map(\.text), ["TR: Talk to Arthur at the camp", ""])
+    }
+
+    /// Görüntü bütünüyle değişip yazı da gittiyse çeviri beklemeden kalkar.
+    func testBigChangeWithNoTextRemovesTheTranslationAtOnce() async {
+        let reader = Reader(), translator = Translator(), server = Server()
+        let watcher = RegionWatcher(reader: reader, translator: translator, server: server)
+        reader.lines = [line("Talk to Arthur at the camp")]
+        await watcher.pass(frame(10), areas: [quest])
+        await watcher.pass(frame(10), areas: [quest])
+        reader.lines = [line("Wild grass")]
+        await watcher.pass(frame(200), areas: [quest])
+        XCTAssertEqual(server.sent.map(\.text), ["TR: Talk to Arthur at the camp"])
+        reader.lines = []
+        await watcher.pass(frame(100), areas: [quest])
+        XCTAssertEqual(server.sent.map(\.text), ["TR: Talk to Arthur at the camp", ""])
+    }
+
+    /// Asılı çeviri isteği turu kilitlemez: süre dolunca tur biter, hiçbir şey gösterilmez; sonraki tur yeniden dener.
+    func testHangingTranslationTimesOutAndALaterPassShowsTheTranslation() async {
+        let reader = Reader(), translator = Translator(), server = Server()
+        let watcher = RegionWatcher(reader: reader, translator: translator, server: server)
+        watcher.translationTimeoutMs = 100
+        translator.hangNs = 30_000_000_000
+        reader.lines = [line("Talk to Arthur")]
+        let started = Date()
+        await watcher.pass(frame(10), areas: [quest])
+        await watcher.pass(frame(10), areas: [quest])
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+        XCTAssertEqual(server.sent.map(\.text), [])
+        translator.hangNs = 0
+        await watcher.pass(frame(10), areas: [quest])
+        XCTAssertEqual(server.sent.map(\.text), ["TR: Talk to Arthur"])
     }
 
     func testMovingBackgroundWithTheSameTextIsNotTranslatedAgain() async {

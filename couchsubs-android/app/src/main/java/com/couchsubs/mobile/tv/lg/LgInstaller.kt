@@ -211,6 +211,13 @@ class LgInstaller(
 
         fun launchCommand() = """/usr/bin/luna-send-pub -n 1 'luna://com.webos.applicationManager/launch' '{"id":"$APP_ID"}'"""
 
+        /**
+         * Açık uygulamayı kapatır (ares-launch --close gibi) ve webOS'un süreci bırakması için bekler. beta.89 (LG): kurulumdan
+         * sonra açık uygulama kapatılmıyordu; açma komutu onu yalnız öne getiriyor, TV eski sürümü çalıştırmayı sürdürüyordu.
+         * Masaüstündeki DevModeInstaller.closeCommand ve iPhone'daki LGInstaller.closeCommand ile aynı.
+         */
+        const val CLOSE_COMMAND = "/usr/bin/luna-send-pub -n 1 'luna://com.webos.applicationManager/closeByAppId' '{\"id\":\"$APP_ID\"}'; sleep 2"
+
         data class InstallOutcome(val installed: Boolean, val failed: Boolean, val reason: String?)
 
         /**
@@ -299,7 +306,11 @@ class LgInstaller(
      * TV'deki CouchSubs [version]'dan eskiyse ya da yoksa [ipk]'yı kurar, sonra uygulamayı açar.
      * @param replaceForeign Bu kimlikle başka bir uygulama kuruluysa kaldırılıp kurulsun mu (yalnız kullanıcı onayıyla).
      */
-    fun ensureInstalled(ipk: ByteArray, packageName: String, version: String, replaceForeign: Boolean = false): Result {
+    fun ensureInstalled(
+        ipk: ByteArray, packageName: String, version: String, replaceForeign: Boolean = false,
+        /** TV'de açık uygulamanın bildirdiği sürüm (bağlı değilse null); paket güncel ama bu eskiyse kapatılıp açılır. */
+        runningVersion: String? = null,
+    ): Result {
         log.write("--- LG kurulumu (telefon) başlıyor: paket $packageName")
         try {
             progress(InstallStep.CONNECTING)
@@ -314,6 +325,10 @@ class LgInstaller(
             }
             log.write("TV'deki CouchSubs: ${onTv ?: "yok"}")
             if (onTv != null && !SamsungDiagnostics.isNewer(version, onTv)) {
+                if (runningVersion != null && TvAppRunningCheck.isStale(runningVersion, onTv)) {
+                    log.write("TV'deki paket $onTv, çalışan CouchSubs ${runningVersion.ifEmpty { TvAppRunningCheck.UNREPORTED }}; uygulama kapatılıp yeniden açılıyor.")
+                    close()
+                }
                 launch()
                 return Result(onTv, false)
             }
@@ -357,6 +372,8 @@ class LgInstaller(
         while (true) {
             if (installedVersion() == version) {
                 remove(remote)
+                // Açık (eski) uygulama kapatılır; sonra açılan uygulama yeni sürümü diskten yükler (bkz. CLOSE_COMMAND).
+                close()
                 return
             }
             if (System.currentTimeMillis() - started >= limit) break
@@ -366,6 +383,21 @@ class LgInstaller(
         if (outcome.installed) remove(remote)
         throw LgInstallException(LgInstallError.INSTALL_FAILED,
             "TV'de $version sürümü görünmedi; kurulum yanıtı (${response.status}): ${short(response.output)}")
+    }
+
+    /** Açık uygulamayı kapatır; açık değilse ya da TV reddederse kurulum yine başarılıdır. */
+    fun close() {
+        try {
+            log.write("TV'deki CouchSubs kapatıldı: ${shell.run(CLOSE_COMMAND, null).output.trim()}")
+        } catch (error: IOException) {
+            log.write("TV'deki CouchSubs kapatılamadı: ${error.message}")
+        }
+    }
+
+    /** Kapatır ve yeniden açar (çalışan sürüm kurulu sürümden eskiyse). */
+    fun restart() {
+        close()
+        launch()
     }
 
     /** Uygulamayı açar (ares-launch gibi); açılmasa da kurulum başarılıdır. */

@@ -197,7 +197,15 @@ object GameName {
             text.appendCodePoint(cp)
             previous = cp
         }
-        var words = text.split(' ').filter { it.isNotEmpty() }.map { ROMAN[it] ?: it }
+        val rawWords = text.split(' ').filter { it.isNotEmpty() }
+        // Preserve literal franchise letters but keep established Roman sequel keys.
+        val megaManX = rawWords.take(3) == listOf("mega", "man", "x")
+        var words = rawWords.mapIndexed { i, w ->
+            val next = rawWords.getOrNull(i + 1)
+            val literal = (w == "x" && ((megaManX && i == 2) || next == "men")) ||
+                (w == "v" && next == "rally")
+            if (literal) w else ROMAN[w] ?: w
+        }
         if (words.size > 1 && words.first() == "the") words = words.drop(1)
         var joined = " " + words.joinToString(" ") + " "
         for ((long, short) in ALIASES) joined = joined.replace(" $long ", if (short.isEmpty()) " " else " $short ")

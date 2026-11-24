@@ -23,6 +23,8 @@ public static class TvAppMessages
 
     /// <summary>Samsung bağlantı hatalarında Host PC IP'ye yazılacak adres.</summary>
     public const string ComputerAddressLine = "This computer's address (Host PC IP): %@";
+    /// <summary>Samsung kurulum bağlantısı reddedilince ("IP hatası", #1158): menü, iki ayar ve bu cihazın adresi tek satırda.</summary>
+    public const string HostPcStepsLine = "On the TV: Apps › press 1 2 3 4 5 › Developer mode On, Host PC IP = this device's IP (%@), then restart the TV.";
     /// <summary>Bu bilgisayarın Host PC IP için gösterilenden başka ev ağı adresleri varsa (Wi-Fi ve Ethernet ikisi de bağlı).</summary>
     public const string OtherAddressesLine = "If the TV does not accept this address, try one of this computer's other addresses: %@";
 
@@ -38,6 +40,12 @@ public static class TvAppMessages
     /// <summary>LG: Key Server yanıt veriyor ama 9922 reddediyor (#200, #1116); Mac, iPhone ve Android'dekiyle aynı.</summary>
     public const string DevConnectionClosedMessage =
         "Developer mode looks on (the TV's Key Server answers), but the TV refuses the install connection. Unplug the TV for 30 seconds and plug it back in (or press RESTART in the Developer Mode app), then open the Developer Mode app, check that Dev Mode Status is on, turn on Key Server and try again. On some TVs that use webOS Hub this connection may be closed in the TV's software; the TV app then cannot be installed this way.";
+
+    /// <summary>Kayıtlı adreste TV hiç yanıt vermiyor ve ağda da bulunamadı (TvReach; Mac, iPhone ve Android ile aynı).</summary>
+    public const string TvNotRespondingMessage = "The TV isn't responding at this address (is it on and on the same network?)";
+
+    /// <summary>Eşli TV kartında "TV'yi Eşleştir" ya da "Deneme Altyazısı Gönder" TV'ye ulaşamayınca (adres yazılır).</summary>
+    public const string TvNotRespondingAtMessage = "The TV isn't responding at %@. Its address may have changed.";
 
     /// <summary>Hata iletisinin sonunda günlük dosyasını söyleyen satır.</summary>
     public const string SendLogLine = "If this keeps happening, send us this file: %@";
@@ -55,6 +63,8 @@ public static class TvAppMessages
         var result = text[Key(error, brand)];
         if (samsung && error == DevModeError.Unreachable && !string.IsNullOrWhiteSpace(computerAddress))
             result += "\n\n" + text.Format(ComputerAddressLine, computerAddress);
+        if (samsung && error == DevModeError.Unreachable)
+            result += "\n\n" + text.Format(HostPcStepsLine, string.IsNullOrWhiteSpace(computerAddress) ? "?" : computerAddress);
         if (state.Reason is { } reason)
             result += $"\n\n{text[samsung ? "Details:" : "TV says:"]} {reason}";
         if (!samsung) return result + "\n\n" + text.Format(SendLogLine, samsungLog);
@@ -103,6 +113,7 @@ public static class TvAppMessages
         DevModeError.HostPcMismatch => HostPcMismatchMessage,
         DevModeError.Unreachable => "The TV did not respond. Make sure it is on and on the same network.",
         DevModeError.DevConnectionClosed => DevConnectionClosedMessage,
+        DevModeError.TvNotResponding => TvNotRespondingMessage,
         DevModeError.ToolMissing => "Windows' OpenSSH Client is missing. Add it in Settings › System › Optional features and try again.",
         DevModeError.TooOld => "This Samsung TV is too old for the CouchSubs TV app (2016 models and later are supported).",
         DevModeError.SignInFailed => "Samsung sign-in did not complete. Try again and finish signing in on the page that opens.",

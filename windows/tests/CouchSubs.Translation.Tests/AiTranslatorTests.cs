@@ -1449,4 +1449,26 @@ public class AiTranslatorTests
         public Task<string> TranslateAsync(string text, CancellationToken cancellationToken = default) =>
             throw new TranslatorException(TranslatorStatus.EngineFailed);
     }
+
+    /// <summary>Ekran çevirisi isteğinde yazı başına karakter bütçesi; küfür yumuşatılmaz (Mac ve Android ile aynı).</summary>
+    [Fact]
+    public void ScreenRequestCarriesCharacterBudget()
+    {
+        Assert.Equal([4, 18, 29], AiRequest.ScreenLimits(["MAP", "SET DESTINATION", "Keep an eye on the party."]));
+        var message = AiRequest.UserMessage(["MAP", "SET DESTINATION"], [], limits: [4, 18]);
+        Assert.Contains(AiRequest.LimitsNote + "\n[4,18]", message);
+        Assert.Contains("never censor or soften profanity", AiRequest.LimitsNote);
+        Assert.DoesNotContain(AiRequest.LimitsNote, AiRequest.UserMessage(["MAP"], []));
+    }
+
+    /// <summary>Ekran çevirisinin günlüğe düşen sorunları (Mac DropLogTests.testScreenIssue, Android DropLogTest aynı).</summary>
+    [Fact]
+    public void ScreenIssueNamesEmptyEchoedAndOverLimitTranslations()
+    {
+        Assert.Null(AiRequest.ScreenIssue("Open map", "Haritayı aç", 12));
+        Assert.Equal("motor boş çeviri döndü", AiRequest.ScreenIssue("Open map", " ", 10));
+        Assert.Equal("çeviri aslıyla aynı döndü, İngilizce kaldı", AiRequest.ScreenIssue("Open map", "open map", 10));
+        Assert.Null(AiRequest.ScreenIssue("42", "42", 4));
+        Assert.Equal("%115 sınırını aştı (17/10)", AiRequest.ScreenIssue("Open map", "Haritayı şimdi aç", 10));
+    }
 }

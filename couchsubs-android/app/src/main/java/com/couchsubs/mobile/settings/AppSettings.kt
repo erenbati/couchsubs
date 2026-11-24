@@ -65,15 +65,32 @@ object AutoScreenTextMigration {
 }
 
 /**
- * "Bilinen oyunlarda hazır alanları kullan" ve "GTA 6 telefonunu otomatik çevir" bir kerelik göçü (Windows
- * ScreenTextExtrasMigration, Mac/iPhone migratingScreenTextExtras ile aynı kural); [AutoScreenTextMigration]'dan sonra
- * uygulanır. Hazır alanlar beta.63–68'de varsayılan açık geliyordu ve otomatik ekran yazısı kapalıyken de GTA 6'da menüyü
- * ve bildirimleri çeviriyordu. İşaret varsa null (bir şey yapılmaz); yoksa işaret konur ve otomatik ekran yazısı
- * kapalıysa ikisi de kapatılır (true); kullanıcı onu açmışsa dokunulmaz (false).
+ * "Bilinen oyunlarda hazır alanları kullan" bir kerelik göçü (Windows ScreenTextExtrasMigration, Mac/iPhone
+ * migratingScreenTextExtras ile aynı kural); [AutoScreenTextMigration]'dan sonra uygulanır. Hazır alanlar beta.63–68'de
+ * varsayılan açık geliyordu ve otomatik ekran yazısı kapalıyken de GTA 6'da menüyü ve bildirimleri çeviriyordu. İşaret
+ * varsa null (bir şey yapılmaz); yoksa işaret konur ve otomatik ekran yazısı kapalıysa hazır alanlar kapatılır (true);
+ * kullanıcı onu açmışsa dokunulmaz (false). GTA 6 telefonuna artık dokunmaz ([GamePhoneMigration]).
  */
 object ScreenTextExtrasMigration {
     /** [reset]: göç işareti; [autoScreenText]: otomatik ekran yazısı (önceki göçten sonraki) değeri. */
     fun apply(reset: Boolean, autoScreenText: Boolean): Boolean? = if (reset) null else !autoScreenText
+}
+
+/**
+ * "GTA 6 telefonunu otomatik çevir" bir kerelik açılışı (Windows GamePhoneMigration, Mac/iPhone migratingGamePhone ile
+ * aynı kural); [ScreenTextExtrasMigration]'dan hemen sonra uygulanır. Eski göç otomatik ekran yazısı kapalıyken telefonu
+ * da kapatıyordu; GTA 6 oyuncularının telefonu hiç çevrilmiyordu (#1202, #1197, #1193, #1170). Telefon yalnız GTA 6'da
+ * okunur; varsayılan açıktır. İşaret ("gamePhoneReenabled") varsa false (bir şey yapılmaz); yoksa ayar açılır, işaret
+ * konur (true).
+ */
+object GamePhoneMigration {
+    fun apply(reenabled: Boolean): Boolean = !reenabled
+}
+
+/** Oturum başı günlük satırının ayar kısmı (Mac/iPhone SubtitleLog.areaSummary'nin sonu, Windows ile aynı). */
+object SessionLogSummary {
+    fun of(autoScreenText: Boolean, readsGamePhone: Boolean): String =
+        "otomatik ekran yazısı: ${if (autoScreenText) "açık" else "kapalı"}, telefon: ${if (readsGamePhone) "açık" else "kapalı"}"
 }
 
 /**
@@ -281,14 +298,21 @@ class AppSettings(context: Context) : AreaStore {
     init {
         migrateAutoScreenText()
         migrateScreenTextExtras()
+        migrateGamePhone()
     }
 
-    /** Hazır alanlar ve GTA 6 telefonu bir kerelik göçü ([ScreenTextExtrasMigration]). */
+    /** Hazır alanlar bir kerelik göçü ([ScreenTextExtrasMigration]). */
     private fun migrateScreenTextExtras() {
         val turnOff = ScreenTextExtrasMigration.apply(prefs.getBoolean("screenTextExtrasReset", false), autoScreenText) ?: return
         val edit = prefs.edit().putBoolean("screenTextExtrasReset", true)
-        if (turnOff) edit.putBoolean("gameAreaPresets", false).putBoolean("autoReadGamePhone", false)
+        if (turnOff) edit.putBoolean("gameAreaPresets", false)
         edit.apply()
+    }
+
+    /** GTA 6 telefonu bir kez açılır ([GamePhoneMigration]). */
+    private fun migrateGamePhone() {
+        if (!GamePhoneMigration.apply(gamePhoneReenabled)) return
+        prefs.edit().putBoolean("gamePhoneReenabled", true).putBoolean("autoReadGamePhone", true).apply()
     }
 
     /**
@@ -363,11 +387,16 @@ class AppSettings(context: Context) : AreaStore {
 
     /**
      * "GTA 6'daki telefonu otomatik çevir (deneysel)": GTA 6 oynanırken oyun içi telefon açılınca ekranı okunup çevrilir
-     * (Mac/Windows autoReadGamePhone); varsayılan kapalı.
+     * (Mac/Windows autoReadGamePhone); varsayılan açık (telefon yalnız GTA 6'da okunur).
      */
     var autoReadGamePhone: Boolean
-        get() = prefs.getBoolean("autoReadGamePhone", false)
+        get() = prefs.getBoolean("autoReadGamePhone", true)
         set(value) = prefs.edit().putBoolean("autoReadGamePhone", value).apply()
+
+    /** GTA 6 telefonu bir kerelik açıldı ([GamePhoneMigration]; Mac/iPhone gamePhoneReenabled). Eski kurulumlarda false. */
+    var gamePhoneReenabled: Boolean
+        get() = prefs.getBoolean("gamePhoneReenabled", false)
+        set(value) = prefs.edit().putBoolean("gamePhoneReenabled", value).apply()
 
     /**
      * "GTA 6 Telefon Mesajları": açıkken (Yanda Panel, varsayılan) telefonun mesajları telefonun yanındaki sohbet panelinde

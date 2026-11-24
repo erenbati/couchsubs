@@ -49,6 +49,8 @@ data class LiveStatus(
     val framesSince: Long? = null,
     /** Görüntü bir dakikadır geliyor ama tek satır gösterilmedi: "oyunun kendi altyazısını açın" (bkz. SubtitleOffTip). */
     val subtitleOffTip: Boolean = false,
+    /** GTA 6 telefonu ayarı kapalıyken telefon listesi altyazı yolunda atıldı: "Telefon çevirisi kapalı, açmak ister misiniz?". */
+    val gamePhoneHint: Boolean = false,
     /** Okumanın başladığı an (duvar saati, ms); süre göstergesi için. */
     val startedAt: Long = 0,
     /** Seçili çeviri motorunun görünen adı ("DeepL", "Ücretsiz"). */
@@ -104,7 +106,10 @@ data class LiveStatus(
         is com.couchsubs.mobile.core.SubtitleEvent.Region ->
             copy(regions = regions.filter { it.id != event.id } + listOfNotNull(event.takeIf { it.text.isNotEmpty() }))
         com.couchsubs.mobile.core.SubtitleEvent.RegionsCleared -> copy(regions = emptyList())
-        is com.couchsubs.mobile.core.SubtitleEvent.Screen -> copy(screen = event.items, screenState = ScreenState.SHOWN)
+        // Sunucu ekran çevirisini kendisi de yeniden gönderir (ScreenPresence: özgün yazı geri gelince). Kaldırılmış (IDLE)
+        // çeviri bu olayla geri gelmez; yoksa düğme yeniden "Çevirileri kaldır" olup basınca ekranı baştan çeviriyordu (#1182).
+        is com.couchsubs.mobile.core.SubtitleEvent.Screen ->
+            if (screenState == ScreenState.IDLE) this else copy(screen = event.items, screenState = ScreenState.SHOWN)
         com.couchsubs.mobile.core.SubtitleEvent.ScreenCleared -> copy(screen = emptyList(), screenState = ScreenState.IDLE)
     }
 }

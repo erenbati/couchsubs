@@ -66,6 +66,43 @@ internal static class PhoneSteady
     internal const double PoseSlack = 0.015;
 
     /// <summary>
+    /// Kaydırma: önceki okumayla eşleşen balonların hepsi dikeyde satır yüksekliğinin bu payından fazla, aynı yöne kaydıysa
+    /// sohbet kaydırılıyor (<see cref="Scrolled"/>).
+    /// </summary>
+    internal const double ScrollShare = 0.5;
+
+    /// <summary>
+    /// Telefon kaydırıldı mı (GitHub #1202, #1197, #1193, #1170: "kaydırınca yenilenmiyor"). Kaydırma sırasında
+    /// <see cref="HoldTurns"/> bekletmesi ve konum sabitleme (<see cref="SteadyPositions"/>) atlanır, görünen yeni balonların
+    /// hepsi tek istekte çevrilir. <c>Top</c>'lar ve <paramref name="lineHeight"/> telefon bölgesine oranlıdır. Güncel her
+    /// balon, öncekilerden henüz eşlenmemiş ilk <see cref="SameReading"/> eşiyle eşlenir; en az bir eşleşme olmalı ve
+    /// hepsinin dikey kayması <see cref="ScrollShare"/> × satır yüksekliğinden büyük ve aynı yönde olmalı. Mac/iPhone ve
+    /// Android aynı kural.
+    /// </summary>
+    internal static bool Scrolled(IReadOnlyList<(string Text, double Top)> previous, IReadOnlyList<(string Text, double Top)> current,
+                                  double lineHeight)
+    {
+        if (lineHeight <= 0) return false;
+        var used = new bool[previous.Count];
+        int pairs = 0, direction = 0;
+        foreach (var bubble in current)
+        {
+            int index = -1;
+            for (int i = 0; i < previous.Count; i++)
+                if (!used[i] && SameReading(previous[i].Text, bubble.Text)) { index = i; break; }
+            if (index < 0) continue;
+            used[index] = true;
+            double dy = bubble.Top - previous[index].Top;
+            if (Math.Abs(dy) <= ScrollShare * lineHeight) return false;
+            int sign = Math.Sign(dy);
+            if (direction != 0 && sign != direction) return false;
+            direction = sign;
+            pairs++;
+        }
+        return pairs > 0;
+    }
+
+    /// <summary>
     /// Balonların yeri: önceki gönderiyle eşleşen balonlar (<see cref="Match"/>) küçük oynamada (satır yüksekliğinin
     /// <see cref="PositionShare"/>'i; yatayda kare oranıyla) son çizilen yerde kalır. Eşleşenlerin yarısından çoğu eşiği aşarsa
     /// (telefon kıpırdadı, sohbet kaydı) hepsi birlikte, tek seferde yeni yerine geçer; tek başına eşiği aşan balon kendi
@@ -158,5 +195,109 @@ internal static class PhoneSteady
             if (x.Panel is null or ScreenPhoneCard.PanelPart.Card && x.Box != y.Box) return false;
         }
         return true;
+    }
+}
+
+/// <summary>
+/// Yanda Panel'in yazı boyu ve yeri oturum boyunca kararlı (#1152, GTA 6: "telefon titreyince sohbet panelinin yazıları
+/// büyüyüp küçülüyor, balonlar yer değiştiriyor"). Panel ilk ölçümde kilitlenir: telefonun yeri ancak belirgin biçimde
+/// (boyu <see cref="SizeShare"/>'den, ortası boyunun <see cref="MoveShare"/>'inden fazla) ve kesintisiz
+/// <see cref="SettleMs"/> boyunca başka yerdeyse, satır yüksekliği ancak kilitliden <see cref="SizeShare"/>'den fazla ve
+/// kesintisiz <see cref="SettleMs"/> boyunca farklıysa yenilenir; telefonun boyu belirgin değişip yeni yer benimsenince
+/// yazı boyu yeniden ölçülür. Mac/iPhone (PhonePanelSteady, PhoneSteady.swift) ve Android (PhoneSteady.kt) aynı kuralı,
+/// aynı eşikleri kullanır.
+/// </summary>
+internal sealed class PhonePanelSteady
+{
+    internal const double SizeShare = 0.25;
+    internal const double MoveShare = 0.1;
+    internal const long SettleMs = 1000;
+
+    internal GamePhoneGeometry.Pose? Pose { get; private set; }
+    internal double? Line { get; private set; }
+    private long? poseSince;
+    private long? lineSince;
+
+    /// <summary>Panelin dayanacağı telefon yeri; <c>Resized</c>: boyu belirgin değişti (ya da ilk yer).</summary>
+    internal (GamePhoneGeometry.Pose Pose, bool Resized) SteadyPose(GamePhoneGeometry.Pose found, long now)
+    {
+        if (Pose is not { } locked)
+        {
+            Pose = found;
+            poseSince = null;
+            return (found, true);
+        }
+        if (SameSpot(found, locked))
+        {
+            poseSince = null;
+            return (locked, false);
+        }
+        if (poseSince is not { } since || now - since < SettleMs)
+        {
+            poseSince ??= now;
+            return (locked, false);
+        }
+        bool resized = Resized(found, locked);
+        Pose = found;
+        poseSince = null;
+        if (resized)
+        {
+            Line = null;
+            lineSince = null;
+        }
+        return (found, resized);
+    }
+
+    /// <summary>Panelin satır yüksekliği (<see cref="ScreenPhoneCard.MeasuredLine"/>); ölçüm yoksa kilitli değer.</summary>
+    internal double? SteadyLine(double? measured, long now)
+    {
+        if (measured is not { } value || value <= 0) return Line;
+        if (Line is not { } locked)
+        {
+            Line = value;
+            lineSince = null;
+            return value;
+        }
+        if (Math.Abs(value / locked - 1) <= SizeShare)
+        {
+            lineSince = null;
+            return locked;
+        }
+        if (lineSince is not { } since || now - since < SettleMs)
+        {
+            lineSince ??= now;
+            return locked;
+        }
+        Line = value;
+        lineSince = null;
+        return value;
+    }
+
+    /// <summary>Telefon kayboldu: sonraki bulunuşta her şey yeniden ölçülür.</summary>
+    internal void Reset()
+    {
+        Pose = null;
+        Line = null;
+        poseSince = null;
+        lineSince = null;
+    }
+
+    /// <summary>Kenarlar <see cref="PhoneSteady.PoseSlack"/> içinde ya da boy <see cref="SizeShare"/> içinde ve ortası az kaymış.</summary>
+    internal static bool SameSpot(GamePhoneGeometry.Pose a, GamePhoneGeometry.Pose b)
+    {
+        CropRegion x = a.Bounds, y = b.Bounds;
+        if (Math.Abs(x.Left - y.Left) <= PhoneSteady.PoseSlack && Math.Abs(x.Right - y.Right) <= PhoneSteady.PoseSlack
+            && Math.Abs(x.Top - y.Top) <= PhoneSteady.PoseSlack && Math.Abs(x.Bottom - y.Bottom) <= PhoneSteady.PoseSlack) return true;
+        double height = y.Bottom - y.Top, width = y.Right - y.Left;
+        if (height <= 0 || width <= 0 || Resized(a, b)) return false;
+        return Math.Abs((x.Top + x.Bottom) - (y.Top + y.Bottom)) / 2 <= MoveShare * height
+            && Math.Abs((x.Left + x.Right) - (y.Left + y.Right)) / 2 <= 2 * MoveShare * width;
+    }
+
+    /// <summary>Telefonun boyu belirgin değişti mi.</summary>
+    internal static bool Resized(GamePhoneGeometry.Pose a, GamePhoneGeometry.Pose b)
+    {
+        double x = a.Bounds.Bottom - a.Bounds.Top, y = b.Bounds.Bottom - b.Bounds.Top;
+        return y <= 0 || Math.Abs(x / y - 1) > SizeShare;
     }
 }

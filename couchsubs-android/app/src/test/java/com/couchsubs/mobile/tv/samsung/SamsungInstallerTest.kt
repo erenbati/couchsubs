@@ -13,6 +13,15 @@ import java.nio.file.Files
 
 /** Samsung kurulum hatalarının ayrımı ve eski kopyayı kaldırıp yeniden kurma (masaüstündeki SamsungInstallTests'in örnekleri). */
 class SamsungInstallerTest {
+    /** #1158: sessiz sürüm denetimi "TV'de CouchSubs yok"u "liste okunamadı"dan ayırır (iPhone ile aynı kural). */
+    @Test fun installedPresenceSeparatesMissingFromUnknown() {
+        assertEquals(SamsungInstaller.InstalledPresence.Version("0.9.80"), SamsungInstaller.presence("0.9.80", listRead = true, foreign = false))
+        assertEquals(SamsungInstaller.InstalledPresence.Missing, SamsungInstaller.presence(null, listRead = true, foreign = false))
+        assertEquals(SamsungInstaller.InstalledPresence.Unknown, SamsungInstaller.presence(null, listRead = false, foreign = false))
+        // Aynı kimlikle başka bir uygulama: ne "kurulu" ne "yok" denir.
+        assertEquals(SamsungInstaller.InstalledPresence.Unknown, SamsungInstaller.presence("1.0", listRead = true, foreign = true))
+    }
+
     private val success = "Push complete.\napp_id[CouchSubsT.CouchSubs] installing[100]\nspend time for pkgcmd is [1234]ms\ncmd_ret:0"
     private val mismatch = "app_id[CouchSubsT.CouchSubs] install failed[118, -12]\nreason: Check certificate error : :Package with the same id and different certificate has been already installed.:<-12>\ncmd_ret:0"
     private val authorMismatch = "app_id[CouchSubsT.CouchSubs] install failed[118, -11], reason: Author certificate not match :"

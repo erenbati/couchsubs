@@ -231,7 +231,16 @@ public static class GameName
             previous = rune;
             hasPrevious = true;
         }
-        var words = text.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(w => Roman.GetValueOrDefault(w) ?? w).ToList();
+        var rawWords = text.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // Preserve literal franchise letters but keep established Roman sequel keys.
+        var megaManX = rawWords.Length >= 3 && rawWords[0] == "mega" && rawWords[1] == "man" && rawWords[2] == "x";
+        var words = rawWords.Select((w, i) =>
+        {
+            var next = i + 1 < rawWords.Length ? rawWords[i + 1] : "";
+            var literal = (w == "x" && ((megaManX && i == 2) || next == "men"))
+                || (w == "v" && next == "rally");
+            return literal ? w : Roman.GetValueOrDefault(w) ?? w;
+        }).ToList();
         if (words.Count > 1 && words[0] == "the") words.RemoveAt(0);
         var joined = " " + string.Join(' ', words) + " ";
         foreach (var (longName, shortName) in Aliases)
