@@ -100,4 +100,46 @@ class PromoPolicyTest {
         assertFalse(PromoPolicy.shouldShow(popup { it.copy(link = "") }, never, now, idle))
         assertFalse(PromoPolicy.shouldShow(popup { it.copy(id = "") }, never, now, idle))
     }
+
+    private val bundledJson = """
+        {"popups":[{"id":"enmera-commerce-demo-1","image":"popup-enmera.jpg",
+          "link":"https://enmera.com.tr/urunler/enmera-commerce?utm_source=couchsubs&utm_medium=app&utm_campaign=popup",
+          "alt":"Enmera Commerce: Ücretsiz demo"}],"ads":[]}
+    """.trimIndent()
+
+    /** promo.json indirilemezse uygulamayla gelen reklam (reklamlar.json › popups[0]): aynı kurallar (iPhone ile aynı). */
+    @Test
+    fun bundledPopupFollowsTheSameRules() {
+        val popup = PromoPolicy.parseBundled(bundledJson)!!
+        assertTrue(popup.bundled)
+        assertEquals("popup-enmera.jpg", popup.image)
+        assertEquals(setOf("android"), popup.targets)
+        // Görsel adres değil; paketteki ad yeter.
+        assertTrue(PromoPolicy.shouldShow(popup, never, now, idle))
+        // Günde en çok bir kez.
+        val shown = PromoRecord(popup.id, now - 2 * hour)
+        assertFalse(PromoPolicy.shouldShow(popup, shown, now, idle))
+        assertTrue(PromoPolicy.shouldShow(popup, shown.copy(shownAtMs = now - 24 * hour), now, idle))
+        // Çeviri sürerken ya da kurulumda açılmaz.
+        assertFalse(PromoPolicy.shouldShow(popup, never, now, idle.copy(sessionActive = true)))
+        assertFalse(PromoPolicy.shouldShow(popup, never, now, idle.copy(onboarding = true)))
+    }
+
+    @Test
+    fun brokenBundledPopupIsNull() {
+        assertNull(PromoPolicy.parseBundled("bozuk"))
+        assertNull(PromoPolicy.parseBundled("""{"popups":[]}"""))
+        assertNull(PromoPolicy.parseBundled(bundledJson.replace("popup-enmera.jpg", "")))
+        assertNull(PromoPolicy.parseBundled(bundledJson.replace("popup-enmera.jpg", "../popup-enmera.jpg")))
+        assertNull(PromoPolicy.parseBundled(bundledJson.replace("https://enmera", "http://enmera")))
+        assertNull(PromoPolicy.parseBundled(bundledJson.replace("enmera-commerce-demo-1", "")))
+    }
+
+    @Test
+    fun adBandHiddenWhileTranslating() {
+        assertTrue(PromoPolicy.adBandVisible(appPage = true, translating = false, demo = false))
+        assertFalse(PromoPolicy.adBandVisible(appPage = true, translating = true, demo = false))
+        assertFalse(PromoPolicy.adBandVisible(appPage = true, translating = false, demo = true))
+        assertFalse(PromoPolicy.adBandVisible(appPage = false, translating = false, demo = false))
+    }
 }

@@ -123,24 +123,53 @@ public class XboxSessionHealthTests
         var plan = new XboxRetryPlan();
         Assert.Equal(5000, plan.Failed(false, noFirstFrame: true, streamedMs: null));
         plan.PictureArrived();
-        // Görüntü geldi, 10 sn sonra kesildi: sıradan kopma, ikinci deneme.
-        Assert.Equal(15000, plan.Failed(false, noFirstFrame: false, streamedMs: 10_000));
-        Assert.Equal(45000, plan.Failed(false, noFirstFrame: true, streamedMs: null));
+        // Görüntü geldi, bir dakikadan uzun sürdü: görüntüsüz bağlantı dizisi baştan sayılır, bu görüntüsüz bağlantı durdurmaz.
+        Assert.Equal(5000, plan.Failed(false, noFirstFrame: true, streamedMs: XboxRetryPlan.HealthyStreamMs));
         Assert.Null(plan.Failed(false, noFirstFrame: false, streamedMs: null));
     }
 
+    /// <summary>
+    /// Gerçek kopmada en çok bir kez, geri çekilerek (5 sn) yeniden bağlanılır; o da kopunca durulur. Eskiden 5, 15, 45 sn
+    /// aralarla üç deneme vardı, her biri Xbox'ta "uzaktan yürütme başlatıldı / durduruldu" bildirimi çıkarıyordu (Play,
+    /// Android beta.85). CouchSubsCore ve Android'deki aynı adlı testle aynı.
+    /// </summary>
     [Fact]
-    public void OtherFailuresKeepThreeRetriesAndHealthyStreamResets()
+    public void RealDropReconnectsAtMostOnceWithBackoff()
+    {
+        var plan = new XboxRetryPlan();
+        plan.PictureArrived();
+        Assert.Equal(5000, plan.Failed(false, false, 120_000));
+        Assert.Equal(1, plan.Failures);
+        // Yeniden bağlanma da kısa sürede koptu: ikinci deneme yok.
+        plan.PictureArrived();
+        Assert.Null(plan.Failed(false, false, 10_000));
+        // Bağlanırken hata (görüntü hiç gelmedi): yine en çok bir deneme.
+        var fresh = new XboxRetryPlan();
+        Assert.Equal(5000, fresh.Failed(false, false, null));
+        Assert.Null(fresh.Failed(false, false, null));
+        Assert.Null(new XboxRetryPlan().Failed(permanent: true, noFirstFrame: false, streamedMs: null));
+    }
+
+    [Fact]
+    public void HealthyStreamResetsRetries()
     {
         var plan = new XboxRetryPlan();
         Assert.Equal(5000, plan.Failed(false, false, null));
-        Assert.Equal(15000, plan.Failed(false, false, null));
         // Bir dakikadan uzun süren yayın: yeni dizi.
         Assert.Equal(5000, plan.Failed(false, false, XboxRetryPlan.HealthyStreamMs));
-        Assert.Equal(15000, plan.Failed(false, false, null));
-        Assert.Equal(45000, plan.Failed(false, false, null));
-        Assert.Null(plan.Failed(false, false, null));
-        Assert.Null(new XboxRetryPlan().Failed(permanent: true, noFirstFrame: false, streamedMs: null));
+        // Kısa süren yayın sayacı sıfırlamaz.
+        Assert.Null(plan.Failed(false, false, 1_000));
+    }
+
+    /// <summary>Görüntü akarken başarısız canlı tutma (404 dahil) yayını kapatmaz; görüntü durmuşsa eskisi gibi kapatır.</summary>
+    [Fact]
+    public void KeepaliveFailureDoesNotEndAFlowingStream()
+    {
+        Assert.False(XboxKeepalive.ShouldEnd(gone: true, exhausted: false, pictureFlowing: true));
+        Assert.False(XboxKeepalive.ShouldEnd(gone: false, exhausted: true, pictureFlowing: true));
+        Assert.True(XboxKeepalive.ShouldEnd(gone: true, exhausted: false, pictureFlowing: false));
+        Assert.True(XboxKeepalive.ShouldEnd(gone: false, exhausted: true, pictureFlowing: false));
+        Assert.False(XboxKeepalive.ShouldEnd(gone: false, exhausted: false, pictureFlowing: false));
     }
 
     [Fact]

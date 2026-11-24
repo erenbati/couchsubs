@@ -527,17 +527,18 @@ final class SubtitlePipelineTests: XCTestCase {
         XCTAssertEqual(sender.sent, ["TR: Hold the gate.", "TR: Run!", "TR: Get down!"])
     }
 
-    /// Sıra dolunca en eski bekleyen satır atlanır; kuyruk konuşma hızıyla büyümez.
+    /// Sıra dolunca (4 satır, #893) en eski bekleyen satır atlanır; kuyruk konuşma hızıyla büyümez.
     func testOldestWaitingLineIsSkippedWhenTheQueueIsFull() async {
         let clock = PipelineClock()
         let translator = GatedTranslator()
-        let pipeline = SubtitlePipeline(reader: FakeReader(["Hold the gate.", "Run!", "Get down!", "Now!"]), translator: translator,
-                                        server: FakeSender(), clock: clock.read)
-        await run(pipeline, 4, wait: false, clock: clock)
+        let lines = ["Hold the gate.", "Run!", "Get down!", "Now!", "Over here!", "Go left!"]
+        XCTAssertEqual(lines.count, SubtitlePipeline.maxWaiting + 2)
+        let pipeline = SubtitlePipeline(reader: FakeReader(lines), translator: translator, server: FakeSender(), clock: clock.read)
+        await run(pipeline, lines.count, wait: false, clock: clock)
         await translator.release("Hold the gate.")
         translator.open()
         await pipeline.waitForTranslations()
-        XCTAssertEqual(translator.requested, ["Hold the gate.", "Get down!", "Now!"])
+        XCTAssertEqual(translator.requested, ["Hold the gate.", "Get down!", "Now!", "Over here!", "Go left!"])
     }
 
     /// Yavaş çeviride (ücretsiz motor) art arda üç satırın çevirisi satırlar kalktıktan iki saniye sonra gelse de
@@ -614,8 +615,9 @@ final class SubtitlePipelineTests: XCTestCase {
         XCTAssertEqual(sender.sent, ["TR: Run to"])
     }
 
-    /// Yeni satır gelmiş, eskisinin çevirisi bir saniyeden geç gelmişse gösterilmez; yeni satırınki gösterilir.
-    func testLateTranslationOfReplacedLineIsDropped() async {
+    /// Yeni satır gelmiş, eskisinin çevirisi geç gelse de yeni satırınkinden önce gösterilir (GitHub #893: yapay zekâ
+    /// çevirisinde satırlar kayboluyordu; Windows ve Android ile aynı).
+    func testLateTranslationOfReplacedLineIsShownBeforeTheNewOne() async {
         let sender = FakeSender()
         let clock = PipelineClock()
         let translator = GatedTranslator()
@@ -623,6 +625,21 @@ final class SubtitlePipelineTests: XCTestCase {
                                         clock: clock.read)
         await run(pipeline, 2, wait: false, clock: clock)
         clock.now += SubtitlePipeline.lateResultMs + 100
+        await translator.release("Hold the gate.")
+        await translator.release("Run!")
+        await pipeline.waitForTranslations()
+        XCTAssertEqual(sender.sent, ["TR: Hold the gate.", "TR: Run!"])
+    }
+
+    /// Yeni satır gelmiş, eskisinin çevirisi beklenebilecek en uzun süreden de geç gelmişse gösterilmez.
+    func testVeryLateTranslationOfReplacedLineIsDropped() async {
+        let sender = FakeSender()
+        let clock = PipelineClock()
+        let translator = GatedTranslator()
+        let pipeline = SubtitlePipeline(reader: FakeReader(["Hold the gate.", "Run!"]), translator: translator, server: sender,
+                                        clock: clock.read)
+        await run(pipeline, 2, wait: false, clock: clock)
+        clock.now += SubtitlePipeline.queuedLateResultMs + 100
         await translator.release("Hold the gate.")
         await translator.release("Run!")
         await pipeline.waitForTranslations()
@@ -675,6 +692,8 @@ final class SubtitlePipelineTests: XCTestCase {
 
     private let old = "Hold the gate."
     private let next = "Run!"
+    /// Yeni satır bu kadar kare (50 ms) sürünce eski satır beklenebilecek en uzun süreyi (`queuedLateResultMs`, #893) aşar.
+    private var expired: Int { SubtitlePipeline.queuedLateResultMs / 50 + 4 }
 
     /// Yeni satır gösterilmeden eski üretimin iptal edilip edilmediğini beklemeden yoklamak için.
     private func waitUntil(_ condition: () -> Bool) async {
@@ -687,8 +706,8 @@ final class SubtitlePipelineTests: XCTestCase {
         let sender = FakeSender()
         let clock = PipelineClock()
         let translator = CancelAwareTranslator()
-        let pipeline = SubtitlePipeline(reader: FakeReader(lines((old, 1), (next, 60))), translator: translator, server: sender, clock: clock.read)
-        await run(pipeline, 61, wait: false, clock: clock)
+        let pipeline = SubtitlePipeline(reader: FakeReader(lines((old, 1), (next, expired))), translator: translator, server: sender, clock: clock.read)
+        await run(pipeline, expired + 1, wait: false, clock: clock)
         await waitUntil { translator.requested.count == 2 }
         XCTAssertEqual(translator.cancelled, [old])
         translator.open()
@@ -741,8 +760,8 @@ final class SubtitlePipelineTests: XCTestCase {
         let sender = FakeSender()
         let clock = PipelineClock()
         let translator = GatedTranslator()
-        let pipeline = SubtitlePipeline(reader: FakeReader(lines((old, 1), (next, 60))), translator: translator, server: sender, clock: clock.read)
-        await run(pipeline, 61, wait: false, clock: clock)
+        let pipeline = SubtitlePipeline(reader: FakeReader(lines((old, 1), (next, expired))), translator: translator, server: sender, clock: clock.read)
+        await run(pipeline, expired + 1, wait: false, clock: clock)
         XCTAssertEqual(translator.requested, [old])
         translator.open()
         await pipeline.waitForTranslations()
@@ -784,9 +803,9 @@ final class SubtitlePipelineTests: XCTestCase {
         let sender = FakeSender()
         let clock = PipelineClock()
         let translator = CancelAwareTranslator()
-        let pipeline = SubtitlePipeline(reader: FakeReader(lines((old, 1), (next, 60), (old, 1))), translator: translator, server: sender,
+        let pipeline = SubtitlePipeline(reader: FakeReader(lines((old, 1), (next, expired), (old, 1))), translator: translator, server: sender,
                                         clock: clock.read)
-        await run(pipeline, 62, wait: false, clock: clock)
+        await run(pipeline, expired + 2, wait: false, clock: clock)
         translator.open()
         await pipeline.waitForTranslations()
         XCTAssertEqual(translator.cancelled, [old])

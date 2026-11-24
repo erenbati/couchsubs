@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -49,6 +50,9 @@ class IosTvPackageCacheTests(unittest.TestCase):
         cache.mkdir(parents=True)
         mock.mkdir()
         output.mkdir()
+        if extra and extra.get("IOS_TV_WGT_FAIL"):
+            (output / "tv").mkdir()
+            (output / "tv/couchsubs-samsung.wgt").write_bytes(b"previous good Samsung installer")
 
         (cache / "couchsubs-androidtv.apk").write_bytes(b"previous-apk")
         (cache / "couchsubs-lg.ipk").write_bytes(b"previous-ipk")
@@ -100,6 +104,15 @@ def fixture(request, timeout=60):
         return Response(ipk)
     raise AssertionError(url)
 urllib.request.urlopen = fixture
+if os.environ.get('IOS_TV_WGT_FAIL'):
+    OriginalZip = zipfile.ZipFile
+    class FailingWgtZip(OriginalZip):
+        def __init__(self, file, mode='r', *args, **kwargs):
+            if isinstance(file, (str, bytes, os.PathLike)) and 'couchsubs-samsung' in os.fspath(file) and mode == 'w':
+                with open(file, 'wb') as output: output.write(b'partial zip bytes')
+                raise OSError('simulated Samsung archive write failure')
+            super().__init__(file, mode, *args, **kwargs)
+    zipfile.ZipFile = FailingWgtZip
 ''',
             encoding="utf-8",
         )
@@ -138,6 +151,13 @@ urllib.request.urlopen = fixture
         self.assertEqual((output / "couchsubs-lg.ipk").read_bytes(), b"previous-ipk")
         output_properties = (output / "tv-packages.properties").read_text(encoding="utf-8")
         self.assertIn(expected_properties, output_properties)
+
+    def test_failed_samsung_zip_build_preserves_previous_iphone_installer(self) -> None:
+        _, output, result = self.run_build(extra={"IOS_TV_WGT_FAIL": "1"})
+        self.assertNotEqual(result.returncode, 0, "injected ZIP failure should stop bundling")
+        self.assertEqual((output / "couchsubs-samsung.wgt").read_bytes(),
+                         b"previous good Samsung installer",
+                         "a failed new ZIP must not corrupt the last working iPhone-bundled WGT")
 
     def test_ipk_download_failure_keeps_previous_release_pair(self) -> None:
         cache, output, result = self.run_build("download")
@@ -214,27 +234,35 @@ class CheckTvPackagesTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.dir = Path(temp.name)
 
+    def make_installer(self, filename: str) -> None:
+        target = self.dir / filename
+        if target.suffix in (".apk", ".wgt"):
+            with zipfile.ZipFile(target, "w") as archive:
+                archive.writestr("fixture.txt", "synthetic valid installer container")
+        else:
+            target.write_bytes(b"x")
+
     def test_desktop_folder_with_current_packages_passes(self) -> None:
-        (self.dir / ("com.couchsubs.tv_" + self.source["ipk"] + "_all.ipk")).write_bytes(b"x")
-        (self.dir / ("couchsubs-samsung_" + self.source["wgt"] + ".wgt")).write_bytes(b"x")
-        (self.dir / ("couchsubs-androidtv_" + self.source["apk"] + ".apk")).write_bytes(b"x")
+        self.make_installer("com.couchsubs.tv_" + self.source["ipk"] + "_all.ipk")
+        self.make_installer("couchsubs-samsung_" + self.source["wgt"] + ".wgt")
+        self.make_installer("couchsubs-androidtv_" + self.source["apk"] + ".apk")
         self.assertEqual(self.check.problems(self.dir), [])
 
     def test_desktop_folder_with_an_old_ipk_fails(self) -> None:
-        (self.dir / "com.couchsubs.tv_0.9.63_all.ipk").write_bytes(b"x")
-        (self.dir / ("couchsubs-samsung_" + self.source["wgt"] + ".wgt")).write_bytes(b"x")
+        self.make_installer("com.couchsubs.tv_0.9.63_all.ipk")
+        self.make_installer("couchsubs-samsung_" + self.source["wgt"] + ".wgt")
         self.assertEqual(self.check.problems(self.dir, allow_missing=("apk",)),
                          ["LG (.ipk) paketi 0.9.63, kaynaktaki TV uygulaması " + self.source["ipk"]])
 
     def test_missing_package_fails_unless_allowed(self) -> None:
-        (self.dir / ("com.couchsubs.tv_" + self.source["ipk"] + "_all.ipk")).write_bytes(b"x")
-        (self.dir / ("couchsubs-samsung_" + self.source["wgt"] + ".wgt")).write_bytes(b"x")
+        self.make_installer("com.couchsubs.tv_" + self.source["ipk"] + "_all.ipk")
+        self.make_installer("couchsubs-samsung_" + self.source["wgt"] + ".wgt")
         self.assertEqual(len(self.check.problems(self.dir)), 1)
         self.assertEqual(self.check.problems(self.dir, allow_missing=("apk",)), [])
 
     def test_iphone_bundle_properties_are_read(self) -> None:
         for name in ("couchsubs-lg.ipk", "couchsubs-samsung.wgt", "couchsubs-androidtv.apk"):
-            (self.dir / name).write_bytes(b"x")
+            self.make_installer(name)
         (self.dir / "tv-packages.properties").write_text(
             "couchsubs-samsung.wgt.version=" + self.source["wgt"] + "\n"
             "release=v0.1.0-beta.79\n"

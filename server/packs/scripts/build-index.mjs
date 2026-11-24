@@ -37,4 +37,9 @@ const packs = readdirSync(dir)
     return { id, title, version, sha256: createHash("sha256").update(data).digest("hex"), size: data.length, entries };
   });
 
+// Pack archives live in private R2 and are not checked into this repository.
+// An empty local folder must not produce a publishable index: clients treat
+// { packs: [] } as a request to remove all their downloaded game packs.
+if (packs.length === 0) throw new Error("No game pack archives found; fetch the private packs before building index.json");
+
 process.stdout.write(JSON.stringify({ packs }, null, 2) + "\n");

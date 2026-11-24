@@ -31,8 +31,9 @@ public struct PhonePanelView: View {
                         .frame(maxWidth: .infinity)
                 }
                 VStack(spacing: fontSize * 0.45) {
-                    ForEach(panel.messages.indices, id: \.self) { index in
-                        message(panel.messages[index], side: side)
+                    // Anahtarlı liste: en eski mesaj düşünce ya da yenisi eklenince kalan balonlar yeniden yaratılmaz.
+                    ForEach(Self.keys(panel.messages), id: \.self) { key in
+                        message(panel.messages[key.index], side: side)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -52,6 +53,28 @@ public struct PhonePanelView: View {
             }
         }
         .allowsHitTesting(false)
+    }
+
+    /// Mesajın kimliği: parçası, yazısı ve aynı yazının kaçıncı tekrarı (dizin kimliğe girmez).
+    struct Key: Hashable {
+        let part: String, text: String, occurrence: Int
+        let index: Int
+        static func == (a: Key, b: Key) -> Bool { a.part == b.part && a.text == b.text && a.occurrence == b.occurrence }
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(part)
+            hasher.combine(text)
+            hasher.combine(occurrence)
+        }
+    }
+
+    static func keys(_ messages: [ScreenTranslation.Item]) -> [Key] {
+        var seen: [String: Int] = [:]
+        return messages.enumerated().map { index, item in
+            let part = item.panel?.rawValue ?? ""
+            let occurrence = seen[part + "\u{1F}" + item.translation, default: 0]
+            seen[part + "\u{1F}" + item.translation] = occurrence + 1
+            return Key(part: part, text: item.translation, occurrence: occurrence, index: index)
+        }
     }
 
     @ViewBuilder private func message(_ item: ScreenTranslation.Item, side: CGFloat) -> some View {

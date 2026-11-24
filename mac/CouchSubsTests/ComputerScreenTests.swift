@@ -48,7 +48,8 @@ final class ComputerScreenTests: XCTestCase {
         model.step = .tv
         XCTAssertFalse(model.canAdvance)
         model.useComputerScreen()
-        XCTAssertEqual(model.step, .test)
+        // TV yokken TV girişi adımı sorulmaz; sıradaki adım "Daha İyi Çeviri".
+        XCTAssertEqual(model.step, .betterTranslation)
         XCTAssertEqual(model.settings.output, .computer)
         XCTAssertEqual(services.pairCount, 0)
         XCTAssertNil(model.tv)
@@ -61,9 +62,10 @@ final class ComputerScreenTests: XCTestCase {
         // PS5 kayıtlı ama kurulum bitmemiş: sihirbaz TV adımından sürer.
         XCTAssertEqual(model.step, .tv)
         model.useComputerScreen()
-        // Deneme ve isteğe bağlı "Daha iyi çeviri" adımları (Windows'taki testle aynı).
-        model.advance()
+        // İsteğe bağlı "Daha İyi Çeviri" ve deneme adımları (yeni arayüzün sırası).
         XCTAssertEqual(model.step, .betterTranslation)
+        model.advance()
+        XCTAssertEqual(model.step, .test)
         model.advance()
         XCTAssertEqual(model.step, .done)
         XCTAssertEqual(AppModel(services: FakeServices(), store: store, defaults: defaults).step, .done)
@@ -114,7 +116,7 @@ final class ComputerScreenTests: XCTestCase {
         XCTAssertTrue(alone.canStart)
     }
 
-    /// "Örtsün": yeri gelmeyen satır son bilinen yeri örter; yazı boyu bir kademeden fazla küçülmez ve geri zıplamaz.
+    /// "Örtsün": yeri gelmeyen satır son bilinen yeri örter; yazı boyu hep seçilen boyda (uzun satırda da küçülmez).
     func testCoverKeepsTheLastBoxAndAStableFontScale() {
         let model = AppModel(services: FakeServices(), store: storeWithoutTV(), defaults: .isolated())
         model.settings.output = .computer
@@ -126,9 +128,9 @@ final class ComputerScreenTests: XCTestCase {
         let long = String(repeating: "Annenin arabası demiştin hani, unuttun mu yoksa? ", count: 4)
         model.overlayReceive(.subtitle(text: long, durationMs: 4000, paragraphs: false))
         XCTAssertEqual(model.overlayCover?.box, box)
-        XCTAssertEqual(model.overlayCover?.scale, CoverFontScale.step)
+        XCTAssertEqual(model.overlayCover?.scale, 1)
         model.overlayReceive(.subtitle(text: "Evet.", durationMs: 4000, paragraphs: false))
-        XCTAssertEqual(model.overlayCover?.scale, CoverFontScale.step)
+        XCTAssertEqual(model.overlayCover?.scale, 1)
     }
 
     func testTVOnlyWithoutTVCannotStart() async {

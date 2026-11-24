@@ -21,6 +21,8 @@ import java.util.concurrent.TimeoutException
 class MlKitTranslator(
     private val cache: TranslationCache = TranslationCache(),
     private val glossary: Glossary = Glossary.Empty,
+    /** Oyunun dili (Ayarlar › Konsol ve Kaynak › Oyunun dili; en, ja, de, fr, es). */
+    source: String = "en",
 ) : TextTranslator, AutoCloseable {
     companion object {
         /** Kalıcı önbellek dosyasındaki motor adı; metin hattı değişince ([FreeTranslation.PIPELINE_VERSION]) bu da değişir. */
@@ -28,7 +30,8 @@ class MlKitTranslator(
     }
 
     private val translator = Translation.getClient(
-        TranslatorOptions.Builder().setSourceLanguage(TranslateLanguage.ENGLISH).setTargetLanguage(TranslateLanguage.TURKISH).build()
+        TranslatorOptions.Builder().setSourceLanguage(TranslateLanguage.fromLanguageTag(source) ?: TranslateLanguage.ENGLISH)
+            .setTargetLanguage(TranslateLanguage.TURKISH).build()
     )
     private val line = FreeLineTranslator(cache, glossary, engine = ::machine)
 

@@ -20,6 +20,13 @@ private final class FakeStream: StreamControlling {
     var hasGivenUp = false
 }
 
+private final class FakeKeeper: KeeperControlling {
+    private(set) var running = false
+    func start(interval: Duration) { running = true }
+    func stop() { running = false }
+    func reconnect() {}
+}
+
 private final class FakeServices: PhoneServices {
     var registerResult: Result<RegisteredConsole, Error> = .success(RegisteredConsole(host: "192.168.1.20", name: "PS5", registKey: Data(), morning: Data()))
     var launched = true
@@ -28,13 +35,19 @@ private final class FakeServices: PhoneServices {
     func discoverConsoles() async -> [ConsoleInfo] { [ConsoleInfo(host: "192.168.1.20", name: "PS5", isAwake: true)] }
     func accountId(fromRedirect url: URL) async throws -> Data { Data([1, 2, 3]) }
     func register(host: String, accountId: Data, pin: UInt32) async throws -> RegisteredConsole { try registerResult.get() }
-    func discoverTVs() async -> [LGTV] { [] }
+    /// Ağda bulunan TV'ler ve yanıt vermeyen adresler (gerçek ağa çıkılmaz).
+    var tvs: [LGTV] = []
+    var silentHosts: Set<String> = []
+    private(set) var searches = 0
+    func discoverTVs() async -> [LGTV] { searches += 1; return tvs }
+    func tvResponds(host: String, brand: TVBrand) async -> Bool { !silentHosts.contains(host) }
     var paired: [LGTV] = []
     func pairTV(_ tv: LGTV, key: String?, server: String, accessKey: String) async throws -> TVPairing {
         paired.append(tv)
         return TVPairing(key: "key", launched: launched)
     }
-    func identifyTV(host: String) async -> LGTV? { LGTV(name: "Samsung TV", host: host, brand: .samsung) }
+    var identify: (String) -> LGTV? = { LGTV(name: "Samsung TV", host: $0, brand: .samsung) }
+    func identifyTV(host: String) async -> LGTV? { identify(host) }
     var streamPasscodes: [String?] = []
     func makeStream(console: RegisteredConsole, accountId: Data, loginPasscode: String?) -> StreamControlling {
         streamPasscodes.append(loginPasscode)
@@ -43,7 +56,15 @@ private final class FakeServices: PhoneServices {
     func makeKeeper(tv: LGTV, key: String?, params: [String: Any], appConnected: @escaping @Sendable () -> Bool,
                     onMoved: @escaping (LGTV) -> Void, onKey: @escaping @Sendable (String) -> Void,
                     consolePort: @escaping @Sendable () -> Int?,
-                    onOpenResult: @escaping @Sendable (TVOpenProblem?) -> Void) -> KeeperControlling { IdleKeeper() }
+                    onOpenResult: @escaping @Sendable (TVOpenProblem?) -> Void) -> KeeperControlling {
+        let keeper = FakeKeeper()
+        keepers.append((tv, keeper))
+        openResults.append(onOpenResult)
+        return keeper
+    }
+    /// Kurulan her bekçi ve kurulduğu TV kaydı.
+    var keepers: [(tv: LGTV, keeper: FakeKeeper)] = []
+    var openResults: [@Sendable (TVOpenProblem?) -> Void] = []
     func checkDeepLKey(_ key: String) async -> OnlineKeyCheck {
         key == "good" ? OnlineKeyCheck(state: .valid, used: 12_345, limit: 500_000) : OnlineKeyCheck(state: .invalid)
     }
@@ -62,7 +83,7 @@ final class PhoneModelTests: XCTestCase {
 
     override func setUp() {
         services = FakeServices()
-        defaults = UserDefaults(suiteName: "PhoneModelTests-\(UUID().uuidString)")
+        defaults = scratchDefaults("PhoneModelTests")
     }
 
     private func makeModel() -> PhoneModel { PhoneModel(services: services, store: EphemeralStore(), defaults: defaults) }
@@ -112,6 +133,51 @@ final class PhoneModelTests: XCTestCase {
         XCTAssertTrue(model.hasTV)
         XCTAssertTrue(model.tvAppMissing)
         XCTAssertEqual(model.settings.output, .tv)
+    }
+
+    /// #985: Android TV DHCP'den yeni adres aldı. Kurulum TV'yi yeni adreste bulup kaydı güncelliyordu ama çeviri sürerken
+    /// çalışan bekçi eski adresi tutuyor, TV uygulaması hep eski adreste açılmaya çalışılıyordu. Bekçi yeni adresle yeniden
+    /// kurulur; eski bekçinin geç gelen açma sonucu yok sayılır.
+    func testAndroidTVKeeperFollowsTheNewAddressAfterInstall() async throws {
+        let model = makeModel()
+        try await model.completePSNLogin(redirect: URL(string: "https://example.com")!)
+        try await model.register(host: "192.168.1.20", pin: "12345678")
+        try await model.pair(LGTV(name: "Android TV", host: "192.168.1.40", brand: .androidTV))
+        await model.start()
+        XCTAssertEqual(services.keepers.map { $0.tv.host }, ["192.168.1.40"])
+        let stale = try XCTUnwrap(services.openResults.first)
+
+        await model.tvAppInstalled(brand: .androidTV, host: "192.168.1.41", port: nil, version: "0.9.76")
+        XCTAssertEqual(model.tv?.host, "192.168.1.41")
+        XCTAssertEqual(services.keepers.map { $0.tv.host }, ["192.168.1.40", "192.168.1.41"])
+        XCTAssertFalse(services.keepers[0].keeper.running)
+        XCTAssertTrue(services.keepers[1].keeper.running)
+        stale(.unreachable)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertNil(model.tvOpenProblem)
+
+        // Aynı adreste yeniden kurulum bekçiyi yenilemez.
+        await model.tvAppInstalled(brand: .androidTV, host: "192.168.1.41", port: nil, version: "0.9.76")
+        XCTAssertEqual(services.keepers.count, 2)
+        model.stop()
+    }
+
+    /// #1158: uygulama TV'den silinince telefon onu "kurulu" gösteriyor, kurulum önerilmiyordu. TV "CouchSubs yok" deyince
+    /// kayıt silinir, ana ekran kurulumu önerir; başka TV'nin bildirimi kayda dokunmaz.
+    func testSamsungAppMissingForgetsTheInstalledRecord() async throws {
+        let model = makeModel()
+        await model.tvAppInstalled(brand: .samsung, host: "192.168.1.50", port: nil, version: "0.9.80")
+        XCTAssertEqual(model.installedTVApp?.version, "0.9.80")
+        XCTAssertTrue(SamsungAppKnowledge.shared.isKnown(host: "192.168.1.50"))
+        XCTAssertFalse(model.tvAppMissing)
+        model.samsungAppMissing(host: "192.168.1.99")
+        XCTAssertNotNil(model.installedTVApp)
+        model.samsungAppMissing(host: " 192.168.1.50 ")
+        XCTAssertNil(model.installedTVApp)
+        XCTAssertNil(defaults.data(forKey: StoreKey.tvAppInstalled))
+        XCTAssertFalse(SamsungAppKnowledge.shared.isKnown(host: "192.168.1.50"))
+        XCTAssertTrue(model.tvAppMissing)
+        model.stop()
     }
 
     private func pairCall(_ method: String, _ model: PhoneModel, _ query: String = "") async throws -> (Int, [String: String]) {
@@ -377,9 +443,9 @@ final class PhoneModelTests: XCTestCase {
         XCTAssertEqual(model.settings.translationEngine, .free)
     }
 
-    /// "GTA 6'daki telefonu otomatik çevir": kapalı gelir; yalnız çeviri sürerken, ayar açıkken ve oyun GTA 6 iken izlenir.
+    /// "GTA 6'daki telefonu otomatik çevir": açık gelir (#1202); yalnız çeviri sürerken, ayar açıkken ve oyun GTA 6 iken izlenir.
     func testGamePhoneIsTrackedOnlyInGTA6WhenTurnedOn() {
-        XCTAssertFalse(UserSettings().autoReadGamePhone)
+        XCTAssertTrue(UserSettings().autoReadGamePhone)
         XCTAssertTrue(PhoneModel.tracksGamePhone(running: true, enabled: true, game: "Grand Theft Auto VI"))
         XCTAssertTrue(PhoneModel.tracksGamePhone(running: true, enabled: true, game: "GTA 6"))
         XCTAssertFalse(PhoneModel.tracksGamePhone(running: true, enabled: false, game: "GTA 6"))
@@ -420,5 +486,117 @@ final class PhoneModelTests: XCTestCase {
         model.removeKey(.deepL)
         let removed = await model.deepLUsage()
         XCTAssertNil(removed)
+    }
+}
+
+// MARK: - TV'nin adresi değişince yeniden bulma (Mac, Windows ve Android ile aynı senaryolar)
+
+@MainActor
+final class TVRelocationTests: XCTestCase {
+    private var services: FakeServices!
+    private var defaults: UserDefaults!
+    private let old = "192.168.1.238"
+    private let new = "192.168.1.156"
+
+    override func setUp() {
+        services = FakeServices()
+        defaults = scratchDefaults("TVRelocationTests")
+    }
+
+    private func pairedModel() async throws -> PhoneModel {
+        let model = PhoneModel(services: services, store: EphemeralStore(), defaults: defaults)
+        try await model.pair(LGTV(name: "LG TV", host: old, brand: .lg))
+        return model
+    }
+
+    /// beta.89: kayıtlı adres sessiz, TV ağda yeni adreste. Kart kendiliğinden bulur, kayıt (ve kartta adres) güncellenir.
+    func testSilentSavedTVIsFoundAtItsNewAddress() async throws {
+        let model = try await pairedModel()
+        services.silentHosts = [old]
+        services.tvs = [LGTV(name: "LG TV", host: new, brand: .lg)]
+        await model.checkTVReachable()
+        XCTAssertEqual(model.tv?.host, new)
+        XCTAssertFalse(model.tvNotResponding)
+        XCTAssertEqual(model.tvStatusText, String(localized: "Waiting for the TV app"))
+    }
+
+    func testRespondingTVIsNotSearched() async throws {
+        let model = try await pairedModel()
+        await model.checkTVReachable()
+        XCTAssertEqual(services.searches, 0)
+        XCTAssertFalse(model.tvNotResponding)
+        XCTAssertEqual(model.tv?.host, old)
+    }
+
+    /// Bulunamazsa "TV uygulaması bekleniyor" denmez; ağ en çok 30 sn'de bir aranır.
+    func testSilentTVNotFoundSaysNotResponding() async throws {
+        let model = try await pairedModel()
+        services.silentHosts = [old]
+        await model.checkTVReachable()
+        XCTAssertTrue(model.tvNotResponding)
+        XCTAssertEqual(model.tvStatusText, String(localized: "Not responding — searching again…"))
+        XCTAssertEqual(model.tv?.host, old)
+        await model.checkTVReachable()
+        XCTAssertEqual(services.searches, 1, "Ağ her yoklamada aranmaz")
+    }
+
+    /// "TV'yi Eşleştir" eşli TV'ye ulaşamazsa açık hata; "TV'yi Yeniden Ara" beklemeden arar ve bulunca hata kalkar.
+    func testPairButtonShowsErrorAndSearchAgainFindsTV() async throws {
+        let model = try await pairedModel()
+        services.silentHosts = [old]
+        await model.openTVPairing()
+        XCTAssertEqual(model.tvUnreachableHost, old)
+        services.tvs = [LGTV(name: "LG TV", host: new, brand: .lg)]
+        await model.searchTVAgain()
+        XCTAssertNil(model.tvUnreachableHost)
+        XCTAssertEqual(model.tv?.host, new)
+    }
+
+    /// "IP Adresi Gir": yazılan adreste aynı marka TV tanınırsa eşli TV o adrese taşınır; tanınmazsa taşınmaz.
+    func testTypedAddressMovesPairedTV() async throws {
+        let model = try await pairedModel()
+        services.identify = { _ in nil }
+        let rejected = await model.useTVAddress("192.168.1.99")
+        XCTAssertFalse(rejected)
+        XCTAssertEqual(model.tv?.host, old)
+        services.identify = { LGTV(name: "LG webOS TV", host: $0, brand: .lg) }
+        let used = await model.useTVAddress(" 192.168.1.156 ")
+        XCTAssertTrue(used)
+        XCTAssertEqual(model.tv, LGTV(name: "LG TV", host: new, brand: .lg))
+    }
+
+    func testRemovePairingForgetsTheTV() async throws {
+        let model = try await pairedModel()
+        model.removeTVPairing()
+        XCTAssertNil(model.tv)
+        XCTAssertFalse(model.hasTV)
+        XCTAssertEqual(model.settings.output, .computer)
+    }
+
+    /// Kurulum ("TV uygulamasını güncelle" dahil) kayıtlı adres sessizse TV'yi ağda arar; bulamazsa "yanıt vermiyor" (nil),
+    /// "Key Server kapalı" denmez. Yanıt veren adres olduğu gibi kullanılır.
+    func testInstallTargetFollowsTheTV() async throws {
+        let model = try await pairedModel()
+        let here = await model.relocateForInstall(host: old, brand: .lg)
+        XCTAssertEqual(here, old)
+        services.silentHosts = [old]
+        let missing = await model.relocateForInstall(host: old, brand: .lg)
+        XCTAssertNil(missing)
+        services.tvs = [LGTV(name: "LG TV", host: new, brand: .lg)]
+        let moved = await model.relocateForInstall(host: old, brand: .lg)
+        XCTAssertEqual(moved, new)
+        XCTAssertEqual(model.tv?.host, new)
+    }
+
+    /// Ayarlar'da "IP Adresi Gir": PS5'in yeni adresi elle yazılır; kayıt korunur, geçersiz adres reddedilir.
+    func testEnteredConsoleAddressMovesTheRegisteredPS5() async throws {
+        let model = makeModel()
+        XCTAssertFalse(model.enterConsoleAddress("192.168.1.44"), "kayıtlı PS5 yokken adres yazılmaz")
+        try await model.register(host: "192.168.1.20", pin: "12345678")
+        XCTAssertFalse(model.enterConsoleAddress("192.168.1.300"))
+        XCTAssertEqual(model.console?.host, "192.168.1.20")
+        XCTAssertTrue(model.enterConsoleAddress(" 192.168.1.44 "))
+        XCTAssertEqual(model.console?.host, "192.168.1.44")
+        XCTAssertEqual(model.console?.name, "PS5")
     }
 }

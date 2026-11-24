@@ -11,6 +11,17 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -151,6 +162,9 @@ private fun ImportPreviewDialog(selection: ImportSelection, onDone: () -> Unit) 
     var installing by remember { mutableStateOf(false) }
     var confirmReplacement by remember { mutableStateOf(false) }
     var installError by remember { mutableStateOf<String?>(null) }
+    // Perde başarı anı: paket kuruldu (ışın + yaylı tik + başarı titreşimi); kısa süre sonra pencere kendiliğinden kapanır.
+    var installed by remember { mutableStateOf(false) }
+    val view = LocalView.current
     val canInstall = !installing && preview.entries.isNotEmpty() && title.isNotBlank()
 
     fun install(replacing: Boolean) {
@@ -163,11 +177,15 @@ private fun ImportPreviewDialog(selection: ImportSelection, onDone: () -> Unit) 
                     GamePackImporter.install(preview, title, Services.importedPacksDirectory, replacing)
                     Services.localPacksChanged()
                 }
-                onDone()
+                installed = true
             } catch (failure: GamePackImporter.ImportException) {
                 if (failure.failure == GamePackImporter.Failure.DESTINATION_EXISTS) confirmReplacement = true
-                else installError = context.getString(R.string.packs_import_install_error)
+                else {
+                    Haptics.error(view)
+                    installError = context.getString(R.string.packs_import_install_error)
+                }
             } catch (failure: Exception) {
+                Haptics.error(view)
                 installError = context.getString(R.string.packs_import_install_error)
             } finally {
                 installing = false
@@ -175,6 +193,34 @@ private fun ImportPreviewDialog(selection: ImportSelection, onDone: () -> Unit) 
         }
     }
 
+    if (installed) {
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(2400)
+            onDone()
+        }
+        AlertDialog(
+            onDismissRequest = onDone,
+            text = {
+                // Eğik tipografik kapak + başarı anı, oyunun adı, "Kurulu" ve satır sayısı; tek düğme.
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Space.gap)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Celebration(56.dp)
+                        Box(Modifier.offset(x = (-44).dp, y = (-6).dp).rotate(-8f).size(54.dp, 72.dp)
+                            .clip(RoundedCornerShape(Tokens.Radius.inner))) { CoverArt(title, modifier = Modifier.fillMaxSize()) }
+                    }
+                    Text(title, style = Tokens.Type.h3, color = Tokens.Color.text, textAlign = TextAlign.Center)
+                    Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Space.inline)) {
+                        StatusChip(stringResource(R.string.perde_installed), ChipTone.OK, icon = Icons.Filled.Check)
+                        StatusChip(linesText(context, preview.entries.size), ChipTone.AMBER, dot = false)
+                    }
+                }
+            },
+            confirmButton = { PrimaryButton(stringResource(R.string.perde_done), onClick = onDone) },
+            containerColor = Tokens.Color.surface,
+        )
+        return
+    }
     AlertDialog(
         onDismissRequest = { if (!installing) onDone() },
         title = { Text(stringResource(R.string.packs_import_heading)) },
@@ -187,7 +233,7 @@ private fun ImportPreviewDialog(selection: ImportSelection, onDone: () -> Unit) 
                 CountRow(stringResource(R.string.packs_import_conflict), preview.conflictCount)
                 if (preview.entries.isEmpty()) Text(stringResource(R.string.packs_import_empty), style = Tokens.Type.body, color = Tokens.Color.warning)
                 installError?.let { Text(it, style = Tokens.Type.body, color = Tokens.Color.danger) }
-                if (installing) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally), color = Tokens.Color.accent, strokeWidth = 2.dp)
+                if (installing) Box(Modifier.align(Alignment.CenterHorizontally)) { BarsLoader() }
             }
         },
         confirmButton = {

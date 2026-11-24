@@ -308,6 +308,11 @@ struct LGInstaller {
 
     static func launchCommand() -> String { "/usr/bin/luna-send-pub -n 1 'luna://com.webos.applicationManager/launch' '{\"id\":\"\(appId)\"}'" }
 
+    /// Açık uygulamayı kapatır (ares-launch --close gibi) ve webOS'un süreci bırakması için bekler. beta.89 (LG): kurulumdan
+    /// sonra açık uygulama kapatılmıyordu; açma komutu onu yalnız öne getiriyor, TV eski sürümü çalıştırmayı sürdürüyordu.
+    /// Masaüstündeki DevModeInstaller.closeCommand ile aynı.
+    static let closeCommand = "/usr/bin/luna-send-pub -n 1 'luna://com.webos.applicationManager/closeByAppId' '{\"id\":\"\(appId)\"}'; sleep 2"
+
     struct InstallOutcome: Equatable {
         var installed = false
         var failed = false
@@ -382,7 +387,10 @@ struct LGInstaller {
 
     /// TV'deki CouchSubs `version`'dan eskiyse ya da yoksa `ipk`'yı kurar, sonra uygulamayı açar.
     /// `replaceForeign`: TV'de bizim kimliğimizle başka bir uygulama varsa kullanıcı onayladı; o kaldırılıp CouchSubs kurulur.
-    func ensureInstalled(ipk: [UInt8], packageName: String, version: String, replaceForeign: Bool = false) throws -> Result {
+    /// `runningVersion`: TV'de açık uygulamanın bildirdiği sürüm (bağlı değilse nil). Paket güncel ama açık uygulama eskiyse
+    /// uygulama kapatılıp açılır (beta.89).
+    func ensureInstalled(ipk: [UInt8], packageName: String, version: String, replaceForeign: Bool = false,
+                         runningVersion: String? = nil) throws -> Result {
         log.write("--- LG kurulumu (iPhone) başlıyor: paket \(packageName)")
         do {
             progress(.connecting)
@@ -399,6 +407,10 @@ struct LGInstaller {
                 onTV = nil
             }
             if let onTV, !Versions.isNewer(version, than: onTV) {
+                if let runningVersion, TVAppRunningCheck.isStale(running: runningVersion, installed: onTV) {
+                    log.write("TV'deki paket \(onTV), çalışan CouchSubs \(runningVersion.isEmpty ? SubtitleServer.unreportedTVAppVersion : runningVersion); uygulama kapatılıp yeniden açılıyor.")
+                    close()
+                }
                 launch()
                 return Result(version: onTV, installed: false)
             }
@@ -439,6 +451,8 @@ struct LGInstaller {
         while true {
             if try installedVersion() == version {
                 remove(remote)
+                // Açık (eski) uygulama kapatılır; sonra açılan uygulama yeni sürümü diskten yükler (bkz. closeCommand).
+                close()
                 return
             }
             if Date().timeIntervalSince(started) >= limit { break }
@@ -447,6 +461,21 @@ struct LGInstaller {
         // Sonuç gelmediyse paket silinmez: kurulum TV'de sürüyor olabilir; bir sonraki deneme onu temizler.
         if outcome.installed { remove(remote) }
         throw LGInstallFailure(error: .installFailed, detail: "TV'de \(version) sürümü görünmedi; kurulum yanıtı (\(response.status)): \(Self.short(response.output))")
+    }
+
+    /// Açık uygulamayı kapatır; açık değilse ya da TV reddederse kurulum yine başarılıdır.
+    func close() {
+        do {
+            log.write("TV'deki CouchSubs kapatıldı: \(try shell.run(Self.closeCommand, input: nil).output.trimmingCharacters(in: .whitespacesAndNewlines))")
+        } catch {
+            log.write("TV'deki CouchSubs kapatılamadı: \(error)")
+        }
+    }
+
+    /// Kapatır ve yeniden açar (çalışan sürüm kurulu sürümden eskiyse).
+    func restart() {
+        close()
+        launch()
     }
 
     /// Uygulamayı açar (ares-launch gibi); açılmasa da kurulum başarılıdır.
@@ -513,6 +542,14 @@ enum LGPhoneInstall {
         return version
     }
 
+    /// TV'deki CouchSubs'ı kapatıp yeniden açar (kayıtlı anahtar ve açık geliştirici modu gerekir). Bloklayan. Kapatılamadıysa
+    /// (anahtar yok, geliştirici modu kapalı) false.
+    static func restartApp(host: String) -> Bool {
+        guard let key = LGKeys.load(host), LGInstaller.isDevModeOn(host) else { return false }
+        LGInstaller(shell: SshShell(host: host, key: key), log: InstallLog.shared).restart()
+        return true
+    }
+
     /// LG geliştirici modunun 1000 saatlik süresini günde en çok bir kez baştan başlatır (masaüstü ve Android gibi).
     static func renewSessionIfDue(_ installer: LGInstaller, host: String) {
         let defaults = UserDefaults.standard
@@ -577,9 +614,9 @@ struct LGInstallSection: View {
 
     var body: some View {
         InstallIntro(body1: TVText.lgBody, note: TVText.lgSupported)
-        Text(verbatim: TVText.lgTvs).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+        InstallListTitle(text: TVText.lgTvs, searching: candidates == nil)
         if let candidates {
-            if candidates.isEmpty { MobileNote(text: TVText.lgNone, tone: Mobile.Palette.secondary) }
+            if candidates.isEmpty { MobileNote(text: TVText.lgNone) }
             ForEach(candidates, id: \.host) { item in
                 Button { if !phase.isWorking { host = item.host } } label: {
                     InstallCandidateRow(name: item.name, detail: item.host,
@@ -588,7 +625,7 @@ struct LGInstallSection: View {
                 .buttonStyle(.plain)
             }
         } else {
-            ProgressView().tint(Mobile.Palette.accent)
+            InstallSearching()
         }
         if addressError {
             MobileNote(text: String(localized: "This is not a valid IP address. Type it like 192.168.1.20, without http:// or a port number."))
@@ -604,7 +641,7 @@ struct LGInstallSection: View {
             get: { passphrase }, set: { passphrase = $0.trimmingCharacters(in: .whitespaces).uppercased() }))
             .textFieldStyle(MobileFieldStyle()).keyboardType(.asciiCapable).autocorrectionDisabled().textInputAutocapitalization(.characters)
         InstallSteps(title: TVText.lgStepsTitle, steps: [TVText.lgStep1, TVText.lgStep2, TVText.lgStep3, TVText.lgStep4])
-        Text(verbatim: TVText.lgSessionNote).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary).fixedSize(horizontal: false, vertical: true)
+        InfoBox(text: TVText.lgSessionNote, tone: Mobile.Palette.secondary)
         InstallResult(phase: phase)
         // Kurulum bitince ana düğme ana ekrana götürür; kurulumda kullanıcı 3. adımda kalıyordu (#113).
         Group {
@@ -649,12 +686,14 @@ struct LGInstallSection: View {
 
     private func install(replaceForeign: Bool = false) {
         // Elle yazılan adres temizlenir ("192.168.1.5:3000", "http://…", virgüllü yazım); adres değilse söylenir.
-        guard let target = ManualAddress.normalize(host) else {
+        guard let typedTarget = ManualAddress.normalize(host) else {
             addressError = true
             return
         }
         addressError = false
         let typed = passphrase.trimmingCharacters(in: .whitespaces)
+        // TV'de açık uygulamanın bildirdiği sürüm: paket güncel ama bu eskiyse uygulama kapatılıp açılır (beta.89).
+        let running = model.runningTVAppVersion
         phase = .working(.connecting)
         working = true
         UIApplication.shared.isIdleTimerDisabled = true
@@ -663,6 +702,16 @@ struct LGInstallSection: View {
                 working = false
                 UIApplication.shared.isIdleTimerDisabled = false
             }
+            // Kayıtlı TV'nin adresi hiç yanıt vermiyorsa TV ağda yeniden aranır (beta.89: modem TV'ye yeni adres vermişti,
+            // eski adrese gidilip "Key Server kapalı" deniyordu). Bulunursa kurulum yeni adresle sürer.
+            guard let target = await model.relocateForInstall(host: typedTarget, brand: .lg) else {
+                phase = .failed(text: TVText.lgErrTvNotFound)
+                candidates = nil
+                manual = false
+                await search()
+                return
+            }
+            if target != typedTarget { host = target }
             do {
                 let result = try await runInstall({ progress in
                     let package = try LGPhoneInstall.package()
@@ -678,7 +727,7 @@ struct LGInstallSection: View {
                     func attempt(_ key: [UInt8]) throws -> LGInstaller.Result {
                         let installer = LGInstaller(shell: SshShell(host: target, key: key), progress: progress, log: log)
                         let result = try installer.ensureInstalled(ipk: package.ipk, packageName: package.name, version: package.version,
-                                                                  replaceForeign: replaceForeign)
+                                                                  replaceForeign: replaceForeign, runningVersion: running)
                         // Masaüstündeki gibi: geliştirici modunun süresi günde bir uzatılır, kullanıcı TV'den uzatmaz.
                         LGPhoneInstall.renewSessionIfDue(installer, host: target)
                         return result

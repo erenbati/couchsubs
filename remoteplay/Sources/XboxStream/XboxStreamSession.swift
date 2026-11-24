@@ -224,10 +224,10 @@ public final class XboxStreamSession: NSObject, @unchecked Sendable {
             } catch is CancellationError {
             } catch let error as XboxError {
                 action = decided ?? locked { machine.fail(error.kind, error.message) }
-                report(error.kind, error.message)
+                report(error.kind, error.message, retryDelayMs: Self.delay(action))
             } catch {
                 action = locked { machine.fail(.service, error.localizedDescription) }
-                report(.service, error.localizedDescription)
+                report(.service, error.localizedDescription, retryDelayMs: Self.delay(action))
             }
             summarize()
             await teardown()
@@ -236,6 +236,11 @@ public final class XboxStreamSession: NSObject, @unchecked Sendable {
         }
         // Denemeler bitti ya da konsol reddetti: `reconnectNow` bundan sonra bir şey yapmaz, uygulama yeni oturum açar.
         if !Task.isCancelled && !stopped { locked { gaveUp = true } }
+    }
+
+    private static func delay(_ action: XboxSessionMachine.Action) -> Int? {
+        if case let .retry(delay) = action { return delay }
+        return nil
     }
 
     /// Yeniden denemeler bitti, yayın kendiliğinden durdu (kullanıcı durdurmadı).
@@ -254,21 +259,23 @@ public final class XboxStreamSession: NSObject, @unchecked Sendable {
     private var lastError: String?
     private var lastKind: XboxErrorKind?
 
-    private func report(_ kind: XboxErrorKind, _ detail: String) {
+    private func report(_ kind: XboxErrorKind, _ detail: String, retryDelayMs: Int?) {
         locked {
             lastError = "\(kind.rawValue): \(detail)"
             lastKind = kind
         }
         guard !stopped else { return }
+        // Durum bildirilmeden önce: ana ekran "Yeniden bağlan"ı bu bildirimle hemen gösterir (Android ile aynı).
+        if retryDelayMs == nil { locked { gaveUp = true } }
         log("kopma (\(kind.rawValue)): \(detail)")
         log(XboxEndCause.line(kind, detail))
         if kind == .noFirstFrame {
             log("Xbox görüntü göndermedi: bağlantı kuruldu ama tek kare gelmedi. Xbox'ta Ayarlar › Cihazlar ve bağlantılar › "
                 + "Uzak özellikler açık mı, Xbox kablolu mu? Tanı satırlarında video bayt 0 ise Xbox hiç görüntü kodlamıyor")
         }
-        let (phase, delays) = locked { (machine.phase, machine.retryDelaysMs) }
+        let phase = locked { machine.phase }
         if case let .failed(_, _, true, attempt) = phase, attempt > 0 {
-            log("yeniden deneme \(attempt)/\(delays.count): \(delays[attempt - 1] / 1000) sn sonra")
+            log("yeniden deneme \(attempt): \((retryDelayMs ?? 0) / 1000) sn sonra")
         } else if case .failed = phase, !XboxSessionMachine.fatal.contains(kind) {
             // Denemeler bitti ya da konsol yayını reddetti: yayın durur, yeniden denenmez.
             log("yeniden denenmiyor, yayın durdu")
@@ -526,8 +533,8 @@ public final class XboxStreamSession: NSObject, @unchecked Sendable {
         channel.sendData(RTCDataBuffer(data: data, isBinary: binary))
     }
 
-    /// Tek başarısız canlı tutma isteği yayını bitirmez (görüntü akarken ağ bir an takılabilir); ardışık
-    /// `XboxKeepalive.maxFailures` hata bitirir ve oturum baştan denenir.
+    /// Tek başarısız canlı tutma isteği yayını bitirmez (görüntü akarken ağ bir an takılabilir); görüntü durmuşken ardışık
+    /// `XboxKeepalive.maxFailures` hata ya da 404/410 bitirir ve oturum baştan denenir (bkz. `XboxKeepalive.shouldEnd`).
     private func startKeepalive() {
         keepaliveTask?.cancel()
         keepaliveTask = Task.detached { [weak self] in
@@ -546,15 +553,19 @@ public final class XboxStreamSession: NSObject, @unchecked Sendable {
                     let end = keepalive.failed()
                     let detail = (error as? XboxError)?.message ?? error.localizedDescription
                     self.log("canlı tutma başarısız (\(keepalive.failures)/\(XboxKeepalive.maxFailures)): \(XboxStop.shorten(detail))")
-                    // Oturum Xbox hizmetinde yok (404/410): Xbox yayını kapatmış, beklemek boşuna.
-                    if XboxKeepalive.sessionGone(detail) {
+                    // Oturum Xbox hizmetinde yok (404/410) ya da hatalar sınıra vardı; görüntü akıyorsa yayın sürer.
+                    let gone = XboxKeepalive.sessionGone(detail)
+                    let flowing = self.locked { self.picture.isFlowing(atMs: Self.nowMs()) }
+                    guard XboxKeepalive.shouldEnd(gone: gone, exhausted: end, pictureFlowing: flowing) else {
+                        if flowing && (gone || end) { self.log("görüntü akıyor: canlı tutma hatası yayını kapatmıyor") }
+                        continue
+                    }
+                    if gone {
                         self.end("Xbox oturumu kapattı (canlı tutma: \(XboxStop.shorten(detail, limit: 60)))", .serverClosed)
-                        return
-                    }
-                    if end {
+                    } else {
                         self.end("Xbox canlı tutma isteklerine yanıt vermiyor", .timeout)
-                        return
                     }
+                    return
                 }
             }
         }

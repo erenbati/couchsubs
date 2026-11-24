@@ -28,7 +28,56 @@ internal static class CrashHandler
             var plus = version.IndexOf('+');
             if (plus > 0 && version.Length - plus > 9) version = version[..(plus + 9)];
             return $"Sürüm: {version}\r\nİşletim sistemi: {RuntimeInformation.OSDescription} ({RuntimeInformation.OSArchitecture})\r\n" +
-                   $".NET: {RuntimeInformation.FrameworkDescription}\r\nİşlemci: {Processor()}\r\n";
+                   $".NET: {RuntimeInformation.FrameworkDescription}\r\nİşlemci: {Processor()}\r\n" +
+                   $"Anakart: {Board()}\r\nSanallaştırma: {Hypervisor()}\r\n";
+        }
+    }
+
+    /// <summary>
+    /// Anakart ve BIOS sürümü/tarihi (Windows'un kaydından). Yeni işlemcilerde (ör. Ryzen 9000X3D) erken BIOS sürümleri
+    /// kararsızlığın bilinen nedenidir; kullanıcı "BIOS güncel" dediğinde hangi sürüm olduğu görülsün (GitHub #903).
+    /// </summary>
+    private static string Board()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS");
+            string Value(string name) => (key?.GetValue(name) as string)?.Trim() ?? "";
+            var board = $"{Value("BaseBoardManufacturer")} {Value("BaseBoardProduct")}".Trim();
+            var bios = $"{Value("BIOSVersion")} {Value("BIOSReleaseDate")}".Trim();
+            if (board.Length == 0 && bios.Length == 0) return "?";
+            return $"{(board.Length > 0 ? board : "?")}, BIOS {(bios.Length > 0 ? bios : "?")}";
+        }
+        catch (Exception)
+        {
+            return "?";
+        }
+    }
+
+    /// <summary>
+    /// Süreç bir hipervizörün üstünde mi, öyleyse hangisi (CPUID 1 ECX bit 31 ve 0x40000000 satıcı adı). Windows'un kendi
+    /// hipervizörü (VBS/Bellek bütünlüğü) "Microsoft Hv" görünür; başka bir ad, güvenlik yazılımının ya da sanal makinenin
+    /// komutları kendi işlediğini gösterir. Bu katman bir komutun adresini yanlış hesaplarsa yazmaçlar doğru, adres kısa
+    /// görünür (GitHub #903).
+    /// </summary>
+    private static string Hypervisor()
+    {
+        try
+        {
+            if (!System.Runtime.Intrinsics.X86.X86Base.IsSupported) return "?";
+            var (_, _, features, _) = System.Runtime.Intrinsics.X86.X86Base.CpuId(1, 0);
+            if ((features & (1 << 31)) == 0) return "yok";
+            var (_, ebx, ecx, edx) = System.Runtime.Intrinsics.X86.X86Base.CpuId(0x40000000, 0);
+            var vendor = new byte[12];
+            BitConverter.TryWriteBytes(vendor.AsSpan(0, 4), ebx);
+            BitConverter.TryWriteBytes(vendor.AsSpan(4, 4), ecx);
+            BitConverter.TryWriteBytes(vendor.AsSpan(8, 4), edx);
+            var name = new string(System.Text.Encoding.ASCII.GetString(vendor).Where(c => c >= ' ' && c < 127).ToArray()).Trim();
+            return name.Length > 0 ? name : "var (adı yok)";
+        }
+        catch (Exception)
+        {
+            return "?";
         }
     }
 

@@ -13,6 +13,9 @@ struct PromoPopup: Equatable {
     var alt: String
     var everyHours: Int
     var targets: Set<String>
+    /// Uygulamayla gelen açılır reklam (design/yeni-arayuz/reklamlar.json › popups; Mac ve Windows'ta gösterilenin aynısı):
+    /// promo.json'a ulaşılamazsa kullanılır, `image` uygulamadaki reklam/ klasöründeki dosyanın adıdır.
+    var bundled = false
 }
 
 /// Şu anki ekran: popup yalnız ana ekranda ve kullanıcı boştayken açılır.
@@ -38,6 +41,10 @@ struct PromoRecord: Equatable {
 
 enum PromoPolicy {
     static let platform = "ios"
+
+    /// Alt reklam şeridi (METINLER.md › Reklam kuralları; Mac, Windows, Android ile aynı): yalnız uygulama sayfalarında;
+    /// çeviri sürerken ve deneme modunda gizli, çeviri durunca geri gelir.
+    static func adBandVisible(appPage: Bool, translating: Bool, demo: Bool) -> Bool { appPage && !translating && !demo }
     static let defaultEveryHours = 24
     /// Uygulamaya girdikten bu kadar sonra (kullanıcı boştaysa) açılır.
     static let showDelay: TimeInterval = 10
@@ -60,6 +67,18 @@ enum PromoPolicy {
                           link: text("link"), alt: text("alt"), everyHours: hours, targets: Set(targets))
     }
 
+    /// Uygulamayla gelen reklamlar.json'daki ilk açılır reklam (Mac ve Windows'un okuduğu dosya; günde bir, her platformda).
+    /// Görsel adı boşsa ya da bağlantı https değilse nil: yer tutucu açılmaz.
+    static func bundled(_ data: Data) -> PromoPopup? {
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let popup = (root["popups"] as? [[String: Any]])?.first else { return nil }
+        func text(_ key: String) -> String { ((popup[key] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        let image = text("image"), link = text("link")
+        guard !image.isEmpty, !image.contains("/"), httpsURL(link) != nil else { return nil }
+        return PromoPopup(id: text("id"), active: true, image: image, link: link, alt: text("alt"),
+                          everyHours: defaultEveryHours, targets: [platform], bundled: true)
+    }
+
     /// Görsel yalnız https, bağlantı http/https; başka şema (tel:, javascript:, uygulama adresi) açılmaz.
     static func httpsURL(_ text: String) -> URL? {
         guard let url = URL(string: text), url.scheme?.lowercased() == "https", url.host?.isEmpty == false else { return nil }
@@ -75,7 +94,7 @@ enum PromoPolicy {
     /// Popup açık, bu platform hedefte ve son gösterimden `everyHours` saat geçtiyse true (ekrandan bağımsız).
     static func due(_ popup: PromoPopup?, record: PromoRecord, now: Date, platform: String = platform) -> Bool {
         guard let popup, popup.active, !popup.id.isEmpty, popup.targets.contains(platform),
-              httpsURL(popup.image) != nil, webURL(popup.link) != nil else { return false }
+              popup.bundled || httpsURL(popup.image) != nil, webURL(popup.link) != nil else { return false }
         guard record.id == popup.id, let shownAt = record.shownAt else { return true }
         let hours = popup.everyHours > 0 ? popup.everyHours : defaultEveryHours
         // Saat geri alındıysa (gösterim gelecekte görünüyor) yeniden gösterilir; sonsuza dek susmaz.

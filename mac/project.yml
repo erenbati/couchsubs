@@ -49,6 +49,15 @@ targets:
       # Yeni arayüzün tasarım değerleri (design/yeni-arayuz; Windows da aynı dosyayı okur).
       - path: ../design/yeni-arayuz/tasarim.json
         buildPhase: resources
+      # Alt reklam bandının reklamları ve uygulama simgeleri (Windows da aynı dosyaları okur).
+      - path: ../design/yeni-arayuz/reklamlar.json
+        buildPhase: resources
+      - path: ../design/yeni-arayuz/reklam
+        type: folder
+        buildPhase: resources
+      # Uygulama içindeki Sürüm Notları penceresi bu dosyanın "Bu sürümde yeni" bölümünü gösterir.
+      - path: ../docs/surum-notlari.md
+        buildPhase: resources
       # TV uygulaması paketi (scripts/package-tv.sh üretir; yoksa kurulum özelliği gizlenir).
       - path: ../dist/tv-app
         type: folder
@@ -125,6 +134,13 @@ targets:
       - path: ../design/tokens.json
         buildPhase: resources
       - path: ../design/yeni-arayuz/tasarim.json
+        buildPhase: resources
+      - path: ../design/yeni-arayuz/reklamlar.json
+        buildPhase: resources
+      - path: ../design/yeni-arayuz/reklam
+        type: folder
+        buildPhase: resources
+      - path: ../docs/surum-notlari.md
         buildPhase: resources
       # TV uygulaması paketleri: TV kurulumu sandbox'ta da çalışıyor (ssh, ssh-keygen ve yardımcı uygulamanın
       # sandbox'ını miras alır; CouchSubsAppStoreTests/SandboxTests sınar).

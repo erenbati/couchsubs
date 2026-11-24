@@ -138,6 +138,13 @@ class XboxStreamSession(
 
     override val framesReceived: Long get() = frameCounter.totalFrames
 
+    /** Oturum yeniden denemeyi bıraktı: ana ekranda "Yeniden bağlan" hemen görünür (iPhone'daki hasGivenUp ile aynı). */
+    @Volatile private var gaveUp = false
+    override val hasGivenUp: Boolean get() = gaveUp
+
+    /** Bu bağlantının görüntü bekçisi; canlı tutma "görüntü akıyor mu" diye buna bakar. */
+    @Volatile private var pictureWatch: XboxPictureWatch? = null
+
     override fun start() {
         if (!started.compareAndSet(false, true)) return
         worker.execute(::run)
@@ -213,10 +220,10 @@ class XboxStreamSession(
                 if (stopped.get()) break
             } catch (error: XboxException) {
                 action = decided ?: machine.fail(error.kind, error.message ?: "")
-                report(error.kind, error.message)
+                report(error.kind, error.message, (action as? XboxSessionMachine.Action.Retry)?.delayMs)
             } catch (error: Exception) {
                 action = machine.fail(XboxError.SERVICE, error.message ?: error.javaClass.simpleName)
-                report(XboxError.SERVICE, error.message)
+                report(XboxError.SERVICE, error.message, (action as? XboxSessionMachine.Action.Retry)?.delayMs)
             } finally {
                 summarize()
                 closePeer()
@@ -250,10 +257,12 @@ class XboxStreamSession(
 
     @Volatile private var lastError: String? = null
 
-    private fun report(kind: XboxError, detail: String?) {
+    private fun report(kind: XboxError, detail: String?, retryDelayMs: Long?) {
         lastError = "$kind: $detail"
         lastKind = kind
         if (stopped.get()) return
+        // Durum bildirilmeden önce: ana ekran "Yeniden bağlan"ı bu bildirimle hemen gösterir.
+        if (retryDelayMs == null) gaveUp = true
         log("kopma ($kind): $detail")
         log(XboxEndCause.line(kind, detail))
         if (kind == XboxError.NO_FIRST_FRAME) {
@@ -263,7 +272,7 @@ class XboxStreamSession(
         val failed = machine.phase as? XboxSessionMachine.Phase.Failed
         when {
             failed == null || failed.willRetry -> {
-                failed?.let { log("yeniden deneme ${it.attempt}/${machine.retryDelaysMs.size}: ${machine.retryDelaysMs[it.attempt - 1] / 1000} sn sonra") }
+                failed?.let { log("yeniden deneme ${it.attempt}: ${(retryDelayMs ?: 0L) / 1000} sn sonra") }
                 onState(SessionState.Disconnected(DisconnectKind.OTHER, describe(kind)))
             }
             // Giriş gerekiyor: kullanıcının yapacağı iş hizmetin metninde.
@@ -353,7 +362,7 @@ class XboxStreamSession(
         val negotiatedFrames = frameCounter.beginSession()
         frameSession = negotiatedFrames
         // İlk kareden sonra görüntü kesilirse uyarı ve yeniden kurma (kareler ve ICE olayları buraya yazılır).
-        val watchPicture = XboxPictureWatch()
+        val watchPicture = XboxPictureWatch().also { pictureWatch = it }
         val sink = VideoSink { frame ->
             if (stopped.get()) return@VideoSink
             val sessionFrames = frameCounter.recordFrame(negotiatedFrames) ?: return@VideoSink
@@ -661,12 +670,15 @@ class XboxStreamSession(
             } catch (error: Exception) {
                 val detail = error.message ?: error.javaClass.simpleName
                 val finish = counter.failed()
+                val gone = XboxKeepalive.sessionGone(detail)
+                val flowing = pictureWatch?.isFlowing(SystemClock.elapsedRealtime()) == true
                 log("canlı tutma başarısız (${counter.failures}/${XboxKeepalive.MAX_FAILURES}): ${XboxSessionMachine.shortReason(detail, "?")}")
-                when {
-                    XboxKeepalive.sessionGone(detail) -> end("Xbox oturumu kapattı (canlı tutma: ${XboxSessionMachine.shortReason(detail, "?").take(60)})", XboxError.SERVER_CLOSED)
-                    finish -> end("Xbox canlı tutma isteklerine yanıt vermiyor", XboxError.TIMEOUT)
-                    else -> return@scheduleWithFixedDelay
+                if (!XboxKeepalive.shouldEnd(gone, finish, flowing)) {
+                    if (flowing && (gone || finish)) log("görüntü akıyor: canlı tutma hatası yayını kapatmıyor")
+                    return@scheduleWithFixedDelay
                 }
+                if (gone) end("Xbox oturumu kapattı (canlı tutma: ${XboxSessionMachine.shortReason(detail, "?").take(60)})", XboxError.SERVER_CLOSED)
+                else end("Xbox canlı tutma isteklerine yanıt vermiyor", XboxError.TIMEOUT)
                 latch?.countDown()
                 keepalive?.cancel(false)
             }
@@ -680,6 +692,7 @@ class XboxStreamSession(
             watch = null
             videoTrack = null
         }
+        pictureWatch = null
         frameSession?.let(frameCounter::endSession)
         frameSession = null
         keepalive?.cancel(false)

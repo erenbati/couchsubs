@@ -1,48 +1,47 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Profil (hesapsız: cihazlar, PSN hesabı, bildirim, havuz, kullanım verisi) ve ayarlar (tuvaldeki Telefon · Profil,
-// Ayarlar). Uygulama tamamen ücretsizdir ve hesap istemez.
+// Ayarlar sekmesi (Perde; tuvaldeki DL-iPhone-Ayarlar): en üstte hesap kartları, Mac'teki Ayarlar menüsünün bölümleri,
+// ardından eski Profil sayfasının içeriği (cihazlar ve bağlantı, bildirimler, arka planda sürdürme, gizlilik, yardım,
+// hakkında). Uygulama tamamen ücretsizdir ve hesap istemez.
 
 import CouchSubsCore
 import RemotePlay
 import SwiftUI
 
-// MARK: - Profil
+// MARK: - Ayarlar
 
-struct ProfileScreen: View {
+/// Ayarlar: hesap kartları, Mac'teki Ayarlar menüsünün bölümleri (aynı ad, sıra ve alt yazı; her biri kendi sayfasını
+/// açar) ve telefona özgü ayarlar (eski Profil). Sekme kökünde büyük başlık; Ana ekrandan açılınca geri düğmesi.
+struct SettingsScreen: View {
     @EnvironmentObject private var model: PhoneModel
     @EnvironmentObject private var app: AppModel
     @Binding var path: [Route]
     @AppStorage(PackNotice.settingKey) private var notifyPackUpdates = true
     @AppStorage(PhoneModel.notifyDisconnectKey) private var notifyDisconnect = true
-    @AppStorage(UsageData.key) private var usageData = true
     @State private var confirmPSNSignOut = false
 
     var body: some View {
         MobileScreen {
-            BackHeader(title: "Profile")
+            BackHeader(title: "Settings")
         } content: {
-            Tile {
-                HStack(spacing: Mobile.Space.gap) {
-                    LogoView(size: 56)
-                    VStack(alignment: .leading, spacing: Mobile.Space.hair) {
-                        Text(verbatim: "CouchSubs").font(Mobile.TypeScale.title)
-                        Text("Free, no account needed").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-            BentoGrid {
-                Button { path.append(.target) } label: {
-                    StatTile(symbol: "tv", tint: .ok, label: "Devices", value: devicesText)
-                }
-                .buttonStyle(.plain)
-                Button { path.append(.psn) } label: {
-                    StatTile(symbol: "person.2.fill", label: "PSN account",
-                             value: model.accountId == nil ? String(localized: "Not set up") : String(localized: "Signed in"))
-                }
-                .buttonStyle(.plain)
-            }
+            PerdeAccountCards(path: $path)
             Tile(spacing: 0) {
+                ForEach(Array(PhoneSettingsSection.allCases.enumerated()), id: \.element) { index, section in
+                    if index > 0 { RowDivider() }
+                    NavigationLink(value: section.route) { SettingsSectionRow(section: section) }
+                }
+            }
+            .buttonStyle(.plain)
+            // Telefona özgü ayarlar (eski Profil sayfası).
+            SectionTitle("Profile")
+                .padding(.top, Mobile.Space.inline)
+            Tile(spacing: 0) {
+                NavigationLink(value: Route.target) { ListRow(symbol: "tv", title: "Devices", detail: devicesText) }
+                RowDivider()
+                NavigationLink(value: Route.psn) {
+                    ListRow(symbol: "person.2.fill", title: "PSN account",
+                            detail: model.accountId == nil ? String(localized: "Not set up") : String(localized: "Signed in"))
+                }
+                RowDivider()
                 NavigationLink(value: Route.platform) {
                     ListRow(symbol: "gamecontroller.fill", title: "Console", detail: model.isXbox ? "Xbox (Beta)" : "PlayStation 5")
                 }
@@ -68,6 +67,8 @@ struct ProfileScreen: View {
                 NavigationLink(value: Route.target) { ListRow(symbol: "tv", title: "Subtitle target", detail: targetName) }
             }
             .buttonStyle(.plain)
+            // Bildirimler ve arka planda sürdürme telefona özgü (Mac'te karşılığı yok: masaüstü uygulaması arka planda zaten
+            // sürer); çeviri ve görünüm ayarları yukarıdaki bölümlerde (Mac ile aynı yer ve ad).
             Tile(spacing: 0) {
                 toggleRow("Notifications", "New packs and updates", isOn: $notifyPackUpdates)
                 RowDivider()
@@ -77,95 +78,6 @@ struct ProfileScreen: View {
                 toggleRow("Keep translating in the background (Picture in Picture)",
                           "When you leave CouchSubs while translating, the game picture and the live subtitle stay in a small window; reading and sending to the TV continue.",
                           isOn: $model.backgroundPiP)
-                RowDivider()
-                toggleRow("Contribute to the shared pool", "English lines that are read, anonymous", isOn: $model.settings.sharePool)
-                RowDivider()
-                toggleRow("Ask which game I'm playing", "If no pack recognises the game, asked once two minutes after translation starts.",
-                          isOn: $model.settings.askGame)
-                RowDivider()
-                toggleRow("Show speaker name", "Keeps the character's name in front of the translation (ARTHUR: …). The name itself is never translated.",
-                          isOn: $model.settings.showSpeakerNames)
-                RowDivider()
-                toggleRow("Color by speaker", "Each speaker's name and line keep their own color.",
-                          isOn: $model.settings.speakerColors)
-                RowDivider()
-                toggleRow("Automatically translate on-screen text (experimental)",
-                          "Text boxes that appear on screen (objectives, help, messages) are found and translated in place. Counters, the map and short labels are skipped.",
-                          isOn: $model.settings.autoScreenText)
-                // Türler yalnız ayar açıkken görünür; dört platformda aynı ad ve sıra (bkz. ScreenTextKind).
-                if model.settings.autoScreenText {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Which on-screen text to translate").font(Mobile.TypeScale.caption)
-                            .foregroundStyle(Mobile.Palette.secondary)
-                        kindToggle("Phone (GTA 6 phone)", isOn: $model.settings.screenTextPhone)
-                        kindToggle("Mission and objective text", isOn: $model.settings.screenTextMission)
-                        kindToggle("Help boxes and actions (button prompts)", isOn: $model.settings.screenTextHelp)
-                        kindToggle("Menus (pause, map, settings)", isOn: $model.settings.screenTextMenus)
-                        kindToggle("Other on-screen text", isOn: $model.settings.screenTextOther)
-                        Text("Translate the screen always translates everything.").font(Mobile.TypeScale.caption)
-                            .foregroundStyle(Mobile.Palette.secondary)
-                    }
-                    .padding(.leading, 12)
-                }
-                RowDivider()
-                toggleRow("Set on-screen text apart from subtitles",
-                          "On-screen text keeps its own colours and place, and never looks like the subtitle box.",
-                          isOn: $model.settings.setTextApart)
-                RowDivider()
-                toggleRow("Use ready areas for known games",
-                          "When a game with ready areas (such as GTA 6) is being played, its help box and messages are read and translated automatically. Your own extra areas take precedence.",
-                          isOn: $model.settings.gameAreaPresets)
-                RowDivider()
-                // Mac ve Windows'taki iki deneysel GTA 6 ayarı; ikisi de kapalı gelir.
-                Toggle(isOn: $model.settings.autoReadGamePhone) {
-                    Text("Automatically translate the GTA 6 phone (experimental)").font(Mobile.TypeScale.headline)
-                }
-                .tint(Mobile.Palette.accent)
-                RowDivider()
-                // GTA 6 telefon mesajları (otomatik okuma ve "Ekranı çevir"): Yanda Panel (varsayılan) ya da Balonların
-                // Üstünde; Mac, Windows, Android ile aynı ad ve seçenekler.
-                VStack(alignment: .leading, spacing: Mobile.Space.hair) {
-                    Text("GTA 6 Phone Messages").font(Mobile.TypeScale.headline)
-                    Picker("GTA 6 Phone Messages", selection: $model.settings.phoneMessagesPanel) {
-                        Text("Side Panel").tag(true)
-                        Text("On the Bubbles").tag(false)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    Text("Side Panel: the chat is shown next to the phone, the other person on the left and you on the right. On the Bubbles: each message is translated on top of its own bubble.")
-                        .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                }
-                .padding(.vertical, Mobile.Space.gap)
-                RowDivider()
-                toggleRow("Check unchanged subtitle areas more often",
-                          "When the subtitle area looks unchanged, read it again after 2 frames instead of 20. Uses more CPU.",
-                          isOn: $model.settings.fastSubtitleDetection)
-                RowDivider()
-                // Windows ve Mac'teki iki bekleme kaydırıcısı (Android'de aynı ad ve açıklama; 0–1 sn, 0,1 sn adım).
-                waitRow("Wait for a misread line",
-                        "When a line is read with words that are not in the dictionary, a better reading is awaited for at most this long. Measured in GTA V, translations from misread lines compared with 0 s: 0.2 s → 77%, 0.4 s → 49%, 0.6 s → 41%, 0.8 s (recommended) → 34%, 1.0 s → 31%.",
-                        ms: $model.settings.misreadWaitMs)
-                RowDivider()
-                waitRow("Wait for a half-read line",
-                        "When a line looks cut off (no sentence ending, such as a mission text with a colored word), the full line is awaited for at most this long. Its effect is small: at 0 s a few more lines arrive cut off. Recommended: 0.3 s.",
-                        ms: $model.settings.partialWaitMs)
-                Text("These waits only delay lines that were read badly; most lines are shown without waiting. A shorter wait shows those lines sooner but lets more wrong translations through.")
-                    .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                Button("Restore defaults") {
-                    model.settings.misreadWaitMs = SubtitlePipeline.packWaitMs
-                    model.settings.partialWaitMs = SubtitlePipeline.cleanWaitMs
-                }
-                .font(Mobile.TypeScale.body)
-                .padding(.vertical, Mobile.Space.gap)
-                RowDivider()
-                // Yalnız Xbox: uzaktan oynatmada Xbox sesi istemciye verip TV'yi susturabilir (PS5'te ses TV'de kalır).
-                if model.isXbox {
-                    toggleRow("Play Xbox sound on this device",
-                              "While remote play is running, the Xbox mutes the TV and sends game sound only to this device (an Xbox limitation). If you turn this off, the game has no sound. To hear it from the TV or speakers, connect this phone to a Bluetooth speaker or headphones.",
-                              isOn: $model.settings.xboxAudioOnDevice)
-                    RowDivider()
-                }
-                toggleRow("Usage data", "Error and usage statistics", isOn: $usageData)
             }
             Tile(spacing: 0) {
                 Link(destination: AppConfig.privacyURL) { ListRow(symbol: "hand.raised", title: "Data and privacy") }
@@ -175,17 +87,25 @@ struct ProfileScreen: View {
                 NavigationLink(value: Route.about) { ListRow(symbol: "info.circle", title: "About", detail: AppIdentity.version) }
             }
             .buttonStyle(.plain)
-            Text(verbatim: "CouchSubs \(AppIdentity.version) · Copyright © 2026 Sinan Yorulmaz · AGPL-3.0")
-                .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary).frame(maxWidth: .infinity)
+            HStack(spacing: Mobile.Space.gap) {
+                DSLogoMark(height: 28)
+                VStack(alignment: .leading, spacing: Mobile.Space.micro) {
+                    Text(verbatim: "CouchSubs").font(Mobile.TypeScale.headline)
+                    Text(verbatim: "CouchSubs \(AppIdentity.version) · © 2026 Enmera · AGPL-3.0")
+                        .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                    Text("Free, no account needed").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.tertiary)
+                }
+                Spacer(minLength: 0)
+            }
             DeveloperSignature()
         } bottom: {
+            // Deneme altyazısı Altyazı Görünümü ve Çıkış Ekranları'nda (Mac ile aynı yer).
             EmptyView()
         }
-        .onChange(of: usageData) { value in app.analytics.setCollection(value) }
         // Bağlantı bildirimi açılınca izin hemen istenir (yoksa ilk çeviride).
         .onChange(of: notifyDisconnect) { value in if value { model.requestNotificationPermission() } }
         .onChange(of: notifyPackUpdates) { value in if value { model.requestNotificationPermission() } }
-        .onAppear { app.analytics.screen("profile") }
+        .onAppear { app.analytics.screen("settings") }
         .confirmationDialog("Sign out of PSN?", isPresented: $confirmPSNSignOut, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) { model.signOutPSN() }
         } message: {
@@ -204,292 +124,100 @@ struct ProfileScreen: View {
         return model.hasTV ? model.tv?.name ?? "TV" : String(localized: "Not set up")
     }
 
-    /// Otomatik ekran yazısının türü (bkz. ScreenTextKind): açıklamasız, girintili anahtar.
-    private func kindToggle(_ title: LocalizedStringKey, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) { Text(title).font(Mobile.TypeScale.body) }.tint(Mobile.Palette.accent)
-    }
-
     private func toggleRow(_ title: LocalizedStringKey, _ caption: LocalizedStringKey, isOn: Binding<Bool>) -> some View {
         Toggle(isOn: isOn) {
             VStack(alignment: .leading, spacing: Mobile.Space.hair) {
-                Text(title).font(Mobile.TypeScale.headline)
-                Text(caption).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                Text(title).font(Mobile.TypeScale.headline).fixedSize(horizontal: false, vertical: true)
+                Text(caption).dsMuted()
             }
-        }
-        .tint(Mobile.Palette.accent)
-        .padding(.vertical, Mobile.Space.gap)
-    }
-
-    /// Bekleme süresi: başlık, açıklama ve 0–1 sn kaydırıcı; değer milisaniye olarak saklanır.
-    private func waitRow(_ title: LocalizedStringKey, _ caption: LocalizedStringKey, ms: Binding<Int>) -> some View {
-        let seconds = Double(min(max(ms.wrappedValue, 0), UserSettings.waitSliderMaxMs)) / 1000
-        let unit = String(localized: "sec")
-        return VStack(alignment: .leading, spacing: Mobile.Space.hair) {
-            HStack {
-                Text(title).font(Mobile.TypeScale.headline)
-                Spacer()
-                Text(verbatim: "\(seconds.formatted(.number.precision(.fractionLength(1)))) \(unit)")
-                    .font(Mobile.TypeScale.body.monospacedDigit()).foregroundStyle(Mobile.Palette.secondary)
-            }
-            Slider(value: Binding(get: { seconds }, set: { ms.wrappedValue = Int(($0 * 10).rounded()) * 100 }),
-                   in: 0...Double(UserSettings.waitSliderMaxMs) / 1000, step: 0.1)
-                .tint(Mobile.Palette.accent)
-                .accessibilityLabel(Text(title))
-            Text(caption).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
         }
         .padding(.vertical, Mobile.Space.gap)
     }
 }
 
-// MARK: - Ayarlar
-
-struct SettingsScreen: View {
+/// Ayarlar › Gelişmiş › Çeviri motoru: Ücretsiz, DeepL, Gemini, Diğer (OpenAI, Claude, yerel model); anahtar, model, ek
+/// talimat ve Gemini'de ücretli anahtar seçimi (Mac ile aynı).
+struct EngineTile: View {
     @EnvironmentObject private var model: PhoneModel
-    @EnvironmentObject private var app: AppModel
-    @Binding var path: [Route]
+    @Environment(\.openURL) private var openURL
     @State private var key = ""
     @State private var checking = false
     @State private var keyResult: String?
-    @State private var addressCopied = false
 
     /// Segmentteki seçim: Ücretsiz, DeepL, Gemini, Diğer (OpenAI, Claude).
     private enum Choice: Hashable { case free, deepL, gemini, other }
     private static let choices: KeyValuePairs<Choice, LocalizedStringKey> = [.free: "Free", .deepL: "DeepL", .gemini: "Gemini", .other: "Other"]
 
     var body: some View {
-        MobileScreen {
-            BackHeader(title: "Settings")
-        } content: {
-            SecondScreenTile()
-            Tile {
-                Button("Pair TV") { Task { await model.openTVPairing() } }
-                if model.tvPairingOpened, model.tvPairingRequest == nil, model.tvClients == 0 {
-                    MobileNote(text: String(localized: "Pairing is open for 2 minutes. Open CouchSubs on the TV; if the TV says pairing did not finish, press OK on its remote. When the TV shows a code, approve it in the window that opens on this phone."),
-                               tone: Mobile.Palette.secondary)
-                }
-                // OBS katmanı adresi (Mac ve Windows'taki gibi adres görünür ve kopyalanır; telefonda ayrıca paylaşılır).
-                Text("OBS overlay").font(Mobile.TypeScale.headline)
-                Text(verbatim: model.subtitleViewerAddress)
-                    .font(Mobile.TypeScale.caption.monospaced())
-                    .textSelection(.enabled)
-                    .padding(.horizontal, Mobile.Space.tile)
-                    .frame(maxWidth: .infinity, minHeight: Mobile.Control.field, alignment: .leading)
-                    .background(Mobile.Palette.surface2, in: RoundedRectangle(cornerRadius: Mobile.Radius.control))
-                    .overlay(RoundedRectangle(cornerRadius: Mobile.Radius.control).strokeBorder(Mobile.Palette.border))
-                HStack(spacing: Mobile.Space.gap) {
-                    Button {
-                        UIPasteboard.general.string = model.subtitleViewerAddress
-                        addressCopied = true
-                    } label: {
-                        Label(addressCopied ? "Copied" : "Copy", systemImage: addressCopied ? "checkmark" : "doc.on.doc")
+        Tile(spacing: Mobile.Space.unit) {
+            SettingUnit(title: "Translation engine", hint: "In games with a ready pack this engine only translates the missing lines.") {
+                VStack(alignment: .leading, spacing: Mobile.Space.gap) {
+                    SegmentedTabs(options: Self.choices,
+                                  selection: Binding(get: { choice }, set: { setChoice($0) }))
+                    if choice == .other {
+                        // Yerel model: aynı ağdaki bilgisayarda çalışan Ollama, LM Studio ya da başka OpenAI uyumlu sunucu
+                        // (Mac ve Windows'taki "Yerel model (Ollama, LM Studio)" motoru; Android ile aynı).
+                        SegmentedTabs(options: [TranslationEngine.openAI: "OpenAI", .claude: "Claude", .local: "Local model"],
+                                      selection: Binding(get: { [.claude, .local].contains(model.settings.translationEngine) ? model.settings.translationEngine : .openAI },
+                                                         set: { keyResult = nil; key = ""; model.settings.translationEngine = $0 }))
                     }
-                    .buttonStyle(MobileButtonStyle(kind: .secondary, compact: true))
-                    .resetsAfterDelay($addressCopied)
-                    ShareLink(item: model.subtitleViewerAddress) { Label("Share", systemImage: "square.and.arrow.up") }
-                        .buttonStyle(MobileButtonStyle(kind: .secondary, compact: true))
                 }
-                Button("Renew access key") { model.rotateSubtitleKey() }
-                if model.legacyTVWarning { Text("The TV app is old. Update it.") }
-                Text("Translation engine").font(Mobile.TypeScale.headline)
-                SegmentedTabs(options: Self.choices,
-                              selection: Binding(get: { choice }, set: { setChoice($0) }))
-                if choice == .other {
-                    // Yerel model: aynı ağdaki bilgisayarda çalışan Ollama, LM Studio ya da başka OpenAI uyumlu sunucu
-                    // (Mac ve Windows'taki "Yerel model (Ollama, LM Studio)" motoru; Android ile aynı).
-                    SegmentedTabs(options: [TranslationEngine.openAI: "OpenAI", .claude: "Claude", .local: "Local model"],
-                                  selection: Binding(get: { [.claude, .local].contains(model.settings.translationEngine) ? model.settings.translationEngine : .openAI },
-                                                     set: { keyResult = nil; key = ""; model.settings.translationEngine = $0 }))
+            }
+            let engine = model.settings.translationEngine
+            if engine != .free, model.settings.sourceLanguage != "en" {
+                Text("Online engines only translate English games. Other game languages use the free translation.").dsMuted()
+            }
+            // Ücretsiz çeviri zayıf kalıyor; ücretsiz Gemini anahtarı en kolay iyileştirme (Mac ile aynı öneri).
+            if engine == .free {
+                Text("For better translation, get a free Gemini key.").font(Mobile.TypeScale.body).fixedSize(horizontal: false, vertical: true)
+                Button("Get a Free Key") {
+                    setChoice(.gemini)
+                    openURL(AIProvider.gemini.keyPage)
                 }
-                let engine = model.settings.translationEngine
-                // Model seçimi üç hizmette de var (Mac ve Windows ile aynı liste ve varsayılanlar).
-                if let provider = engine.aiProvider, provider != .local { AIModelChoice(provider: provider) }
-                if engine == .local { PhoneLocalAISection() }
-                if engine != .free, engine != .local {
-                    HStack(spacing: Mobile.Space.inline) {
-                        if model.hasKey(engine) {
-                            Text(String(format: String(localized: "%@ key"), engine.displayName)).font(Mobile.TypeScale.headline.weight(.regular))
-                            Spacer()
+                .buttonStyle(DSButtonStyle(kind: .secondary))
+            }
+            // Model seçimi üç hizmette de var (Mac ve Windows ile aynı liste ve varsayılanlar).
+            if let provider = engine.aiProvider, provider != .local { AIModelChoice(provider: provider) }
+            if engine == .local { PhoneLocalAISection() }
+            if engine != .free, engine != .local {
+                VStack(alignment: .leading, spacing: Mobile.Space.inline) {
+                    Text(String(format: String(localized: "%@ key"), engine.displayName)).font(Mobile.TypeScale.headline)
+                    if model.hasKey(engine) {
+                        DSFieldChrome {
                             Label(String(localized: "saved"), systemImage: "checkmark")
-                                .font(Mobile.TypeScale.caption)
-                                .foregroundStyle(Mobile.Palette.success)
-                            // 44'lük dokunma hedefi (simge küçük kalır).
-                            Button { model.removeKey(engine) } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .frame(width: Mobile.Control.icon, height: Mobile.Control.icon)
-                                    .contentShape(Rectangle())
-                            }
-                                .foregroundStyle(Mobile.Palette.secondary)
-                                .accessibilityLabel(Text("Remove key"))
-                        } else {
+                                .foregroundStyle(Mobile.Palette.successText)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } trailing: {
+                            DSFieldIconButton(symbol: "xmark.circle.fill", label: "Remove key") { model.removeKey(engine) }
+                        }
+                    } else {
+                        DSFieldChrome {
                             SecureField(String(format: String(localized: "%@ key"), engine.displayName), text: $key)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
+                        } trailing: {
                             Button(checking ? LocalizedStringKey("Testing…") : LocalizedStringKey("Save")) { Task { await save(engine) } }
-                                .foregroundStyle(Mobile.Palette.accent)
+                                .font(Mobile.TypeScale.headline)
+                                .foregroundStyle(Mobile.Palette.accentText)
+                                .padding(.horizontal, Mobile.Space.gap)
+                                .frame(minHeight: Mobile.Control.icon)
                                 .disabled(checking || key.isEmpty)
                         }
                     }
-                    .font(Mobile.TypeScale.headline.weight(.regular))
-                    .padding(.horizontal, Mobile.Space.tile)
-                    .frame(minHeight: Mobile.Control.field)
-                    .background(Mobile.Palette.surface2, in: RoundedRectangle(cornerRadius: Mobile.Radius.control))
-                    .overlay(RoundedRectangle(cornerRadius: Mobile.Radius.control).strokeBorder(Mobile.Palette.border))
-                    if checking { ProgressView().tint(Mobile.Palette.accent) }
-                    if let keyResult { MobileNote(text: keyResult) }
+                    if checking { ProgressView().tint(Mobile.Palette.accentText) }
+                    if let keyResult { InfoBox(text: keyResult) }
                     // Mac ve Windows'taki kullanım satırı (#625): kayıtlı DeepL anahtarının bu ayki karakter kullanımı.
                     if engine == .deepL, model.hasKey(.deepL) { DeepLUsageRow() }
                 }
-                // Ek talimat (#306) yalnız yapay zekâ motorlarında; DeepL'de yoktur (Android ile aynı).
-                if engine.aiProvider != nil { AIInstructionField() }
-                Text("In games with a ready pack this engine only translates the missing lines.")
-                    .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
             }
-            Tile {
-                HStack {
-                    Text("Subtitle appearance").font(Mobile.TypeScale.headline)
-                    Spacer()
-                    Text(verbatim: "%\(percent)").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                }
-                // %40–160 (Android ile aynı). Alt sınır eskiden %80'di (TV'de 37 piksel), TV'de en küçüğü bile büyük
-                // kalıyordu (#218); %40 TV'de 18 piksel, Mac'teki (20) ve Windows'taki (16) en küçük boya denk.
-                Slider(value: Binding(get: { Double(percent) }, set: { setPercent(Int($0.rounded())) }), in: 40...160, step: 10)
-                    .tint(Mobile.Palette.accent)
-                Text(verbatim: "Dinliyor musun beni?")
-                    .font(Mobile.TypeScale.subtitle(landscape: false, scale: Double(percent) / 100))
-                    .foregroundStyle(model.settings.style.textColor == .yellow ? Mobile.Palette.accent : Mobile.Palette.text)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                HStack {
-                    Text("Text colour").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                    Spacer()
-                    ForEach([SubtitleTextColor.white, .yellow], id: \.self) { color in
-                        // Renk dairesi 28 pt, dokunma hedefi 44 pt.
-                        Button { model.settings.style.textColor = color } label: {
-                            Circle()
-                                .fill(color == .yellow ? Mobile.Palette.accent : Mobile.Palette.text)
-                                .frame(width: 28, height: 28)
-                                .overlay(Circle().strokeBorder(Mobile.Palette.accent, lineWidth: model.settings.style.textColor == color ? 2 : 0).padding(-4))
-                                .frame(width: Mobile.Control.icon, height: Mobile.Control.icon)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(Text(color == .yellow ? "Yellow" : "White"))
-                    }
-                }
-                // Kutu TV'de görünür; %100 tamamen opak olur ve oyundaki İngilizce yazıyı kapatır.
-                HStack {
-                    Text("Background").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                    Spacer()
-                    Text(verbatim: "%\(model.settings.style.background)").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                }
-                Slider(value: Binding(get: { Double(model.settings.style.background) },
-                                      set: { model.settings.style.background = Int($0.rounded()) }), in: 0...100, step: 5)
-                    .tint(Mobile.Palette.accent)
-                Text("Background area").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                SegmentedTabs(options: [SubtitleBackgroundShape.fit: "Fit the text", .band: "Full-width band"],
-                              selection: $model.settings.style.backgroundShape)
-                Text("Drag Background all the way to Solid to fully hide the English subtitle in the game. A full-width band also covers the sides.")
-                    .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                // TV'de çevirinin yeri (Mac ve Windows'taki Yeri seçimi, Android ile aynı): üstünde/altında seçilince oyundaki
-                // İngilizce altyazı da görünür; sabit yerde yükseklik kaydırıcıyla ayarlanır, bırakınca TV'de örnek altyazı çıkar.
-                if model.settings.output.showsOnTV || model.settings.output == .obs {
-                    Text("Subtitle position on TV").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                    SegmentedTabs(options: [SubtitlePlacement.cover: "Cover", .above: "Above", .below: "Below", .fixed: "Fixed"],
-                                  selection: $model.settings.style.placement)
-                    if model.settings.style.placement == .fixed {
-                        HStack {
-                            Text("Height on screen").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                            Spacer()
-                            Text(verbatim: "%\(model.settings.style.bottomPercent)").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                        }
-                        Slider(value: Binding(get: { Double(model.settings.style.bottomPercent) },
-                                              set: { model.settings.style.bottomPercent = Int($0.rounded()) }), in: 0...85) { editing in
-                            if !editing { model.sendTestSubtitle() }
-                        }
-                        .tint(Mobile.Palette.accent)
-                        Text("A sample subtitle appears on the TV when you let go of the slider. In fixed position you can also move subtitles with the ▲ and ▼ buttons on the TV remote.")
-                            .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                    } else {
-                        Text("Cover: the translation hides the English subtitle in the game. Choose Above or Below to see the English subtitle too, with the translation right above or below it.")
-                            .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                    }
-                }
-                Toggle(isOn: $model.settings.style.stackPrevious) {
-                    VStack(alignment: .leading, spacing: Mobile.Space.hair) {
-                        Text("Keep previous lines above in fast dialogue").font(Mobile.TypeScale.headline)
-                        Text("When off, each new line replaces the previous one. Needs TV app 0.9.16 or later.")
-                            .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                    }
-                }
-                .tint(Mobile.Palette.accent)
-                // Yalnız Android TV uygulaması kullanır: bazı TV'lerde (ör. TCL) uygulama içindeki PS5 görüntüsü siyah kalıyor.
-                // Katman'da TV, PS5'i kendi HDMI girişinde gösterir (Mac ve Windows'taki Görüntü modu seçimi, Android ile aynı).
-                if model.settings.output.showsOnTV {
-                    Text("Picture mode (Android TV)").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                    SegmentedTabs(options: [TVDisplayMode.auto: "Automatic", .inApp: "Inside the app", .overlay: "Overlay"],
-                                  selection: $model.settings.style.displayMode)
-                    Text("Automatic uses Overlay whenever the TV app allows it: the TV shows the PS5 on its own HDMI input and the subtitles appear on top. On some TVs the picture stays black inside the CouchSubs TV app. To show the PS5 inside the CouchSubs TV app instead, choose Inside the app; if no picture arrives there, the TV app first lists its HDMI inputs and switches to Overlay where it can. With Overlay the TV also keeps its picture mode, Game mode and HDR. The TV app from Google Play has no Overlay mode: there Automatic stays inside the app, and the TV says so on screen if Overlay is chosen.")
-                        .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                }
+            // Ek talimat (#306) yalnız yapay zekâ motorlarında; DeepL'de yoktur (Android ile aynı).
+            if engine.aiProvider != nil { AIInstructionField() }
+            // Ücretli Gemini anahtarında dakikalık istek sınırı modelin ücretli sınırına çıkar (Mac ve Windows ile aynı).
+            if engine == .gemini {
+                SettingSwitch(title: "I use a paid Gemini API key", subtitle: "Paid API keys may incur charges. Google still enforces quotas.",
+                              isOn: $model.settings.geminiPaidTier)
             }
-            DubbingTile()
-            AreaProfileTile(areas: model.gameAreas)
-            GameProfilesTile(areas: model.gameAreas)
-            AreaTile()
-            ExtraAreasTile()
-            LoginPasscodeTile()
-            Tile(spacing: 0) {
-                NavigationLink(value: Route.packs) {
-                    ListRow(symbol: "bolt.fill", tint: .pro, title: "Game packs",
-                            detail: model.settings.gamePacks ? String(localized: "On") : String(localized: "Off"))
-                }
-                RowDivider()
-                NavigationLink(value: Route.target) { ListRow(symbol: "tv", title: "Subtitle target", detail: targetName) }
-                RowDivider()
-                NavigationLink(value: Route.tvInstall) {
-                    ListRow(symbol: "arrow.down.app", title: "Install the TV app from this phone", detail: model.installedTVApp?.version)
-                }
-                RowDivider()
-                NavigationLink(value: Route.ps5) {
-                    ListRow(symbol: "gamecontroller", title: "PS5 and connection", detail: model.console?.name)
-                }
-                RowDivider()
-                NavigationLink(value: Route.about) { ListRow(symbol: "info.circle", title: "About", detail: AppIdentity.version) }
-            }
-            .buttonStyle(.plain)
-            // Deneme modu: konsol olmadan örnek görüntülerle (çeviri sürüyorsa önce durur).
-            Tile {
-                Text("Demo mode").font(Mobile.TypeScale.headline)
-                Text("Demo mode shows the whole app with sample pictures built into the app. No console, account or TV is needed.")
-                    .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if model.demoMode {
-                    Button("Exit demo mode") {
-                        model.exitDemo()
-                        path.removeAll()
-                    }
-                    .buttonStyle(.mobileSecondary)
-                } else {
-                    Button {
-                        Task {
-                            await model.startDemo()
-                            path.removeAll()
-                        }
-                    } label: {
-                        Label("Try demo mode (no console needed)", systemImage: "play.rectangle")
-                    }
-                    .buttonStyle(.mobileSecondary)
-                    .disabled(model.isStarting)
-                }
-            }
-            DeveloperSignature()
-        } bottom: {
-            if model.settings.output.showsOnTV, model.testTVNotConnected, model.tvClients == 0 {
-                MobileNote(text: String(localized: "The test subtitle did not reach the TV because the TV app is not connected. Open CouchSubs on the TV. If the TV shows a 6-digit code, don't type it anywhere: approve it in the “Pair this TV?” window that opens on this phone, then test again."))
-            }
-            Button("Send test subtitle") { model.sendTestSubtitle() }.buttonStyle(.mobileSecondary)
         }
-        .onAppear { app.analytics.screen("settings") }
     }
 
     private var choice: Choice {
@@ -514,20 +242,6 @@ struct SettingsScreen: View {
         }
     }
 
-    /// Yazı boyu TV'deki varsayılana (46) göre yüzde; telefon ekranı da aynı oranı kullanır.
-    private var percent: Int { Int((Double(model.settings.style.fontSize) / Double(SubtitleStyle().fontSize) * 100 / 10).rounded()) * 10 }
-
-    private func setPercent(_ value: Int) {
-        model.settings.style.fontSize = Int((Double(SubtitleStyle().fontSize) * Double(value) / 100).rounded())
-    }
-
-    private var targetName: String {
-        if model.settings.output == .computer { return String(localized: "This phone") }
-        if model.settings.output == .obs { return String(localized: "OBS only (stream)") }
-        if model.settings.output == .both, model.hasTV { return String(format: String(localized: "%@ and this phone"), model.tv?.name ?? "TV") }
-        return model.hasTV ? model.tv?.name ?? "TV" : String(localized: "Not set up")
-    }
-
     private func save(_ engine: TranslationEngine) async {
         checking = true
         keyResult = nil
@@ -546,6 +260,110 @@ struct SettingsScreen: View {
             keyResult = String(localized: "The API key could not be saved to this iPhone's keychain.")
         }
         checking = false
+    }
+}
+
+/// Ayarlar › Çıkış Ekranları: TV'deki yer ve biçim (Mac'teki AppearanceCard; yazı boyu ve renkler Altyazı Görünümü'nde).
+struct PlacementTile: View {
+    @EnvironmentObject private var model: PhoneModel
+
+    var body: some View {
+        Tile(spacing: Mobile.Space.unit) {
+            // TV'de çevirinin yeri (Mac ve Windows'taki Yeri seçimi, Android ile aynı): üstünde/altında seçilince oyundaki
+            // İngilizce altyazı da görünür; sabit yerde yükseklik kaydırıcıyla ayarlanır, bırakınca TV'de örnek altyazı çıkar.
+            SettingUnit(title: "Subtitle position on TV",
+                        hint: model.settings.style.placement == .fixed ? nil : "Cover: the translation hides the English subtitle in the game. Choose Above or Below to see the English subtitle too, with the translation right above or below it.") {
+                SegmentedTabs(options: [SubtitlePlacement.cover: "Cover", .above: "Above", .below: "Below", .fixed: "Fixed"],
+                              selection: $model.settings.style.placement)
+            }
+            if model.settings.style.placement == .fixed {
+                DSSliderRow(title: "Height on screen", valueText: "%\(model.settings.style.bottomPercent)",
+                            value: Binding(get: { Double(model.settings.style.bottomPercent) },
+                                           set: { model.settings.style.bottomPercent = Int($0.rounded()) }), range: 0...85, step: 1,
+                            hint: "A sample subtitle appears on the TV when you let go of the slider. In fixed position you can also move subtitles with the ▲ and ▼ buttons on the TV remote.") { editing in
+                    if !editing { model.sendTestSubtitle() }
+                }
+            }
+            SettingUnit(title: "Background area",
+                        hint: "Choose Dark under Subtitle Appearance to fully hide the English subtitle in the game. A full-width band also covers the sides.") {
+                SegmentedTabs(options: [SubtitleBackgroundShape.fit: "Fit the text", .band: "Full-width band"],
+                              selection: $model.settings.style.backgroundShape)
+            }
+            SettingSwitch(title: "Bold text", isOn: $model.settings.style.bold)
+            SettingSwitch(title: "Keep previous lines above in fast dialogue",
+                          subtitle: "When off, each new line replaces the previous one. Needs TV app 0.9.16 or later.",
+                          isOn: $model.settings.style.stackPrevious)
+            // Yalnız Android TV uygulaması kullanır: bazı TV'lerde (ör. TCL) uygulama içindeki PS5 görüntüsü siyah kalıyor.
+            // Katman'da TV, PS5'i kendi HDMI girişinde gösterir (Mac ve Windows'taki Görüntü modu seçimi, Android ile aynı).
+            if model.settings.output.showsOnTV {
+                SettingUnit(title: "Picture mode (Android TV)",
+                            hint: "Automatic uses Overlay whenever the TV app allows it: the TV shows the PS5 on its own HDMI input and the subtitles appear on top. On some TVs the picture stays black inside the CouchSubs TV app. To show the PS5 inside the CouchSubs TV app instead, choose Inside the app; the TV app then never switches to Overlay by itself: if no picture arrives, it reopens the HDMI input and lists the inputs, and you can choose Overlay there. With Overlay the TV also keeps its picture mode, Game mode and HDR. The TV app from Google Play has no Overlay mode: there Automatic stays inside the app, and the TV says so on screen if Overlay is chosen.") {
+                    SegmentedTabs(options: [TVDisplayMode.auto: "Automatic", .inApp: "Inside the app", .overlay: "Overlay"],
+                                  selection: $model.settings.style.displayMode)
+                }
+            }
+        }
+    }
+}
+
+/// Ayarlar › Çıkış Ekranları › OBS katmanı: adres görünür, kutunun içinden kopyalanır; telefonda ayrıca paylaşılır.
+struct OBSTile: View {
+    @EnvironmentObject private var model: PhoneModel
+
+    var body: some View {
+        Tile {
+            SettingUnit(title: "OBS overlay") {
+                VStack(alignment: .leading, spacing: Mobile.Space.gap) {
+                    DSCopyField(text: model.subtitleViewerAddress)
+                    // Yan yana sığmazsa alt alta (uzun Türkçe etiket kesilmesin).
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: Mobile.Space.gap) { obsButtons }
+                        ButtonStack { obsButtons }
+                    }
+                    if model.legacyTVWarning { InfoBox(text: String(localized: "The TV app is old. Update it.")) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var obsButtons: some View {
+        ShareLink(item: model.subtitleViewerAddress) { Label("Share", systemImage: "square.and.arrow.up").fixedSize() }
+            .buttonStyle(DSButtonStyle(kind: .secondary))
+        Button { model.rotateSubtitleKey() } label: { Text("Renew access key").fixedSize() }
+            .buttonStyle(DSButtonStyle(kind: .secondary))
+    }
+}
+
+/// Deneme modu: konsol olmadan örnek görüntülerle (çeviri sürüyorsa önce durur).
+struct DemoModeTile: View {
+    @EnvironmentObject private var model: PhoneModel
+    @Binding var path: [Route]
+
+    var body: some View {
+        Tile {
+            Text("Demo mode").font(Mobile.TypeScale.headline)
+            Text("Demo mode shows the whole app with sample pictures built into the app. No console, account or TV is needed.")
+                .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if model.demoMode {
+                Button("Exit demo mode") {
+                    model.exitDemo()
+                    path.removeAll()
+                }
+                .buttonStyle(.mobileSecondary)
+            } else {
+                Button {
+                    Task {
+                        await model.startDemo()
+                        path.removeAll()
+                    }
+                } label: {
+                    Label("Try demo mode (no console needed)", systemImage: "play.rectangle")
+                }
+                .buttonStyle(.mobileSecondary)
+                .disabled(model.isStarting)
+            }
+        }
     }
 }
 
@@ -600,16 +418,18 @@ private struct AIInstructionField: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        Text("Extra instruction").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+        Text("Extra instruction").font(Mobile.TypeScale.headline)
         TextField("Example: Translate swear words without softening them.", text: $text, axis: .vertical)
             .lineLimit(3...6)
-            // MobileFieldStyle ile aynı görünüm; çok satırlı alan için üstte ve altta da boşluk var.
-            .font(Mobile.TypeScale.headline.weight(.regular))
+            // Giriş kutusuyla aynı dil; çok satırlı alan tam yuvarlak olamaz, 24 köşe.
+            .font(Mobile.TypeScale.body)
             .foregroundStyle(Mobile.Palette.text)
+            .tint(Mobile.Palette.accentText)
             .padding(.horizontal, Mobile.Space.tile)
             .padding(.vertical, Mobile.Space.gap)
-            .background(Mobile.Palette.surface2, in: RoundedRectangle(cornerRadius: Mobile.Radius.control))
-            .overlay(RoundedRectangle(cornerRadius: Mobile.Radius.control).strokeBorder(Mobile.Palette.border))
+            .background(Mobile.Palette.surface2, in: RoundedRectangle(cornerRadius: Mobile.Radius.tile, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Mobile.Radius.tile, style: .continuous)
+                .strokeBorder(focused ? Mobile.Palette.accent : Mobile.Palette.border, lineWidth: focused ? 2 : 1))
             .focused($focused)
             .onAppear { text = model.settings.aiInstruction }
             .onChange(of: text) { value in
@@ -618,7 +438,7 @@ private struct AIInstructionField: View {
             .onChange(of: focused) { _ in commit() }
             .onDisappear(perform: commit)
         Text("Added to the end of the AI translator's instructions (up to 1000 characters). Leave it empty if you don't need it.")
-            .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+            .dsMuted()
     }
 
     private func commit() {
@@ -628,7 +448,7 @@ private struct AIInstructionField: View {
 }
 
 /// İkinci hesabın PS5 giriş şifresi (isteğe bağlı, 4 hane, Anahtarlık'ta). PS5 isterse oturum açılırken gönderilir.
-private struct LoginPasscodeTile: View {
+struct LoginPasscodeTile: View {
     @EnvironmentObject private var model: PhoneModel
     @State private var passcode = ""
     @State private var invalid = false
@@ -636,37 +456,32 @@ private struct LoginPasscodeTile: View {
     var body: some View {
         Tile {
             Text("PS5 login passcode").font(Mobile.TypeScale.headline)
-            HStack(spacing: Mobile.Space.inline) {
-                if model.hasLoginPasscode {
-                    Text("Passcode saved.").font(Mobile.TypeScale.headline.weight(.regular))
-                    Spacer()
-                    Button { model.removeLoginPasscode() } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .frame(width: Mobile.Control.icon, height: Mobile.Control.icon)
-                            .contentShape(Rectangle())
-                    }
-                        .foregroundStyle(Mobile.Palette.secondary)
-                        .accessibilityLabel(Text("Remove passcode"))
-                } else {
+            if model.hasLoginPasscode {
+                DSFieldChrome {
+                    Text("Passcode saved.").frame(maxWidth: .infinity, alignment: .leading)
+                } trailing: {
+                    DSFieldIconButton(symbol: "xmark.circle.fill", label: "Remove passcode") { model.removeLoginPasscode() }
+                }
+            } else {
+                DSFieldChrome {
                     SecureField("4 digits", text: $passcode)
                         .keyboardType(.numberPad)
                         .onChange(of: passcode) { value in passcode = String(value.filter(\.isNumber).prefix(LoginPasscode.length)) }
+                } trailing: {
                     Button("Save") {
                         invalid = !model.setLoginPasscode(passcode)
                         if !invalid { passcode = "" }
                     }
-                    .foregroundStyle(Mobile.Palette.accent)
+                    .font(Mobile.TypeScale.headline)
+                    .foregroundStyle(Mobile.Palette.accentText)
+                    .padding(.horizontal, Mobile.Space.gap)
+                    .frame(minHeight: Mobile.Control.icon)
                     .disabled(passcode.isEmpty)
                 }
             }
-            .font(Mobile.TypeScale.headline.weight(.regular))
-            .padding(.horizontal, Mobile.Space.tile)
-            .frame(minHeight: Mobile.Control.field)
-            .background(Mobile.Palette.surface2, in: RoundedRectangle(cornerRadius: Mobile.Radius.control))
-            .overlay(RoundedRectangle(cornerRadius: Mobile.Radius.control).strokeBorder(Mobile.Palette.border))
             if invalid { MobileNote(text: String(localized: "Enter the 4-digit passcode.")) }
             Text("Only needed if the second account has a login passcode on the PS5. CouchSubs enters it when the PS5 asks. It is kept in the Keychain.")
-                .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                .dsMuted()
         }
     }
 }
@@ -678,26 +493,71 @@ struct AboutScreen: View {
             BackHeader(title: "About")
         } content: {
             Tile {
-                LogoView(size: 56)
+                DSLogoMark(height: 40)
                 Text(verbatim: "CouchSubs \(AppIdentity.version)").font(Mobile.TypeScale.title)
-                Text(verbatim: "Copyright © 2026 Sinan Yorulmaz").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                Text(verbatim: "© 2026 Enmera").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
                 Text("CouchSubs is free and open source (AGPL-3.0). Remote Play uses chiaki-ng (AGPL-3.0).")
                     .font(Mobile.TypeScale.body).foregroundStyle(Mobile.Palette.secondary)
                 Link("Source code", destination: AppIdentity.sourceURL).font(Mobile.TypeScale.headline).tint(Mobile.Palette.accent)
             }
             // remoteplay.log, altyazi.log ve varsa tvinstall.log tek dosyada, kişisel veri maskelenmiş (Android'de de aynı;
             // masaüstünde "Günlük dosyasını göster").
-            Tile {
-                ShareLink(item: PhoneLogs(), preview: SharePreview(LogShare.fileName)) {
-                    Label("Share logs", systemImage: "square.and.arrow.up")
-                }
-                .buttonStyle(MobileButtonStyle(kind: .secondary, compact: true))
-                Text("Attach this file to your GitHub issue when reporting a problem, or send it to us.")
-                    .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+            Tile(spacing: Mobile.Space.gap) {
+                LogShareButton(fullWidth: true, title: "Share logs")
+                Text("Attach this file to your GitHub issue when reporting a problem, or send it to us.").dsMuted()
             }
         } bottom: {
             EmptyView()
         }
+    }
+}
+
+/// "Günlüğü Paylaş" (Mac'teki Günlüğü Kopyala'nın telefon karşılığı): paylaşım sayfası açılınca günlükler maskelenip tek
+/// zip dosyasında paylaşılır (Dosyalar'a kaydet, Mail, Mesajlar, AirDrop…).
+struct LogShareButton: View {
+    var fullWidth = false
+    /// Hakkında'da eski ad ("Günlükleri paylaş"; Android'deki Hakkında ile aynı), ana ekranda "Günlüğü Paylaş".
+    var title: LocalizedStringKey = "Share Log"
+
+    var body: some View {
+        ShareLink(item: PhoneLogsZip(), preview: SharePreview(PhoneLogsZip.fileName)) {
+            Label(title, systemImage: "square.and.arrow.up")
+        }
+        .buttonStyle(DSButtonStyle(kind: .secondary, fullWidth: fullWidth))
+        .frame(maxWidth: .infinity, alignment: fullWidth ? .center : .leading)
+    }
+}
+
+/// Günlüklerin zip hâli: maskelenmiş tek metin dosyası (PhoneLogs) bir klasöre konur, sistemin dosya koordinatörü klasörü
+/// zip olarak verir (ek kitaplık gerekmez).
+struct PhoneLogsZip: Transferable {
+    static let fileName = "couchsubs-logs.zip"
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .zip) { _ in SentTransferredFile(try PhoneLogsZip.file()) }
+    }
+
+    static func file() throws -> URL {
+        let text = try PhoneLogs.file()
+        let temporary = FileManager.default.temporaryDirectory
+        let folder = temporary.appendingPathComponent("CouchSubs-Logs", isDirectory: true)
+        try? FileManager.default.removeItem(at: folder)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: text, to: folder.appendingPathComponent(text.lastPathComponent))
+        let destination = temporary.appendingPathComponent(fileName)
+        var coordinatorError: NSError?
+        var copyError: Error?
+        NSFileCoordinator().coordinate(readingItemAt: folder, options: .forUploading, error: &coordinatorError) { zipped in
+            do {
+                try? FileManager.default.removeItem(at: destination)
+                try FileManager.default.copyItem(at: zipped, to: destination)
+            } catch {
+                copyError = error
+            }
+        }
+        if let coordinatorError { throw coordinatorError }
+        if let copyError { throw copyError }
+        return destination
     }
 }
 

@@ -324,6 +324,72 @@ final class TVKeeperTests: XCTestCase {
         XCTAssertEqual(control.closes, 1, "kopan bağlantı kapatılır")
     }
 
+    /// #1055 (LG OLED C4, beta.86): her yeni SSAP bağlantısı açık ve bağlı uygulamaya da açma komutu gönderiyordu; webOS
+    /// uygulamayı yeniden başlatıp HDMI görüntüsünü yeniden kuruyor, ekran kararıyordu. 30 dk boyunca bağlantı 20 sn'de bir
+    /// kopup bekçi her dakika yenilense de (alındı kesintisi) açık ve bağlı uygulamaya tek açma komutu gitmez.
+    func testOpenConnectedAppGetsNoLaunchFor30MinutesEvenWhenSSAPKeepsReconnecting() async throws {
+        let control = FakeControl(foreground: [])   // önde hep CouchSubs
+        var time = ContinuousClock.now
+        let keeper = TVKeeper(connect: { control }, appId: "com.couchsubs.tv", params: ["server": "http://1.2.3.4:8787"],
+                              tvConnected: { true }, now: { time })
+        for second in 0..<(30 * 60) {
+            time += .seconds(1)
+            if second % 20 == 0 { control.failNext = true }   // SSAP koptu
+            if second % 60 == 30 { keeper.reconnect() }        // alındı kesildi, bekçi yenilendi
+            await keeper.tick()
+        }
+        XCTAssertEqual(control.launches.count, 0)
+    }
+
+    /// Uygulama önde ama bağlı değil (yanıtsız): yeniden kurulan bağlantıda geri çekilerek açılır (30 sn, 1, 2, 5 dk), her
+    /// kopuşta değil. İlk açılışta bağlı değilse eskisi gibi hemen açılır.
+    func testUnresponsiveAppIsReopenedWithBackoff() async throws {
+        let control = FakeControl(foreground: [])
+        var time = ContinuousClock.now
+        let keeper = TVKeeper(connect: { control }, appId: "com.couchsubs.tv", params: [:], tvConnected: { false }, now: { time })
+        await keeper.tick()
+        XCTAssertEqual(control.launches.count, 1, "ilk açılış")
+        for _ in 0..<(10 * 60) {
+            time += .seconds(1)
+            control.failNext = true   // her saniye kopuyor: her tur yeni bağlantı
+            await keeper.tick()
+            await keeper.tick()
+        }
+        // 10 dk'da: ilk yeniden açma, +30 sn, +60 sn, +120 sn, sonra 5 dk'da bir → en çok 6.
+        XCTAssertLessThanOrEqual(control.launches.count, 1 + 6)
+        XCTAssertGreaterThanOrEqual(control.launches.count, 1 + 4)
+    }
+
+    /// beta.89: kurulumdan sonra uygulama kapatıldı; sunucu kopan akışı henüz fark etmese de (bağlı görünür) bir kez açılır,
+    /// sonraki bağlantılarda #1055 kuralı sürer (bağlı uygulamaya açma gitmez).
+    func testReopenAfterCloseLaunchesOnceEvenIfTheAppStillLooksConnected() async throws {
+        let control = FakeControl(foreground: [])
+        let keeper = TVKeeper(connect: { control }, appId: "com.couchsubs.tv", params: ["server": "http://1.2.3.4:8787"],
+                              tvConnected: { true })
+        await keeper.tick()
+        XCTAssertEqual(control.launches.count, 0)
+        keeper.reopenApp()
+        await keeper.tick()
+        XCTAssertEqual(control.launches.count, 1)
+        keeper.reconnect()
+        await keeper.tick()
+        XCTAssertEqual(control.launches.count, 1)
+    }
+
+    /// Çeviri başlarken uygulama zaten açık ve bağlıysa açma komutu gitmez; kapalıysa (önde HDMI) açılır.
+    func testFirstOpenSkipsAConnectedAppButOpensAClosedOne() async throws {
+        let open = FakeControl(foreground: [])
+        let keeperOpen = TVKeeper(connect: { open }, appId: "com.couchsubs.tv", params: [:], tvConnected: { true })
+        await keeperOpen.tick()
+        await keeperOpen.tick()
+        XCTAssertEqual(open.launches.count, 0)
+
+        let closed = FakeControl(foreground: ["com.webos.app.hdmi2"])
+        let keeperClosed = TVKeeper(connect: { closed }, appId: "com.couchsubs.tv", params: [:], tvConnected: { false })
+        await keeperClosed.tick()
+        XCTAssertEqual(closed.launches.count, 1)
+    }
+
     func testReportsWhetherTheTVAppCouldBeOpened() async throws {
         // Açma sessizce başarısız oluyordu; ana ekran nedenini söylesin diye her denemenin sonucu bildirilir.
         struct Off: Error {}

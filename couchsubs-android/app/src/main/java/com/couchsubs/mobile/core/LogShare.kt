@@ -22,6 +22,7 @@ object LogShare {
         "rp-?regist-?key", "regist_?key", "registkey", "rp_?key", "rp-key", "rpkey", "morning", "rp-auth", "rp-did",
         "session ?id", "sessionid", "host-?id", "npsso", "access_token", "refresh_token", "id_token", "token",
         "authorization", "password", "passcode", "client_secret", "xuid", "gamertag", "uhs", "userhash", "email", "e-posta",
+        "passphrase", "api[ _-]?key", "apikey", "client[ _-]?secret", "secret",
     )
 
     private val rules: List<Pair<Regex, String>> = run {

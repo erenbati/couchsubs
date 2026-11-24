@@ -452,6 +452,9 @@ public sealed class ScreenTextDetector
     /// bileşen ve sakin zemin" yetiyordu: GTA 6 "Gone Fishing" (gece) menüden sonra görev yazısı, PS5 bildirimi ve HUD üç
     /// bileşen, karanlık zemin sakin sayıldı; menü durumu bitmedi, altyazı bütün oturum okunmadı.
     /// </summary>
+    /// <summary>Menü durumu <see cref="MenuLifeMs"/> dolduğu için bitti (<see cref="IsMenu"/>); <see cref="Update"/> bir kez kullanır.</summary>
+    private bool menuExpired;
+
     private bool IsMenu(List<(Cells Cells, List<int> Tiles)> components, long now)
     {
         if (components.Count < MenuComponents) return false;
@@ -465,6 +468,7 @@ public sealed class ScreenTextDetector
             var activity = menuAnchors.Count == 0 ? menuEnteredAt : menuAnchors.Max(index => tiles[index].StableSince);
             if (now - Math.Max(activity, menuEnteredAt) <= MenuLifeMs) return true;
             menuFloor = now;
+            menuExpired = true;
             return false;
         }
         var appeared = components.Select(item => item.Tiles.Max(index => tiles[index].StableSince)).ToList();
@@ -481,7 +485,10 @@ public sealed class ScreenTextDetector
         menu = inMenu;
         // Menü kapandı: karoları artık aday olmayan menü alanları hemen kalkar (700 ms beklemez). Karoları hâlâ yerinde
         // duran alan (seçim gezinirken menü durumu bir örnek düşse de) kalır; kutusu yanıp sönmez.
-        if (closed) tracked.RemoveAll(item => item.Menu && !item.Tiles.Any(index => candidate[index]));
+        // Süre dolup biten menüde yazılar yerinde dursa da bütün menü alanları kalkar: oyun menüden çıkınca çevirileri TV'de
+        // kalıyordu (#1198). RegionWatcher kalkan alana boş çeviri gönderir.
+        if (closed) tracked.RemoveAll(item => item.Menu && (menuExpired || !item.Tiles.Any(index => candidate[index])));
+        menuExpired = false;
         var matched = new HashSet<Tracked>();
         foreach (var (cells, list) in components)
         {

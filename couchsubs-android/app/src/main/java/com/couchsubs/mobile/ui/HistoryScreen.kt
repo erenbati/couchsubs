@@ -38,7 +38,7 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-fun HistoryScreen(onBack: () -> Unit) {
+fun HistoryScreen(onBack: (() -> Unit)?) {
     val context = LocalContext.current
     val version by Services.historyVersion.collectAsState()
     val entries = remember(version) { Services.history.entries }
@@ -94,8 +94,8 @@ private fun HistoryRow(entry: SubtitleHistory.Entry) {
         .semantics(mergeDescendants = true) { onLongClick(copyLabel) { copyLine(); true } }
         .padding(vertical = Tokens.Space.inline), verticalArrangement = Arrangement.spacedBy(Tokens.Space.hair)) {
         Text("$time · " + stringResource(if (pack) R.string.history_pack else R.string.history_engine),
-            style = Tokens.Type.caption.copy(fontFamily = FontFamily.Monospace), color = if (pack) Tokens.Color.pro else Tokens.Color.secondary)
-        Text(entry.translation, style = Tokens.Type.body, color = Tokens.Color.text)
+            style = Tokens.Type.mono, color = if (pack) Tokens.Color.accentText else Tokens.Color.secondary)
+        Text(entry.translation, style = Tokens.Type.body.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium), color = Tokens.Color.text)
         Text(entry.source, style = Tokens.Type.caption, color = Tokens.Color.secondary)
     }
 }

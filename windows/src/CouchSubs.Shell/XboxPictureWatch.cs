@@ -20,8 +20,11 @@ public readonly record struct XboxPictureVerdict(XboxPictureVerdictKind Kind, st
 /// <c>disconnected</c> yalnız günlüğe yazılıyor, oynatıcı donmuş video öğesini okumaya göndermeyi sürdürüyordu: ana
 /// ekran "bağlı" diyor, altyazı donuyor ve bir daha gelmiyordu (X'te kullanıcı bildirimi, iPhone + Xbox Series S).
 /// Kare <see cref="WarnAfterMs"/> gelmezse (bağlantı <c>disconnected</c> iken 1 sn) uyarı gösterilir;
-/// <see cref="StallAfterMs"/> gelmezse ya da bağlantı <c>failed</c> olursa oturum kapatılıp 5, 15, 45 sn aralıklarla
-/// yeniden kurulur. CouchSubsCore XboxPictureWatch (iPhone, Mac) ve Android'deki XboxPictureWatch ile birebir.
+/// <see cref="StallAfterMs"/> gelmezse ya da bağlantı <c>failed</c> olursa oturum kapatılıp bir kez, 5 sn sonra yeniden
+/// kurulur. İlk kareden sonraki <see cref="StartupGraceMs"/> içinde yalnız <c>failed</c> oturumu kapatır: yayının başında
+/// Xbox görüntüyü birkaç saniye bekletebiliyor (yükleme, "uzaktan yürütme başlatıldı" bildirimi); eskiden bu boşlukta oturum
+/// kapatılıp yeniden açılıyor, Xbox'ta başladı/durdu döngüsü oluyordu (Play, Android beta.85). CouchSubsCore
+/// XboxPictureWatch (iPhone, Mac) ve Android'deki XboxPictureWatch ile birebir.
 /// </summary>
 public sealed class XboxPictureWatch
 {
@@ -29,10 +32,13 @@ public sealed class XboxPictureWatch
     public const long StallAfterMs = 12_000;
     /// <summary>Bağlantı <c>disconnected</c> iken uyarı için yeterli boşluk (bağlantı takılınca kareler hemen kesilir).</summary>
     public const long IceWarnAfterMs = 1000;
+    /// <summary>İlk kareden sonra bu süre içinde kare boşluğu oturumu kapatmaz (yalnız uyarı); <c>failed</c> yine kapatır.</summary>
+    public const long StartupGraceMs = 30_000;
 
     /// <summary>ICE/WebRTC bağlantı durumunun bekçiyi ilgilendiren kısmı.</summary>
     public enum Ice { Connected, Disconnected, Failed, Other }
 
+    private long? firstFrameMs;
     private long? lastFrameMs;
     private long? iceLostSinceMs;
     private bool iceFailed;
@@ -40,7 +46,17 @@ public sealed class XboxPictureWatch
     /// <summary>Uyarı gösteriliyor.</summary>
     public bool Warned { get; private set; }
 
-    public void FrameArrived(long atMs) => lastFrameMs = atMs;
+    public void FrameArrived(long atMs)
+    {
+        firstFrameMs ??= atMs;
+        lastFrameMs = atMs;
+    }
+
+    /// <summary>
+    /// Görüntü akıyor mu: son kare <see cref="WarnAfterMs"/>'den yeni. Akan yayın canlı tutma hatasıyla kapatılmaz
+    /// (bkz. <see cref="XboxKeepalive.ShouldEnd"/>).
+    /// </summary>
+    public bool IsFlowing(long atMs) => lastFrameMs is { } last && atMs - last < WarnAfterMs;
 
     public void IceChanged(Ice state, long atMs)
     {
@@ -68,7 +84,8 @@ public sealed class XboxPictureWatch
         var iceLost = iceLostSinceMs is not null;
         if (iceFailed) return XboxPictureVerdict.Stalled("Xbox ICE bağlantısı koptu (failed)");
         var gap = atMs - last;
-        if (gap >= StallAfterMs)
+        var starting = firstFrameMs is { } first && atMs - first < StartupGraceMs;
+        if (gap >= StallAfterMs && !starting)
             return XboxPictureVerdict.Stalled($"Xbox'tan {gap / 1000} sn'dir görüntü gelmiyor ({(iceLost ? "ICE disconnected" : "bağlantı açık görünüyor")})");
         var trouble = gap >= WarnAfterMs || (iceLost && gap >= IceWarnAfterMs);
         if (trouble && !Warned)

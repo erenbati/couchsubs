@@ -19,9 +19,16 @@ public final class SubtitlePipeline {
     /// Satır ekrandan bundan uzun süre önce kalktıysa geç gelen çevirisi gösterilmez (sonraki sahnenin üstüne düşmesin).
     /// Yavaş çeviride (ücretsiz motor, zayıf işlemci) art arda gelen satırların çevirisi satır kalktıktan bir iki saniye
     /// sonra gelir; sınır 1 sn iken üç satırlık konuşmanın yalnız ilki görünüyordu.
+    /// Süre satırın kalktığı andan, satır sırada beklediyse çevirisinin başladığı andan sayılır: önceki satırların
+    /// çevirisini bekleyen satır sıranın gecikmesi yüzünden atılmaz.
     public static let lateResultMs = 2500
+    /// Arkasından yeni satır gelmiş (konuşma sürüyor) satırın geç gelen çevirisi bu süreye kadar yine gösterilir; yeni
+    /// satır onun ardından gider, sıra bozulmaz. Daha eskisi hiçbir zaman gösterilmez. GitHub #893: yapay zekâ çevirisi
+    /// satır başına bir iki saniye sürüyor; art arda gelen satırların ilki yenisi geldikten 2,5 sn sonra çevrilince
+    /// atılıyor ya da yarıda bırakılıyordu, bazı satırlar TV'ye hiç gitmiyordu (ücretsiz motorda olmuyordu).
+    public static let queuedLateResultMs = 8000
     /// Çeviri sürerken sırada en çok bu kadar satır bekler; daha eskisi atlanır (kuyruk konuşma hızıyla büyümesin).
-    public static let maxWaiting = 2
+    public static let maxWaiting = 4
     private static let rememberedPairs = 8
     /// Bozuk okunan (OCR izi taşıyan) ve pakette bulunmayan satır en çok bu kadar bekletilir: aynı satırın düzgün okuması
     /// gelirse o çevrilir (Windows: PackWaitMs).
@@ -67,6 +74,8 @@ public final class SubtitlePipeline {
         let read: ReadInfo
         /// Satırın ekrandan kalktığı an (hâlâ ekrandaysa nil).
         var leftAt: Int?
+        /// Çevirisinin başladığı an (sırada bekliyorsa nil).
+        var startedAt: Int?
         /// Yerine aynı cümlenin uzamış okuması geldi (daktilo efekti); çevirisi gösterilmez.
         var superseded = false
         /// Mevcut gösterim kurallarına göre elendi (daha yeni satır gösterildi ya da süresi doldu); iptali dinlemeyen
@@ -117,9 +126,16 @@ public final class SubtitlePipeline {
     private var stickyRows = StickyRows()
     /// Bu oturumda kesin altyazının okunduğu yükseklikler: oradaki kısa satır sahne yazısı sayılmaz (`SceneText`).
     private var subtitleBand = SubtitleBand()
+    /// Oyunun altyazısı koyu yazı mı (açık zemindeki koyu yazı kuralı o oturumda kapanır, `InkTone`; GitHub #1124).
+    private var darkInkStyle = DarkInkStyle()
     /// Günlüğe yazılmış son sahne yazıları (her karede yeniden yazılmasın).
     private var loggedSceneText: [String] = []
+    /// Karara bağlanmış (atılan ya da gösterilen) satırlar, ekranda durdukça (`SettledText`): zaten hedef dilde olan
+    /// bloğun bozuk okunmuş parçası çevrilmez, aynı satır değişmeyen ekranda yeniden işlenmez.
+    private var settled = SettledText()
     private var mission = MissionLine()
+    /// Düşürülen ya da bekletilen satırın nedeni, sınırlı ve tekrarsız (`DropLog`).
+    private let drops: DropLog
     /// Görev satırının bölgesi değişti (nil: görev kalktı). Görev altyazıya girmez; bölgesi "auto-mission" ek alanı olarak
     /// kendi yerinde ve özgün stilinde gösterilir (bkz. `MissionLine`).
     public var onMissionChanged: ((CropRegion?) -> Void)?
@@ -154,6 +170,8 @@ public final class SubtitlePipeline {
     private var phoneLookedAt: Int?
     /// Son yazı tanımanın süresi (ms); kare değişmeyip okuma yeniden kullanılınca da o okumanın süresi geçerlidir.
     private var lastReadMs: Int?
+    /// Son yazı tanımanın süresi (ms): kare sıklığı okuma yavaşsa seyrekleşir (`FrameCadence`).
+    public var lastOcrMs: Int? { lastReadMs }
     /// İşlenen karenin okunması (satır kararlı olunca isteğe geçer).
     private var currentRead = ReadInfo(capturedAt: 0)
 
@@ -182,6 +200,9 @@ public final class SubtitlePipeline {
     public var skipsTurkish = true
     /// Hiçbir pakette bulunmayan kararlı satır (ortak havuz için).
     public var onPackMiss: ((String) -> Void)?
+    /// Altyazı alanındaki blok sahne yazısı sayılıp atıldı (`SceneText.reason`); telefon çevirisi kapalıyken telefon
+    /// listesi için ipucu (`GamePhoneHint`). Kararları değiştirmez.
+    public var onSceneTextDropped: ((String) -> Void)?
     /// Son gösterilen çevirinin nereden geldiği: "paket" ya da "motor" (günlük ve sayım için).
     public private(set) var lastOrigin: String?
     /// Bu hatta paketten gelen satır sayısı.
@@ -213,6 +234,7 @@ public final class SubtitlePipeline {
         self.now = clock
         self.stabilizer = SubtitleStabilizer(clock: clock)
         self.own = OwnSubtitles(clock: clock)
+        self.drops = DropLog(clock: clock)
         sessionStart = clock()
         quiet = QuietReads(since: sessionStart)
     }
@@ -297,6 +319,8 @@ public final class SubtitlePipeline {
             onReadResult?(result.failure)
             scheduler.record(visible.text)
         }
+        // Karara bağlanmış satırlar karede hâlâ okunuyor mu (ekran değişti mi; `SettledText`).
+        settled.observe(visible.lines.map(\.text), at: now())
         // Kumanda ipuçları ("R2 Swing") altyazı değildir; çevrilmez, yeri de altyazının yerine katılmaz.
         // Yazı tanımanın uydurduğu sözcük çöpleri ("ou$3e") de çevirmene gitmez.
         // Alandaki menü ve köşe göstergeleri de altyazı değildir; yalnız altyazı bloğu çevrilir ve kutusu ona göre olur.
@@ -327,15 +351,27 @@ public final class SubtitlePipeline {
             log(mission.region == nil ? "görev satırı kalktı" : "görev satırı kendi yerinde gösteriliyor")
             onMissionChanged?(mission.region)
         }
+        for line in mission.dropped {
+            drops.note("MissionLine", "\(MissionLine.settleMs / 1000) sn dolmadan kalktı, görev sayılmadı, çevrilmedi", line, log: onLog)
+        }
         var edge: [Reading] = []
         var sceneTexts: [String] = []
         var staleTexts: [String] = []
         let sticky = stickyRows, readAt = now()
-        let reading = rows.subtitleBlock(in: place, band: subtitleBand, dropped: { [weak self] block, reason in
+        // Açık zemindeki koyu yazı (duvardaki kâğıt ilan) altyazı değildir (`InkTone`, GitHub #1124); oyunun altyazısı koyu
+        // yazıysa (`DarkInkStyle`) renge bakılmaz.
+        var darkBlocks: [Reading] = []
+        let darkInk = darkInkStyle.isGameStyle ? nil : InkTone.sampler(area)
+        let reading = rows.subtitleBlock(in: place, band: subtitleBand, darkInk: darkInk, dropped: { [weak self] block, reason in
             sceneTexts += block.lines.map(\.text)
+            if reason == InkTone.reason { darkBlocks.append(block) }
             self?.logSceneText(block.text, reason)
+            self?.onSceneTextDropped?(reason)
         }, notices: { edge.append($0.placed(in: place)) },
            age: { sticky.unchangedMs($0, at: readAt) }, stale: { staleTexts += $0.lines.map(\.text) })
+        for block in darkBlocks where darkInkStyle.observe(block, in: place) {
+            log("koyu yazılı altyazı: bu oyunun altyazısı koyu yazı sayıldı, açık zemindeki koyu yazı bu oturumda atılmıyor")
+        }
         logStale(staleTexts)
         logLeftOut(rows, chosen: reading, logged: sceneTexts + staleTexts + edge.flatMap { $0.lines.map(\.text) })
         // Kenardaki bildirim kartı altyazının yerinde (ekranın ortasında) değil, kendi yerinde çevrilir.
@@ -484,8 +520,8 @@ public final class SubtitlePipeline {
     }
 
     /// Süren çeviri artık gösterilemeyecekse üretimi iptal eder, böylece sıradaki satır onu beklemez. Yalnız iki durumda:
-    /// daha yeni bir satır ekranda gösterilmişse, ya da satır `lateResultMs`'ten önce kalkmış, ekranda değil ve sırada
-    /// gösterilebilir yeni bir satır bekliyorsa. Ekranda duran satır üretimi ne kadar uzarsa uzasın iptal edilmez.
+    /// daha yeni bir satır ekranda gösterilmişse, ya da satırın çevirisi artık geç (`isLate`), satır ekranda değil ve
+    /// sırada gösterilebilir yeni bir satır bekliyorsa. Ekranda duran satır üretimi ne kadar uzarsa uzasın iptal edilmez.
     /// İptal edilen satır ekrana geri gelirse (`restore`) yeniden çevrilir. Windows (SubtitlePipeline.cs) ve Android
     /// (SubtitlePipeline.kt) aynı kuralları uygular.
     private func abandonUndisplayableTranslation() {
@@ -493,16 +529,25 @@ public final class SubtitlePipeline {
               work != nil else { return }
         let time = now()
         let replaced = current.number < lastShown
-        let expired = current.number > lastShown && current.number != lineOnScreen
-            && current.leftAt.map { time - $0 > Self.lateResultMs } == true
+        let expired = current.number > lastShown && current.number != lineOnScreen && isLate(current, at: time)
         guard replaced || expired else { return }
         let hasWaiting = waiting.contains {
-            $0.session == session && !$0.superseded && !$0.abandoned && !($0.leftAt.map { time - $0 > Self.lateResultMs } == true)
+            $0.session == session && !$0.superseded && !$0.abandoned && !isLate($0, at: time)
         }
         guard replaced || hasWaiting else { return }
         current.abandoned = true
         log(current, replaced ? "bırakıldı: daha yeni satır gösterildi" : "bırakıldı: gösterim süresi doldu, yeni satır bekliyor")
         work?.cancel()
+    }
+
+    /// Satırın çevirisi artık gösterilemeyecek kadar geç mi. Ekrandaki satır hiçbir zaman geç değildir. Süre satırın
+    /// kalktığı andan, sırada beklediyse çevirisinin başladığı andan sayılır (`lateResultMs`); arkasından yeni satır
+    /// gelmişse yeni satır onu beklediği için `queuedLateResultMs`'e kadar gösterilir (GitHub #893). Windows ve Android aynı.
+    private func isLate(_ request: Request, at time: Int) -> Bool {
+        guard let left = request.leftAt else { return false }
+        if time - left > Self.queuedLateResultMs { return true }
+        if request.number < lastRequested { return false }
+        return time - max(left, request.startedAt ?? time) > Self.lateResultMs
     }
 
     /// Süren ve sırada bekleyen istekler.
@@ -537,6 +582,7 @@ public final class SubtitlePipeline {
     /// Bozuk ya da yarım olabilecek okuma hemen çevrilmez, kısa süre bekletilir; aynı satırın daha iyi okuması gelirse o
     /// çevrilir. Temiz ve tam cümle ya da pakette bulunan satır beklemeden gider (Windows: TranslateOrHold).
     private func translateOrHold(_ source: String, box: TextBox?) {
+        if quietDrop(source, box: box) { return }
         if restoreQueued(source) { return }
         if nameRead(source) { return }
         if !holdReadings { lineLeft(); return enqueue(source, box: box) }
@@ -555,6 +601,35 @@ public final class SubtitlePipeline {
         guard wait > 0 else { return enqueue(source, box: box) }
         held = Held(source: source, box: box, since: time, wait: wait, score: Rereads.score(source), read: currentRead)
         log("bekletiliyor (en çok \(wait) ms): \(SubtitleLog.excerpt(source))")
+    }
+
+    /// Kararlı satır altyazı adayı değil (`SettledText`): karara bağlanmış ve hâlâ ekranda duruyor (sessizce geçilir),
+    /// Türkçe (harfleri bozulmuş da olsa; bekletilmeden atılır), zaten hedef dilde olan aynı yerdeki bloğun bozuk okunmuş
+    /// parçası, ya da kapanmayan parantezle bölünmüş çöp okuma (`OcrNoise.looksBracketGarbled`). Atılan satır günlüğe bir
+    /// kez yazılır. Windows (QuietDrop) ve Android (quietDrop) aynı kuralları uygular.
+    private func quietDrop(_ source: String, box: TextBox?) -> Bool {
+        if settled.isSettled(source) {
+            if let reason = settled.noteSkip(source) {
+                drops.note("SettledText", "karara bağlanmış satırla \(reason), yeniden işlenmedi", source, log: onLog)
+            }
+            return true
+        }
+        let note: String
+        let target = skipsTurkish && TurkishText.looksTurkish(source)
+        if target {
+            note = "\(SubtitleLog.excerpt(source)) → zaten Türkçe, çevrilmedi"
+        } else if settled.isTargetFragment(source, box: box) {
+            note = "altyazı sayılmadı: \(SubtitleLog.excerpt(source)) zaten hedef dilde olan satırın bozuk okunmuş parçası, çevrilmedi"
+        } else if OcrNoise.looksBracketGarbled(source) {
+            note = "altyazı sayılmadı: \(SubtitleLog.excerpt(source)) çöp okuma (kapanmayan parantezle bölünmüş sözcük), çevrilmedi"
+        } else {
+            return false
+        }
+        // Ekrandaki satırın yerine altyazı olmayan yazı geldi: önceki satır kalkmış sayılır.
+        lineLeft()
+        settled.settle(source, box: box, target: target, shown: false, loose: true, at: now())
+        log(note)
+        return true
     }
 
     /// Konuşan adı sonradan okundu: ilk karede renkli ad okunamayıp cümle adsız gitmiş, sonraki karede aynı cümle
@@ -615,13 +690,16 @@ public final class SubtitlePipeline {
         let request = Request(number: lastRequested, source: source, box: box, session: session, read: read ?? currentRead)
         lineOnScreen = request.number
         lastSent = (source, Rereads.score(source), now())
-        if let packed = packMatch(request) {
-            showPacked(request, packed)
+        // Türkçe satır (harfleri bozulmuş da olsa) pakette aranmaz: paket anahtarları İngilizcedir; PS5'in Türkçe menü
+        // satırı ("Yakin zamanda olu...") paketteki bozuk bir parçayla eşleşip "Yakın zamanda öldü." gösteriliyordu.
+        if skipsTurkish, TurkishText.looksTurkish(source) {
+            remember(request.number, source, nil)
+            settled.settle(source, box: box, target: true, shown: false, loose: true, at: now())
+            log(request, "\(SubtitleLog.excerpt(source)) → zaten Türkçe, çevrilmedi")
             return
         }
-        if skipsTurkish, TurkishText.isSure(source) {
-            remember(request.number, source, nil)
-            log(request, "\(SubtitleLog.excerpt(source)) → zaten Türkçe, çevrilmedi")
+        if let packed = packMatch(request) {
+            showPacked(request, packed)
             return
         }
         onPackMiss?(source)
@@ -700,6 +778,7 @@ public final class SubtitlePipeline {
         let shouldSend = stabilizer.shouldSend(source: source, translation: translated)
         remember(request.number, source, shouldSend ? translated : nil)
         let pack = packName?().map { "paket:" + $0 } ?? "paket"
+        settled.settle(source, box: request.box, target: !shouldSend, shown: shouldSend, at: now())
         guard shouldSend else {
             log(request, "\(SubtitleLog.excerpt(source)) → \(pack), zaten hedef dilde, gösterilmedi")
             return
@@ -722,8 +801,12 @@ public final class SubtitlePipeline {
         if restoreQueued(source) { return }
         if let pair = pairs.last(where: { $0.source == source }) {
             lineOnScreen = pair.number
+            // Atılan satır ekranda durdukça her geri gelişi günlüğe yazılmaz (`SettledText`).
+            guard let translation = pair.translation else {
+                if !settled.isSettled(source) { log("#\(pair.number) geri geldi: \(SubtitleLog.excerpt(source))") }
+                return
+            }
             log("#\(pair.number) geri geldi: \(SubtitleLog.excerpt(source))")
-            guard let translation = pair.translation else { return }
             send(translation, source: source, durationMs: 15000, box: box, replaces: revisesShown(source))
             lastPair = (source, translation)
             lastBox = box
@@ -735,7 +818,9 @@ public final class SubtitlePipeline {
             lineOnScreen = request.number
             return
         }
-        // Çevirisi hiç yoksa (atlanmış ya da başarısız olmuş) normal yoldan çevrilir.
+        // Çevirisi hiç yoksa (atlanmış ya da başarısız olmuş) normal yoldan çevrilir; altyazı adayı olmayan satır
+        // (Türkçe, Türkçe bloğun parçası, çöp ya da ekranda duran atılmış satır) yine atılır.
+        if quietDrop(source, box: box) { return }
         enqueue(source, box: box)
     }
 
@@ -748,11 +833,11 @@ public final class SubtitlePipeline {
             for old in waiting {
                 if old.session != session {
                     log(old, "atıldı: oturum bitti")
-                } else if let left = old.leftAt, time - left > Self.lateResultMs {
+                } else if let left = old.leftAt, isLate(old, at: time) {
                     log(old, "atıldı: çevrilmeden ekrandan kalktı (\(time - left) ms önce)")
                 }
             }
-            waiting.removeAll { $0.session != session || $0.leftAt.map { time - $0 > Self.lateResultMs } == true }
+            waiting.removeAll { $0.session != session || isLate($0, at: time) }
             inFlight = waiting.isEmpty ? nil : waiting.removeFirst()
         }
     }
@@ -770,6 +855,7 @@ public final class SubtitlePipeline {
     private func translate(_ request: Request) async {
         var source = request.source
         let started = now()
+        request.startedAt = started
         let probe = TranslationProbe()
         do {
             let translator = self.translator
@@ -793,6 +879,7 @@ public final class SubtitlePipeline {
             onTranslationResult?(nil)
             let shouldSend = stabilizer.shouldSend(source: input, translation: sentence)
             remember(request.number, source, shouldSend ? translated : nil)
+            if !shouldSend { settled.settle(source, box: request.box, target: true, shown: false, at: now()) }
             guard request.number > lastShown, shouldSend, !request.superseded else {
                 let reason = !shouldSend ? "zaten hedef dilde"
                     : request.superseded ? "uzamış okuması geldi" : "daha yeni satır gösterildi (#\(lastShown))"
@@ -801,12 +888,13 @@ public final class SubtitlePipeline {
             }
             let onScreen = request.number == lineOnScreen
             // Satır ekrandan çoktan kalktıysa çevirisi sonraki sahnenin üstüne düşmesin.
-            if !onScreen, let left = request.leftAt, now() - left > Self.lateResultMs {
+            if !onScreen, let left = request.leftAt, isLate(request, at: now()) {
                 log(request, "\(result), geç: satır \(now() - left) ms önce kalktı, gösterilmedi")
                 return
             }
             let metrics = measure(request, translation: (started, finished), origin: .engine)
             log(request, "\(result), gösterildi\(onScreen ? "" : " (satır kalkmıştı)")")
+            settled.settle(source, box: request.box, target: false, shown: true, at: now())
             lastShown = request.number
             // Satır hâlâ ekrandaysa kalkınca silinir; kalktıysa okunacak kadar gösterilir.
             send(translated, source: source, durationMs: onScreen ? 15000 : Self.readingTime(for: translated), box: request.box,
@@ -938,7 +1026,9 @@ public final class SubtitlePipeline {
         scheduler.reset()
         stickyRows.reset()
         subtitleBand.reset()
+        darkInkStyle.reset()
         loggedSceneText.removeAll()
+        settled.reset()
         mission.reset()
         notices.reset()
         echo?.reset()

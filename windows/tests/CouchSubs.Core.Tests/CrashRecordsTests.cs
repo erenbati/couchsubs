@@ -272,6 +272,37 @@ public sealed class CrashRecordsTests : IDisposable
         Assert.Contains("R14 + RAX + 0x10 toplamının (0x000001BE52AF4A67) yalnız alt 32 biti", CrashRecords.Analyze(second));
     }
 
+    /// <summary>
+    /// #903, beta.86 kaydı (Ryzen 7 9850X3D): komut baytları geldi. RIP'te <c>41 0F B6 44 04 10</c> =
+    /// <c>movzx eax, byte [r12+rax+0x10]</c> (AutoLevel'da kare baytının okunuşu); 0x67 öneki yok, yani komut 64 bit adres
+    /// istiyor. Erişilen adres yine R12 + RAX + 0x10'un alt 32 biti: kısaltma koddan değil.
+    /// </summary>
+    [Fact]
+    public void Issue903Beta86InstructionAsksForA64BitAddress()
+    {
+        const string summary =
+            "İstisna kodu: 0xC0000005 (erişim ihlali)\r\nİstisna adresi: 0x00007FFB5BD5EB9F\r\nModül: modül yok (adres yüklü hiçbir modüle düşmüyor)\r\n" +
+            "Erişim: okuma 0x00000000A76EA4DC\r\nAşama: ilk şans\r\nYazmaçlar:\r\n" +
+            "  RIP=0x00007FFB5BD5EB9F RSP=0x00000017856FED80 RBP=0x000000000057ED00 RAX=0x0000000000409A7C\r\n" +
+            "  RBX=0x000001459C0D03D0 RCX=0x00000000000002CD RDX=0x000000000057ED00 RSI=0x0000000000001710\r\n" +
+            "  RDI=0x00000017856FEDB0 R8=0x00000000000000AB R9=0x0000000000409A7C R10=0x00000000000005C4\r\n" +
+            "  R11=0x0000000000409A7C R12=0x00000145A72E0A50 R13=0x00000145A72E0A50 R14=0x00000145B7E527E8\r\n" +
+            "  R15=0x00000145B7E527E8\r\n" +
+            "Komut baytları (RIP-16 | RIP+32):\r\n" +
+            "  8B 54 24 08 44 3B CA 0F 83 28 01 00 00 41 8B C1 | 41 0F B6 44 04 10 0F B6 44 07 10 45 85 DB 0F 8C 98 00 00 00 44 8D 65 FD 45 3B DC 0F 8D 8B 00 00 \r\n" +
+            "Yığındaki modül adresleri:\r\n  coreclr.dll+0x00185233\r\n";
+
+        Assert.False(CrashRecords.AddressSizeOverride(summary));
+        var analysis = CrashRecords.Analyze(summary)!;
+        Assert.Contains("R12 + RAX + 0x10 toplamının (0x00000145A76EA4DC) yalnız alt 32 biti", analysis);
+        Assert.Contains("0x67) yok", analysis);
+
+        // Önekli komut (67 41 0F B6 …) ve okunamamış baytlar ayrı söylenir.
+        Assert.True(CrashRecords.AddressSizeOverride(summary.Replace("| 41 0F B6", "| 67 41 0F B6", StringComparison.Ordinal)));
+        Assert.Null(CrashRecords.AddressSizeOverride(Issue903("okuma 0x000000000660BC9C", FirstCrashRegisters)));
+        Assert.DoesNotContain("0x67", CrashRecords.Analyze(Issue903("okuma 0x000000000660BC9C", FirstCrashRegisters))!);
+    }
+
     [Fact]
     public void OrdinaryAccessViolationsAreNotCalledTruncated()
     {

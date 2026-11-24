@@ -375,6 +375,24 @@ test("oyun adı anahtarı aynı oyunun farklı yazımlarını birleştirir", () 
   assert.equal(gameSlug("gta 6"), "gta-6");
 });
 
+test("literal X and V in game titles do not collide with numbered sequels", () => {
+  assert.equal(gameKey("Mega Man X"), "mega man x");
+  assert.notEqual(gameKey("Mega Man X"), gameKey("Mega Man 10"));
+  assert.equal(gameKey("X-Men"), "x men");
+  assert.equal(gameKey("V-Rally"), "v rally");
+  assert.equal(gameKey("Mega Man X2"), "mega man x 2");
+  assert.equal(gameKey("GTA V"), "gta 5");
+  assert.equal(gameKey("Final Fantasy X"), "final fantasy 10");
+});
+
+test("distinct literal-X game titles keep separate pool jobs and package IDs", () => {
+  const rows = [{ game: "Mega Man X", lines: 250 }, { game: "Mega Man 10", lines: 300 }];
+  const votes = new Map(rows.map(({ game }) => [gameKey(game), 3]));
+  const jobs = nameJobs(rows, votes);
+  assert.deepEqual(new Set(jobs.map((job) => job.gameKey)), new Set(["mega man x", "mega man 10"]));
+  assert.equal(new Set(jobs.map(jobPackId)).size, 2);
+});
+
 test("kimliksiz oyun adları anahtara göre birleşir; tek kurulumun adı ayrı paket açmaz", () => {
   const rows = [{ game: "GTA 6", lines: 200 }, { game: "Grand Theft Auto VI", lines: 300 }, { game: "Yanlış Oyun", lines: 900 }];
   const jobs = nameJobs(rows, new Map([["gta 6", 3], ["yanlis oyun", 1]]));
@@ -426,6 +444,27 @@ test("kimliksiz oyun adı kurulum başına bir oy yazar", async () => {
     { text: "Who is that over there?", titleId: "PPSA12345", game: "Other" },
   ]);
   assert.deepEqual(votes, [["gta 6", install(1)]]);
+});
+
+test("a failed optional game vote must not reject already committed subtitle sightings", async () => {
+  const DB = fakeDB();
+  const original = DB.batch;
+  let voteAttempts = 0;
+  DB.batch = async (stmts) => {
+    if (stmts.some((s) => s.sql.startsWith("INSERT OR IGNORE INTO game_votes"))) {
+      voteAttempts++;
+      throw new Error("D1_ERROR: transient game_votes write failure");
+    }
+    return original(stmts);
+  };
+  const text = "Get in the car, Lucia.";
+  const response = await postLines({ DB }, install(1), [{ text, game: "GTA 6" }]);
+  assert.equal(response.status, 200, "the line transaction has already committed");
+  assert.deepEqual(await response.json(), { accepted: 1, recorded: 1, saturated: [] });
+  assert.equal(voteAttempts, 1);
+  const second = await postLines({ DB }, install(2), [{ text, titleId: "PPSA01234" }]);
+  assert.equal(second.status, 200);
+  assert.equal(DB.lines.size, 1, "the original sighting must be available to a second player");
 });
 
 test("export rejects negative and non-integer pagination before issuing SQL", async () => {

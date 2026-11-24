@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Ev yayını oturumunun durum makinesi ve veri kanalı iletileri (Android: XboxSessionMachine.kt, XboxChannels.kt).
 // Kurallar Windows'taki XboxStreamSession ile aynı; iletiler xbox-xcloud-player 0.2.11'inkilerle birebir (MIT, unknownskl).
-// Hata ya da kopmada 5, 15, 45 sn sonra baştan denenir; üç ardışık denemeden sonra durulur (konsol "oyun başka yerde
-// açıldı" deyip yayını kesince eskiden her 5 sn'de bir yeniden açılıyordu). Konsol `Failed` ya da `errorDetails` dönerse
+// Hata ya da kopmada bir kez, 5 sn sonra baştan denenir; o da olmazsa durulur ("Yeniden bağlan" hemen görünür). Eskiden
+// 5, 15, 45 sn aralarla üç deneme vardı; her biri Xbox'ta "uzaktan yürütme başlatıldı / durduruldu" bildirimi çıkarıyor,
+// kullanıcı bunu bitmeyen bir döngü olarak görüyordu (Play, Android beta.85). Konsol `Failed` ya da `errorDetails` dönerse
 // hiç denenmez; yalnız görüntü gelmiş bir yayın koptuktan sonraki ilk ret bir kez, `reconnectGraceMs` sonra denenir.
 // Yayın `healthyStreamMs` ayakta kaldıysa deneme sayısı sıfırlanır.
 
@@ -13,7 +14,7 @@ public struct XboxSessionMachine {
         case idle, starting
         case provisioning(polls: Int, connectSent: Bool)
         case negotiating, streaming
-        /// `attempt`: bu kopmadan sonraki ardışık deneme (1…3); denenmiyorsa 0.
+        /// `attempt`: bu kopmadan sonraki ardışık deneme (1, kopmadan sonraki retten sonra 2); denenmiyorsa 0.
         case failed(XboxErrorKind, message: String, willRetry: Bool, attempt: Int = 0)
         case stopped
     }
@@ -49,7 +50,7 @@ public struct XboxSessionMachine {
     /// Kopmadan sonra Xbox yeni oturumu reddederse (eski oturum Xbox'ta henüz kapanmadı) beklenen süre.
     public static let reconnectGraceMs = 15_000
 
-    public init(maxPolls: Int = 90, pollIntervalMs: Int = 1000, retryDelaysMs: [Int] = [5000, 15000, 45000], healthyStreamMs: Int = 60_000,
+    public init(maxPolls: Int = 90, pollIntervalMs: Int = 1000, retryDelaysMs: [Int] = [5000], healthyStreamMs: Int = 60_000,
          clock: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime * 1000 }) {
         self.maxPolls = maxPolls
         self.pollIntervalMs = pollIntervalMs
@@ -126,12 +127,15 @@ public struct XboxSessionMachine {
         // Görüntü gelmiş yayın koptuktan hemen sonra Xbox eski oturumu bırakmadan yenisini reddedebiliyor ("bir kez
         // kopunca Xbox yeniden başlatılmadan bağlanmıyor"): bu ret bir kez, eski oturum kapansın diye uzun beklenip denenir.
         let grace = refused && hadPicture && !graceUsed
-        let retry = (!refused || grace) && !Self.fatal.contains(kind) && failures <= retryDelaysMs.count
+        // Kopma dizisinde en çok `retryDelaysMs` kadar (bir) yeniden bağlanma; kopmadan sonraki ret için tanınan tek
+        // deneme bu sınırın dışındadır (reddedilen oturumda Xbox yayın açmaz).
+        let retry = ((!refused && failures <= retryDelaysMs.count) || grace) && !Self.fatal.contains(kind)
             && noPictureConnections < Self.maxNoPictureAttempts
         if retry && grace { graceUsed = true }
         phase = .failed(kind, message: message, willRetry: retry, attempt: retry ? failures : 0)
         guard retry else { return .retry(delayMs: nil) }
-        return .retry(delayMs: grace ? max(Self.reconnectGraceMs, retryDelaysMs[failures - 1]) : retryDelaysMs[failures - 1])
+        let backoff = retryDelaysMs[min(failures, retryDelaysMs.count) - 1]
+        return .retry(delayMs: grace ? max(Self.reconnectGraceMs, backoff) : backoff)
     }
 
     /// `errorDetails` gerçek bir hata mı (boş nesne ya da tüm alanları null olan nesne sayılmaz).

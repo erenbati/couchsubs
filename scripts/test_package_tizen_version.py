@@ -25,7 +25,7 @@ def posix(path):
 
 
 class PackageTizenTests(unittest.TestCase):
-    def package(self, attrs):
+    def package(self, attrs, fail_archive=False):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             for folder in ("scripts", "tv-webos", "tv-tizen"):
@@ -40,22 +40,47 @@ class PackageTizenTests(unittest.TestCase):
                 f'<widget xmlns="http://www.w3.org/ns/widgets" {attrs}></widget>', encoding="utf-8")
             dest = Path(tmp) / "output"
             env = {**os.environ, "COUCHSUBS_DIST": posix(dest), "TIZEN_PROFILE": ""}
+            package = dest / "tv-app/couchsubs-samsung_0.9.73.wgt"
+            if fail_archive:
+                package.parent.mkdir(parents=True)
+                with zipfile.ZipFile(package, "w") as prior:
+                    prior.writestr("previous.txt", "Last known good TV installer")
+                fakebin = Path(tmp) / "fake-bin"
+                fakebin.mkdir()
+                # Fail only the final archive write, after version extraction
+                # and after the old script already deletes its previous WGT.
+                wrapper = fakebin / "python3"
+                wrapper.write_text(
+                    '#!/bin/sh\n'
+                    'if [ "$2" = "tv-tizen/config.xml" ]; then exec "' + posix(Path(__import__("sys").executable)) + '" "$@"; fi\n'
+                    'exit 28\n', encoding="utf-8")
+                wrapper.chmod(0o755)
+                env["PATH"] = posix(fakebin) + ":/usr/bin:/bin"
             process = subprocess.run([bash_executable(), posix(repo / "scripts/package-tizen.sh")],
                                      cwd=repo, env=env, capture_output=True, text=True, errors="replace")
-            package = dest / "tv-app/couchsubs-samsung_0.9.73.wgt"
-            return process, package.exists(), zipfile.is_zipfile(package) if package.exists() else False
+            return (process, package.exists(), zipfile.is_zipfile(package) if package.exists() else False,
+                    package.read_bytes() if package.exists() else None)
 
     def test_works_when_version_precedes_viewmodes(self):
-        process, exists, valid = self.package('version="0.9.73" viewmodes="fullscreen"')
+        process, exists, valid, _ = self.package('version="0.9.73" viewmodes="fullscreen"')
         self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
         self.assertTrue(exists)
         self.assertTrue(valid)
 
     def test_works_when_version_follows_viewmodes(self):
-        process, exists, valid = self.package('viewmodes="fullscreen" version="0.9.73"')
+        process, exists, valid, _ = self.package('viewmodes="fullscreen" version="0.9.73"')
         self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
         self.assertTrue(exists, process.stdout + process.stderr)
         self.assertTrue(valid)
+
+
+    def test_failed_archive_write_preserves_previous_signed_candidate(self):
+        process, exists, valid, data = self.package(
+            'version="0.9.73" viewmodes="fullscreen"', fail_archive=True)
+        self.assertNotEqual(process.returncode, 0, "injected archive failure must abort")
+        self.assertTrue(exists, "a failed build must not delete the last working WGT")
+        self.assertTrue(valid, "the last working installer must still be a usable ZIP")
+        self.assertIn(b"previous.txt", data, "do not replace the old archive with partial bytes")
 
 
 if __name__ == "__main__":

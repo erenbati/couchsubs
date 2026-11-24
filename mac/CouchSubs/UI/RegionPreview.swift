@@ -28,6 +28,8 @@ struct RegionPreview: View {
     private static let handle: CGFloat = 10
     private static let grip: CGFloat = 28
 
+    @Environment(\.csNewLook) private var newLook
+
     var body: some View {
         GeometryReader { geometry in
             let size = geometry.size
@@ -38,9 +40,9 @@ struct RegionPreview: View {
                 if let frame {
                     Image(decorative: frame, scale: 1).resizable()
                 } else {
-                    RoundedRectangle(cornerRadius: Theme.radius("inner")).fill(Color.csBackground)
+                    RoundedRectangle(cornerRadius: Theme.radius("inner")).fill(Self.emptyFill(newLook))
                     Text(placeholder)
-                        .font(.csCaption).foregroundStyle(Color.csSecondary)
+                        .font(.csCaption).foregroundStyle(Self.mutedText(newLook))
                         .multilineTextAlignment(.center)
                         .padding(Theme.space("m"))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -49,20 +51,28 @@ struct RegionPreview: View {
                     path.addRect(CGRect(origin: .zero, size: size))
                     path.addRect(box)
                 }
-                .fill(Color.black.opacity(0.5), style: FillStyle(eoFill: true))
+                .fill(Color.black.opacity(frame == nil && newLook ? 0.12 : 0.5), style: FillStyle(eoFill: true))
                 .allowsHitTesting(false)
                 Rectangle()
                     .fill(Color.clear)
                     .contentShape(Rectangle())
-                    .overlay(Rectangle().strokeBorder(Color.csAccent, lineWidth: 2))
+                    .overlay(RoundedRectangle(cornerRadius: newLook ? 4 : 0).strokeBorder(Color.csAccent, lineWidth: newLook ? 1.5 : 2))
                     .frame(width: box.width, height: box.height)
                     .offset(x: box.minX, y: box.minY)
                     .gesture(dragging(.move, in: size))
                     .accessibilityLabel(Text("Subtitle area"))
                 ForEach(Array(RegionEdit.handles(shown).enumerated()), id: \.offset) { _, spot in
-                    Rectangle()
-                        .fill(Color.csAccent)
-                        .frame(width: Self.handle, height: Self.handle)
+                    // Yeni arayüzde küçük yuvarlak tutamaç: beyaz, amber halkalı, hafif gölgeli.
+                    Group {
+                        if newLook {
+                            Circle().fill(Color.white)
+                                .overlay(Circle().strokeBorder(Color.csAccent, lineWidth: 1.5))
+                                .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
+                                .frame(width: 9, height: 9)
+                        } else {
+                            Rectangle().fill(Color.csAccent).frame(width: Self.handle, height: Self.handle)
+                        }
+                    }
                         .frame(width: Self.grip, height: Self.grip)
                         .contentShape(Rectangle())
                         .offset(x: size.width * spot.x - Self.grip / 2, y: size.height * spot.y - Self.grip / 2)
@@ -73,7 +83,35 @@ struct RegionPreview: View {
             .coordinateSpace(name: Self.space)
         }
         .aspectRatio(16 / 9, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.radius("inner")))
+        .clipShape(RoundedRectangle(cornerRadius: newLook ? 12 : Theme.radius("inner"), style: .continuous))
+        .overlay {
+            if newLook { RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Self.borderColor).allowsHitTesting(false) }
+        }
+    }
+
+    /// Kare yokken zemin: yeni arayüzde alan rengi (krem/koyu), eski görünümde arka plan.
+    private static func emptyFill(_ newLook: Bool) -> Color {
+        #if os(macOS)
+        newLook ? .dsField : .csBackground
+        #else
+        .csBackground
+        #endif
+    }
+
+    private static func mutedText(_ newLook: Bool) -> Color {
+        #if os(macOS)
+        newLook ? .dsMuted : .csSecondary
+        #else
+        .csSecondary
+        #endif
+    }
+
+    private static var borderColor: Color {
+        #if os(macOS)
+        .dsBorder
+        #else
+        .csBorder
+        #endif
     }
 
     private func dragging(_ handle: RegionEdit.Handle, in size: CGSize) -> some Gesture {

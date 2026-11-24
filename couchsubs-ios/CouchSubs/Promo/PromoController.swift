@@ -61,20 +61,32 @@ final class PromoController: ObservableObject {
         defer { busy = false }
         let now = Date()
         if fetchedAt.map({ now.timeIntervalSince($0) >= PromoPolicy.refetchInterval }) ?? true {
-            guard let data = await download(PromoPolicy.configURL, limit: PromoPolicy.maxConfigBytes) else { return }
-            popup = PromoPolicy.parse(data)
-            fetchedAt = now
+            // promo.json'a ulaşılamazsa uygulamayla gelen açılır reklam (Mac ve Windows'taki reklamlar.json › popups).
+            if let data = await download(PromoPolicy.configURL, limit: PromoPolicy.maxConfigBytes) {
+                popup = PromoPolicy.parse(data)
+                fetchedAt = now
+            } else {
+                popup = Self.bundledPopup
+            }
         }
-        guard let popup, PromoPolicy.due(popup, record: record, now: now),
-              let imageURL = PromoPolicy.httpsURL(popup.image) else {
+        guard let popup, PromoPolicy.due(popup, record: record, now: now) else {
             ready = nil
             return
         }
-        // Görsel zaten hazırsa yeniden inmez; yalnız yeni girişin 10 sn'si beklenir.
+        // Görsel zaten hazırsa yeniden inmez; yalnız yeni girişin 10 sn'si beklenir. Uygulamadaki görsel yüklenemezse
+        // açılır reklam hiç açılmaz (yer tutucu yok).
         let image: UIImage
         if let current = ready, current.popup == popup {
             image = current.image
+        } else if popup.bundled {
+            guard let url = Bundle.main.url(forResource: popup.image, withExtension: nil, subdirectory: "reklam"),
+                  let data = try? Data(contentsOf: url), let decoded = Self.decode(data) else { return }
+            image = decoded
         } else {
+            guard let imageURL = PromoPolicy.httpsURL(popup.image) else {
+                ready = nil
+                return
+            }
             guard let data = await download(imageURL, limit: PromoPolicy.maxImageBytes),
                   let decoded = Self.decode(data) else { return }
             image = decoded
@@ -90,6 +102,10 @@ final class PromoController: ObservableObject {
         }
         ready = Ready(popup: popup, image: image)
     }
+
+    /// Uygulamayla gelen açılır reklam (reklamlar.json, project.yml kaynaklarında); dosya yoksa nil.
+    private static let bundledPopup: PromoPopup? = Bundle.main.url(forResource: "reklamlar", withExtension: "json")
+        .flatMap { try? Data(contentsOf: $0) }.flatMap(PromoPolicy.bundled)
 
     /// Popup kapatıldı (X ya da görsele dokunma): gösterim kaydedilir, görsel bırakılır.
     func dismissed(_ popup: PromoPopup) {
@@ -143,13 +159,16 @@ struct PromoOverlay: View {
             GeometryReader { geometry in
                 let size = imageSize(in: geometry.size)
                 VStack(spacing: 0) {
-                    Text("Sponsored")
-                        .font(Mobile.TypeScale.caption)
-                        .foregroundStyle(Mobile.Palette.text)
+                    // Mac ve Windows'taki açılır reklamla aynı etiket (REKLAM).
+                    // Perde: cam hap içinde mono REKLAM etiketi.
+                    Text("AD")
+                        .font(Font.dsAdTag)
+                        .tracking(1)
+                        .foregroundStyle(Color.white.opacity(0.85))
                         .lineLimit(1)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(Mobile.Palette.surface2, in: Capsule())
+                        .padding(.horizontal, Mobile.Space.gap)
+                        .padding(.vertical, Mobile.Space.hair)
+                        .dsGlass(in: Capsule(style: .circular))
                         .frame(height: badge)
                     Button {
                         if let url = PromoPolicy.webURL(ready.popup.link) { openURL(url) }
@@ -160,6 +179,8 @@ struct PromoOverlay: View {
                             .aspectRatio(contentMode: .fit)
                             .frame(width: size.width, height: size.height)
                             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color.white.opacity(0.08)))
+                            .shadow(color: .black.opacity(0.5), radius: 30, y: 18)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(ready.popup.alt.isEmpty ? Text("Open link") : Text(verbatim: ready.popup.alt))
@@ -168,9 +189,9 @@ struct PromoOverlay: View {
                         Button(action: onDismiss) {
                             Image(systemName: "xmark")
                                 .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(Mobile.Palette.onAccent)
+                                .foregroundStyle(Color.white)
                                 .frame(width: closeDot, height: closeDot)
-                                .background(Mobile.Palette.text, in: Circle())
+                                .dsGlass(in: Circle())
                                 .frame(width: closeTouch, height: closeTouch)
                                 .contentShape(Circle())
                         }

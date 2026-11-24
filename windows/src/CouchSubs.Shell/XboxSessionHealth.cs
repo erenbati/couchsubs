@@ -26,6 +26,16 @@ public sealed class XboxKeepalive
     /// <summary>Yanıt oturumun Xbox hizmetinde artık olmadığını söylüyor (HTTP 404/410): beklenmez, oturum biter.</summary>
     public static bool SessionGone(string? message) =>
         message is not null && (message.Contains("HTTP 404", StringComparison.Ordinal) || message.Contains("HTTP 410", StringComparison.Ordinal));
+
+    /// <summary>
+    /// Başarısız canlı tutma isteğinden sonra yayın bitirilmeli mi. Görüntü akarken (<paramref name="pictureFlowing"/>)
+    /// hayır: Xbox yayını sürdürüyor, canlı tutma yanıtı (404 dahil) yanıltıcı olabiliyor. Android beta.85'te 404 ya da üç
+    /// hata görüntü akarken de yayını kapatıyordu; ilk istek bağlantıdan 30 sn sonra gittiği için Xbox'ta "uzaktan yürütme
+    /// başlatıldı / durduruldu" döngüsü oluyordu. Görüntü durmuşsa eskisi gibi: oturum Xbox hizmetinde yoksa
+    /// (<paramref name="gone"/>) ya da hatalar <see cref="MaxFailures"/>'a vardıysa (<paramref name="exhausted"/>) biter.
+    /// CouchSubsCore ve Android'deki XboxKeepalive.shouldEnd ile aynı.
+    /// </summary>
+    public static bool ShouldEnd(bool gone, bool exhausted, bool pictureFlowing) => !pictureFlowing && (gone || exhausted);
 }
 
 /// <summary>
@@ -82,14 +92,15 @@ public static class XboxConnectWatch
 
 /// <summary>
 /// Kopmadan sonra yeniden denenir mi, ne kadar sonra (Android/CouchSubsCore XboxSessionMachine.fail ile aynı kurallar).
-/// Hata ya da kopmada 5, 15, 45 sn sonra baştan denenir; yayın <see cref="HealthyStreamMs"/> ayakta kaldıysa sayaç
-/// sıfırlanır. Xbox'tan hiç görüntü gelmeyen bağlantılar ayrıca sayılır: <see cref="MaxNoPictureAttempts"/> ardışık
+/// Hata ya da kopmada bir kez, 5 sn sonra baştan denenir (eskiden 5, 15, 45 sn aralarla üç deneme her seferinde Xbox'ta
+/// "uzaktan yürütme başlatıldı / durduruldu" bildirimi çıkarıyordu); yayın <see cref="HealthyStreamMs"/> ayakta kaldıysa
+/// sayaç sıfırlanır. Xbox'tan hiç görüntü gelmeyen bağlantılar ayrıca sayılır: <see cref="MaxNoPictureAttempts"/> ardışık
 /// bağlantıda ilk kare gelmezse yeniden denenmez. Eskiden her biri Xbox'ta "uzaktan oynatma başlatıldı / durduruldu"
 /// bildirimiyle dört kez (yaklaşık beş dakika) açılıp kapanıyor, ekranda yalnız "WebRTC bağlantısı kesildi" görünüyordu (#403).
 /// </summary>
 public sealed class XboxRetryPlan
 {
-    public static readonly int[] DelaysMs = [5000, 15000, 45000];
+    public static readonly int[] DelaysMs = [5000];
     public const long HealthyStreamMs = 60_000;
     public const int MaxNoPictureAttempts = 2;
 
@@ -100,7 +111,7 @@ public sealed class XboxRetryPlan
     private bool hadPicture;
     private bool graceUsed;
 
-    /// <summary>Ardışık başarısız deneme (1…3).</summary>
+    /// <summary>Ardışık başarısız deneme (1; kopmadan sonraki retten sonra 2).</summary>
     public int Failures { get; private set; }
 
     /// <summary>İlk kare geldi: görüntüsüz bağlantı dizisi biter; sonraki kopmada gelen ret bir kez denenebilir.</summary>
@@ -125,9 +136,13 @@ public sealed class XboxRetryPlan
         // Görüntü gelmiş yayın koptuktan hemen sonra Xbox eski oturumu bırakmadan yenisini reddedebiliyor ("bir kez
         // kopunca Xbox yeniden başlatılmadan bağlanmıyor"): bu ret bir kez, eski oturum kapansın diye uzun beklenip denenir.
         var grace = refused && hadPicture && !graceUsed;
-        if ((refused && !grace) || Failures > DelaysMs.Length || noPicture >= MaxNoPictureAttempts) return null;
+        // Kopma dizisinde en çok DelaysMs kadar (bir) yeniden bağlanma; kopmadan sonraki ret için tanınan tek deneme bu
+        // sınırın dışındadır (reddedilen oturumda Xbox yayın açmaz).
+        var retry = (!refused && Failures <= DelaysMs.Length) || grace;
+        if (!retry || noPicture >= MaxNoPictureAttempts) return null;
         if (grace) graceUsed = true;
-        return grace ? Math.Max(ReconnectGraceMs, DelaysMs[Failures - 1]) : DelaysMs[Failures - 1];
+        var backoff = DelaysMs[Math.Min(Failures, DelaysMs.Length) - 1];
+        return grace ? Math.Max(ReconnectGraceMs, backoff) : backoff;
     }
 }
 

@@ -14,7 +14,8 @@ namespace CouchSubs.Core;
 /// kutusu sözcük boyunun <see cref="TiltedLineHeight"/> katından yüksek), düşük güvenli kısa blok (en çok
 /// <see cref="LowConfidenceWords"/> sözcük, ortalama güven <see cref="LowConfidence"/>'tan az), karenin ortasındaki kısa,
 /// noktalamasız tek satır (en çok üç sözcük; altyazı ve görev satırı karenin alt ya da üst kenarına yakındır,
-/// <see cref="EdgeBand"/>).
+/// <see cref="EdgeBand"/>), plaka/tabela: alt alta kısa, büyük harfli satırlar (<see cref="IsSign"/>) ve harfsiz sayı
+/// (<see cref="IsNumber"/>); altyazının yerinde de.
 /// Gerçek altyazı asla atılmaz (GitHub #822): altyazısı alttaki %22'lik şeridin biraz üstünde duran oyunlarda kısa
 /// altyazıların hepsi "ortadaki kısa satır" sayılıp atılıyordu. Altyazı biçimindeki blok (ortalanmış, alt şeritte, en az
 /// iki sözcük) düşük güvenle de atılmaz; bu oturumda kesin altyazı okunan yükseklikteki blok
@@ -43,14 +44,22 @@ public static class SceneText
     /// </summary>
     public static bool IsSceneText(Reading block, TextBox area, SubtitleBand? band = null) => Reason(block, area, band) is not null;
 
-    /// <summary>Blok sahne yazısıysa atılma nedeni (altyazı günlüğü için), değilse null.</summary>
-    public static string? Reason(Reading block, TextBox area, SubtitleBand? band = null)
+    /// <summary>
+    /// Blok sahne yazısıysa atılma nedeni (altyazı günlüğü için), değilse null. <paramref name="darkInk"/>: satır kutusu
+    /// (okunan alanın görüntüsüne oranla) açık zeminde koyu yazı mı (<see cref="InkTone.Sampler"/>); verilmezse renge bakılmaz.
+    /// </summary>
+    public static string? Reason(Reading block, TextBox area, SubtitleBand? band = null, Func<TextBox, bool>? darkInk = null)
     {
         if (block.Lines.Count == 0 || SpeakerPrefix.Parse(block.Lines[0].Text) is not null) return null;
         if (block.Lines.Any(line => line.Box is null) || block.Box is not { } whole) return null;
+        // Kâğıt ilan altyazının yerinde de atılır (GitHub #1124).
+        if (darkInk is not null && InkTone.IsDarkBlock(block, darkInk)) return InkTone.Reason;
         var box = whole.PlacedIn(area);
         var words = WordCount(block.Text);
         var middle = (box.Top + box.Bottom) / 2;
+        // Plaka ve tabela altyazının yerinde de atılır (GitHub #1052).
+        if (IsSign(block)) return "plaka/tabela (kısa büyük harfli satırlar)";
+        if (IsNumber(block.Text)) return "harfsiz sayı";
         // Bu oturumda altyazının okunduğu yükseklik: yalnız eğik tabela atılır.
         var learned = band?.Contains(box) == true;
         // Altyazı biçimi: ortalanmış, karenin alt şeridinde, en az iki sözcük.
@@ -79,6 +88,41 @@ public static class SceneText
         var direction = shift > 0 ? 1.0 : -1.0;
         return middles.Zip(middles.Skip(1)).All(pair => (pair.Second - pair.First) * direction >= -0.15 * median);
     }
+
+    /// <summary>
+    /// Plaka ya da tabela: en az iki satır ve her satır <see cref="IsSignLine"/>; noktalama yalnız son satırın sonunda ve o
+    /// satır tek sözcükse olabilir (yazı tanıma plakanın kenarını "." ya da "!" okuyor: "AKB / GLORIANA.", "AK8 / FLORIA!").
+    /// Kullanıcı bildirimi (GitHub #1052, GTA 6, beta.84): plaka iki-üç satır okunduğu için tek satır kuralına takılmıyor,
+    /// altyazının yerinde durduğu için de (<see cref="SubtitleBand"/>) çevriliyordu ("AKB / FLORIANA", "DISCOVER 28 / AKB /
+    /// GLORIANA."). Altyazı satırı en çok üç sözcükken sarılmaz; kısa bağırma replikleri ("NO! / GET DOWN!") ilk satırda
+    /// noktalama taşıdığı için kalır, konuşan adlı blok hep altyazıdır (Mac: SceneText.isSign, Android: SceneText.isSign).
+    /// </summary>
+    internal static bool IsSign(Reading block)
+    {
+        if (block.Lines.Count < 2 || !block.Lines.All(line => IsSignLine(line.Text))) return false;
+        if (block.Lines.Take(block.Lines.Count - 1).Any(line => LooksSpoken(line.Text))) return false;
+        var last = block.Lines[^1].Text;
+        return !LooksSpoken(last) || WordCount(last) <= 1;
+    }
+
+    /// <summary>
+    /// Plaka/tabela satırı: kısa (en çok <see cref="SignLineLength"/> karakter ve en çok <see cref="ShortWords"/> sözcük),
+    /// küçük harfsiz, en az bir büyük harf; soru işareti, tire ile başlayan karşılıklı konuşma ve konuşan adı yok.
+    /// Büyük/küçük harfi olmayan yazıya (Japonca) dokunulmaz.
+    /// </summary>
+    internal static bool IsSignLine(string text)
+    {
+        var line = text.Trim();
+        if (line.Length == 0 || line.Length > SignLineLength || !line.Any(char.IsUpper) || line.Any(char.IsLower)) return false;
+        if (line.Contains('?') || "-–—".Contains(line[0]) || SpeakerPrefix.Parse(line) is not null) return false;
+        return WordCount(line) <= ShortWords;
+    }
+
+    /// <summary>Plaka/tabela satırının en çok karakteri ("C118 DISCOVER 76").</summary>
+    internal const int SignLineLength = 20;
+
+    /// <summary>Harfsiz sayı ("82403610."): plaka numarası, sayaç; altyazı değildir.</summary>
+    internal static bool IsNumber(string text) => !text.Any(char.IsLetter) && text.Any(char.IsDigit);
 
     internal static bool IsCentered(TextBox box) => Math.Abs((box.Left + box.Right) / 2 - 0.5) <= CenterTolerance;
 

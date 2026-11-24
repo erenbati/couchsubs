@@ -108,4 +108,34 @@ final class PromoPolicyTests: XCTestCase {
         XCTAssertFalse(show(popup { $0.link = "" }))
         XCTAssertFalse(show(popup { $0.id = "" }))
     }
+
+    /// promo.json'a ulaşılamazsa Mac ve Windows'taki açılır reklam (reklamlar.json › popups) aynı kurallarla gösterilir.
+    func testBundledPopupFollowsTheSameRules() throws {
+        let url = try XCTUnwrap(Bundle(for: PromoController.self).url(forResource: "reklamlar", withExtension: "json"))
+        let bundled = try XCTUnwrap(PromoPolicy.bundled(Data(contentsOf: url)))
+        XCTAssertTrue(bundled.bundled)
+        XCTAssertEqual(bundled.image, "popup-enmera.jpg")
+        XCTAssertTrue(bundled.link.hasPrefix("https://enmera.com.tr/urunler/enmera-commerce?utm_source=couchsubs"))
+        XCTAssertNotNil(Bundle(for: PromoController.self).url(forResource: bundled.image, withExtension: nil, subdirectory: "reklam"))
+        XCTAssertTrue(show(bundled))
+        XCTAssertFalse(show(bundled, PromoRecord(id: bundled.id, shownAt: now.addingTimeInterval(-23 * hour))))
+        var moment = idle
+        moment.sessionActive = true
+        XCTAssertFalse(show(bundled, moment: moment))
+        moment = idle
+        moment.onboarding = true
+        XCTAssertFalse(show(bundled, moment: moment))
+        // Görsel adı ya da https bağlantısı yoksa açılır reklam yok.
+        XCTAssertNil(PromoPolicy.bundled(Data(#"{"popups":[{"id":"a","image":"","link":"https://x.com"}]}"#.utf8)))
+        XCTAssertNil(PromoPolicy.bundled(Data(#"{"popups":[{"id":"a","image":"a.jpg","link":"http://x.com"}]}"#.utf8)))
+        XCTAssertNil(PromoPolicy.bundled(Data(#"{"popups":[]}"#.utf8)))
+    }
+
+    /// Reklam şeridi çeviri sürerken (açılan sayfalarda da) ve deneme modunda görünmez; çeviri durunca geri gelir.
+    func testAdBandHiddenWhileTranslating() {
+        XCTAssertTrue(PromoPolicy.adBandVisible(appPage: true, translating: false, demo: false))
+        XCTAssertFalse(PromoPolicy.adBandVisible(appPage: true, translating: true, demo: false))
+        XCTAssertFalse(PromoPolicy.adBandVisible(appPage: true, translating: false, demo: true))
+        XCTAssertFalse(PromoPolicy.adBandVisible(appPage: false, translating: false, demo: false))
+    }
 }

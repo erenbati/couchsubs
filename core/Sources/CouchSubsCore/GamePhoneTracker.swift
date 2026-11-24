@@ -40,8 +40,10 @@ public final class GamePhoneTracker {
         return (true, shown)
     }
 
-    /// Açık telefon art arda bu kadar örnekte bulunamazsa kapanır (330 ms aralıkla ~0,7 sn; Windows ve Android ile aynı).
-    static let missGrace = 2
+    /// Açık telefon art arda bu kadar örnekte bulunamazsa kapanır (330 ms aralıkla ~1–1,3 sn; Windows ve Android ile aynı).
+    /// Önceden 2 örnekti (~0,7 sn): telefonun ekranı bir an okunamayınca panel kaybolup baştan çevrilerek geri geliyordu
+    /// (X, 22 Kas, GTA 6 telefonu).
+    static let missGrace = 3
     private var misses = 0
 
     /// Telefon kutusunun alanı (kareye oranla) bu aralıkta olmalı.

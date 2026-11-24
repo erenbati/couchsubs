@@ -1,0 +1,1 @@
+0.9.88: Güncellemeden sonra LG TV'de eski sürüm çalışmaya devam etmiyor; yeni sürüm hemen açılıyor.

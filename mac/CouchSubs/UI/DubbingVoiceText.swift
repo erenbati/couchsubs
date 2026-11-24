@@ -15,4 +15,16 @@ extension DubbingVoice {
         case .male3: "Man 3 (crisp)"
         }
     }
+
+    /// Aynı ad düz metin olarak (açılır menü satırı için).
+    var text: String {
+        switch self {
+        case .female1: String(localized: "Woman 1 (bright)")
+        case .female2: String(localized: "Woman 2 (warm)")
+        case .female3: String(localized: "Woman 3 (confident)")
+        case .male1: String(localized: "Man 1 (calm, deep)")
+        case .male2: String(localized: "Man 2 (energetic)")
+        case .male3: String(localized: "Man 3 (crisp)")
+        }
+    }
 }

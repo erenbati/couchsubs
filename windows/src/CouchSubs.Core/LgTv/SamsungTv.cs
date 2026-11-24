@@ -162,9 +162,49 @@ public static class SamsungAppKnowledge
     {
         if (string.IsNullOrWhiteSpace(host)) return;
         bool added;
-        lock (hosts) added = hosts.Add(host.Trim());
+        lock (hosts)
+        {
+            added = hosts.Add(host.Trim());
+            unconfirmed.Remove(host.Trim());
+            staleReported.Remove(host.Trim());
+        }
         if (added && notify) Changed?.Invoke(host.Trim());
     }
+
+    /// <summary>Listeye bakılmadan DEEP_LINK gönderilen ama TV uygulaması o günden beri bağlanmayan TV'ler (yalnız bellekte).</summary>
+    private static readonly HashSet<string> unconfirmed = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Bayat bilgi günlüğe yazıldı (bekçi her 30 sn'de denediği için bir kez).</summary>
+    private static readonly HashSet<string> staleReported = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Bilinen TV'de listeye bakmadan DEEP_LINK gönderilebilir mi. Hak, TV uygulaması her bağlandığında (<see cref="Mark"/>)
+    /// bir kez verilir: bir önceki listesiz DEEP_LINK'ten sonra uygulama bağlanmadıysa bilgi bayat sayılır ve TV'nin kurulu
+    /// uygulama listesine bakılır. Uygulama TV'den silinince (Smart Hub sıfırlaması, kaldırılıp yeniden kurulamayan
+    /// güncelleme, TV yazılım güncellemesi) "kurulu" bilgisi kalıyordu; bekçi her 30 sn'de DEEP_LINK gönderiyor, Smart Hub
+    /// uygulamayı mağazada arıyor, TV her seferinde "Sunucu bakım altında (1544007)" diyordu (22 Kas). Mac/iPhone ve Android ile aynı.
+    /// </summary>
+    public static bool AllowsDirect(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host)) return false;
+        var key = host.Trim();
+        bool allowed, firstStale = false;
+        lock (hosts)
+        {
+            if (!hosts.Contains(key)) return false;
+            allowed = unconfirmed.Add(key);
+            if (!allowed) firstStale = staleReported.Add(key);
+        }
+        if (firstStale)
+        {
+            var line = UnconfirmedLine(key);
+            Log?.Invoke(line);
+            InstallLog?.Invoke(line);
+        }
+        return allowed;
+    }
+
+    public static string UnconfirmedLine(string host) =>
+        $"Samsung {host}: son doğrudan açma komutundan sonra TV uygulaması bağlanmadı; kurulu uygulama listesine bakılıyor (kurulu olmayan uygulamaya DEEP_LINK \"Sunucu bakım altında\" uyarısı çıkarır).";
 
     /// <summary>
     /// Eşleşmiş TV ağda yeni adreste bulundu (modem yeni adres verdi, bkz. <see cref="TvLocator"/>): eski adreste kurulu
@@ -181,8 +221,47 @@ public static class SamsungAppKnowledge
     public static void Forget(string? host)
     {
         if (string.IsNullOrWhiteSpace(host)) return;
-        lock (hosts) hosts.Remove(host.Trim());
+        lock (hosts)
+        {
+            hosts.Remove(host.Trim());
+            unconfirmed.Remove(host.Trim());
+            staleReported.Remove(host.Trim());
+        }
     }
+
+    /// <summary>İki adres aynı TV mi (boşluk ve büyük/küçük harf gözetmeden).</summary>
+    public static bool SameHost(string? a, string? b) =>
+        !string.IsNullOrWhiteSpace(a) && !string.IsNullOrWhiteSpace(b) && string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// TV, CouchSubs'ın artık kurulu olmadığını söyledi; uygulama katmanı kendi "kurulu" kaydını siler
+    /// (<c>TvAppVersion</c>, <c>TvAppSeen</c>).
+    /// </summary>
+    public static Action<string>? Missing { get; set; }
+
+    /// <summary>
+    /// Kurulu olduğu bilinen TV'de son listesiz açmadan sonra uygulama bağlanmadı ve TV'nin kurulu uygulama listesi de
+    /// CouchSubs yok diyor: uygulama TV'den silinmiş (güncelleme sırasında ya da elle, #1158). "Kurulu" bilgisi kalınca
+    /// uygulama kurulu görünüyor, kurulum adımı hiç önerilmiyordu. Bilgi silinir, <see cref="Missing"/> çağrılır; true:
+    /// bilgi silindi. Mac/iPhone ve Android ile aynı.
+    /// </summary>
+    public static bool AppMissing(string? host)
+    {
+        if (!IsKnown(host)) return false;
+        var key = host!.Trim();
+        Forget(key);
+        var line = MissingLine(key);
+        Log?.Invoke(line);
+        InstallLog?.Invoke(line);
+        Missing?.Invoke(key);
+        return true;
+    }
+
+    /// <summary>Listedeki "CouchSubs yok" kurulu bilgisini siler mi: yalnız kesin "yok" (yanıtsız liste silmez).</summary>
+    public static bool ForgetsOnList(SamsungAppPresence? presence) => presence is { IsInstalled: false };
+
+    public static string MissingLine(string host) =>
+        $"Samsung {host}: TV'nin kurulu uygulama listesinde CouchSubs yok; TV uygulaması silinmiş, \"kurulu\" bilgisi silindi (kurulum adımı önerilecek).";
 
     /// <summary>Açma komutundan önce TV'nin kurulu uygulama listesine bakılsın mı: yalnız kurulu olduğu bilinmeyen TV'de.</summary>
     public static bool ChecksList(bool knownInstalled) => !knownInstalled;
@@ -338,7 +417,8 @@ public sealed class SamsungClient(Uri url, TimeSpan? approvalTimeout = null) : I
         // Uygulama bu TV'den daha önce bağlandıysa ya da bu cihaz kurduysa listeye bakılmaz, eskisi gibi doğrudan açılır:
         // listenin geliştirici moduyla kurulan uygulamayı içerdiği gerçek TV'de doğrulanmadı (beta.63'te içermeyen TV'de
         // bekçi uygulamayı hiç açmıyordu).
-        var known = KnownInstalled ?? SamsungAppKnowledge.IsKnown(host);
+        // Bilinen TV'de listesiz açma, uygulama her bağlandığında bir kez: bayat bilgi "Sunucu bakım altında" çıkarmasın.
+        var known = KnownInstalled ?? SamsungAppKnowledge.AllowsDirect(host);
         if (!SamsungAppKnowledge.ChecksList(known))
         {
             var direct = Encoding.UTF8.GetBytes(SamsungMessages.Launch(appId, parameters, SamsungAppKnowledge.ActionFor(true, null)!));
@@ -347,6 +427,8 @@ public sealed class SamsungClient(Uri url, TimeSpan? approvalTimeout = null) : I
             return;
         }
         var presence = await InstalledAppAsync(socket, appId, cancellationToken);
+        // Bilinen TV'de bayat bilgi yüzünden listeye bakıldıysa ve liste "yok" diyorsa uygulama silinmiş (#1158).
+        if (KnownInstalled is null && SamsungAppKnowledge.ForgetsOnList(presence)) SamsungAppKnowledge.AppMissing(host);
         if (SamsungAppKnowledge.ActionFor(false, presence) is null)
         {
             SamsungAppKnowledge.ReportNotSent(host, presence);

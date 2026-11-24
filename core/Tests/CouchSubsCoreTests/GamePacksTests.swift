@@ -136,7 +136,7 @@ final class GamePackTests: XCTestCase {
     @MainActor
     func testGameChoiceLimitsPacksToTheChosenGame() throws {
         let library = try eldenAndRdr()
-        let choice = GameChoice(defaults: try XCTUnwrap(UserDefaults(suiteName: "game-choice-\(UUID().uuidString)")))
+        let choice = GameChoice(defaults: TestDefaults.make("game-choice"))
         choice.packs = library
         choice.start(console: nil) { false }
         choice.choose("Marvel's Wolverine")
@@ -146,6 +146,45 @@ final class GamePackTests: XCTestCase {
         choice.consoleReported(RunningGame(titleId: "PPSA01234", name: "Red Dead Redemption 2"))
         XCTAssertEqual(library.match("Let's go.")?.text, "Hadi gidelim.")
         choice.stop()
+    }
+
+    /// Xbox: son seçilen oyun Xbox'a özel saklanır ve sonraki oturumda kendiliğinden kullanılır; seçim yokken Oyun karosu
+    /// vurgulanır (`xboxNeedsGame`) ve günlüğe tek satır gider; seçilince vurgu kalkar, "elle seçildi" yazılır.
+    @MainActor
+    func testXboxRemembersTheLastChosenGameAndFlagsAnUnknownGame() throws {
+        let defaults = TestDefaults.make("game-choice")
+        var log: [String] = []
+        let first = GameChoice(defaults: defaults)
+        first.onLog = { log.append($0) }
+        var changes: [String?] = []
+        first.onChange = { changes.append($0?.name) }
+        first.start(console: "Salon Xbox", xbox: true) { false }
+        XCTAssertNil(first.game)
+        XCTAssertTrue(first.xboxNeedsGame)
+        XCTAssertEqual(log, ["Xbox: oyun tanınmadı, oyuna özel okumalar (telefon) kapalı"])
+        // Çeviri sürerken seçilen oyun hemen yayımlanır (uygulama telefon izleyicisini `onChange`te kurar).
+        first.choose("GTA 6")
+        XCTAssertEqual(changes, ["GTA 6"])
+        XCTAssertFalse(first.xboxNeedsGame)
+        XCTAssertEqual(log.last, "Xbox: oyun elle seçildi: GTA 6")
+        first.stop()
+        XCTAssertFalse(first.xboxNeedsGame)
+
+        // Uygulama yeniden açıldı: Xbox için son seçilen oyun kendiliğinden kullanılır.
+        let second = GameChoice(defaults: defaults)
+        second.start(console: nil, xbox: true) { false }
+        XCTAssertEqual(second.game?.name, "GTA 6")
+        XCTAssertEqual(second.source, .remembered)
+        XCTAssertFalse(second.xboxNeedsGame)
+        XCTAssertEqual(second.lastPlayed, "GTA 6")
+        second.stop()
+
+        // PS5 oturumu Xbox kaydını kullanmaz.
+        let ps5 = GameChoice(defaults: defaults)
+        ps5.start(console: "PS5") { false }
+        XCTAssertNil(ps5.game)
+        XCTAssertFalse(ps5.xboxNeedsGame)
+        ps5.stop()
     }
 
     func testMissingDirectoriesGiveAnEmptyLibrary() {
@@ -170,7 +209,7 @@ final class GamePackTests: XCTestCase {
         let ids = all.packs.map(\.id)
         let elapsed = Date().timeIntervalSince(start)
         print("paket yükleme: \(Int(elapsed * 1000)) ms, \(all.packs.reduce(0) { $0 + $1.entries }) satır")
-        XCTAssertEqual(ids, ["assassins-creed-shadows", "call-of-duty-modern-warfare-2019", "death-stranding-2", "death-stranding-directors-cut", "elden-ring", "gta-v", "mafia-the-old-country", "marvels-spider-man-2", "red-dead-redemption-2"])
+        XCTAssertEqual(ids, ["assassins-creed-shadows", "call-of-duty-modern-warfare-2019", "death-stranding-2", "elden-ring", "gta-v", "mafia-the-old-country", "marvels-spider-man-2", "red-dead-redemption-2"])
         XCTAssertTrue(all.packs.allSatisfy(\.builtIn))
         // Biçim 2 (parçalar ve imzalar) yüklemeyi Release'te ~%30 uzatıyor; Debug derlemede ve yüklü makinede daha yavaş.
         XCTAssertLessThan(elapsed, 30)
@@ -205,10 +244,6 @@ final class GamePackTests: XCTestCase {
             // "The Tarnished will soon return.", "Let it be Margit the Fell!", "Roundtable Hold"
             ("elden-ring.json.gz", "elden-ring", "Elden Ring + Shadow of the Erdtree", 37000,
              ["fd7b2bef9d7e5fe1", "d9e5d9f200bbd946", "d5017888c04251a9"]),
-            // "I can’t help you with that. I make deliveries. That’s all.", "Yeah, I’ve heard of ya.",
-            // "Trying to stay dry, same as you. Timefall’s let up. My name is Fragile."
-            ("death-stranding-directors-cut.json.gz", "death-stranding-directors-cut", "Death Stranding Director's Cut", 1200,
-             ["0bd205d28ea72e1e", "a278ec4528cdbe41", "b081efaf29693c2b"]),
             // "More like sell yourself. It's the worst.", "You got any advice?", "Focus! Hunters! Lots of them!"
             ("marvels-spider-man-2.json.gz", "marvels-spider-man-2", "Marvel's Spider-Man 2", 2000,
              ["40236a7f701ea389", "ee2428652bc9ceb2", "e829f8ce088898b8"]),
@@ -228,8 +263,8 @@ final class GamePackTests: XCTestCase {
         }
     }
 
-    /// Assassin's Creed Shadows, Death Stranding 2, Modern Warfare (2019), Elden Ring, Death Stranding Director's Cut ve
-    /// Marvel's Spider-Man 2 paketleri de uygulamayla gelir.
+    /// Assassin's Creed Shadows, Death Stranding 2, Modern Warfare (2019), Elden Ring ve Marvel's
+    /// Spider-Man 2 paketleri de uygulamayla gelir.
     func testMoreBundledPacksLoad() throws {
         _ = try bundledTestPack("assassins-creed-shadows.json.gz")
         let library = GamePackLibrary(bundled: GamePackLibrary.bundledDirectory, user: nil)
@@ -238,7 +273,6 @@ final class GamePackTests: XCTestCase {
             ("death-stranding-2", "Death Stranding 2: On the Beach", 23000),
             ("call-of-duty-modern-warfare-2019", "Call of Duty: Modern Warfare (2019)", 50000),
             ("elden-ring", "Elden Ring + Shadow of the Erdtree", 37000),
-            ("death-stranding-directors-cut", "Death Stranding Director's Cut", 1200),
             ("marvels-spider-man-2", "Marvel's Spider-Man 2", 2000),
         ]
         for game in expected {
@@ -257,8 +291,6 @@ final class GamePackTests: XCTestCase {
         XCTAssertEqual(library.match("Requesting air drop on my position!")?.text, "Konumuma hava ikmali talep ediyorum!")
         XCTAssertEqual(library.match("The Tarnished will soon return.")?.text, "Lekeli yakında geri dönecek.")
         XCTAssertEqual(library.match("Margit, the Fell Omen")?.text, "Margit, Uğursuz Alâmet")
-        XCTAssertEqual(library.match("FRAGILE: Trying to stay dry, same as you. Timefall’s let up. My name is Fragile.")?.text,
-                       "FRAGILE: Senin gibi kuru kalmaya çalışıyorum. Zaman yağmuru dindi. Adım Fragile.")
         XCTAssertEqual(library.match("Spider-Man: Focus! Hunters! Lots of them!")?.text, "Spider-Man: Odaklan! Avcılar! Çok fazlalar!")
     }
 }

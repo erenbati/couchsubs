@@ -7,6 +7,8 @@
     <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <UseWPF>true</UseWPF>
+    <!-- Yalnız tepsi simgesi (NotifyIcon) için; WinForms türleri tam adla kullanılır. -->
+    <UseWindowsForms>true</UseWindowsForms>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>CouchSubs</AssemblyName>
     <RootNamespace>CouchSubs.App</RootNamespace>
@@ -16,6 +18,11 @@
     <!-- Velopack kurulum ve güncelleme kancaları WPF başlamadan çalışmalı (Program.Main). -->
     <StartupObject>CouchSubs.App.Program</StartupObject>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
@@ -43,8 +50,16 @@
 
   <ItemGroup>
     <Resource Include="Assets\logo.png" />
+    <!-- Enmera logosu (açılış ve Hakkında; koyu ve açık zemin için). -->
+    <Resource Include="Assets\enmera-white.png" />
+    <Resource Include="Assets\enmera-black.png" />
     <!-- Yeni arayüzün renk, yazı, ölçü ve hareket değerleri (Mac ile ortak; Theme/Palette.cs okur). -->
     <EmbeddedResource Include="..\..\..\design\yeni-arayuz\tasarim.json" LogicalName="tasarim.json" />
+    <!-- Alt reklam bandı (Cebbin, Gramla, Bakkal): Mac ile ortak liste ve simgeler (Services/AdCatalog.cs). -->
+    <EmbeddedResource Include="..\..\..\design\yeni-arayuz\reklamlar.json" LogicalName="reklamlar.json" />
+    <Resource Include="..\..\..\design\yeni-arayuz\reklam\*.png" Link="Assets\reklam\%(Filename)%(Extension)" />
+    <!-- Açılır reklamın görseli (reklamlar.json › popups; Mac aynı dosyayı okur). -->
+    <Resource Include="..\..\..\design\yeni-arayuz\reklam\*.jpg" Link="Assets\reklam\%(Filename)%(Extension)" />
     <!-- ShellWindow.xaml pencere simgesi olarak bunu okur; ApplicationIcon yalnız exe simgesidir. -->
     <Resource Include="Assets\CouchSubs.ico" />
   </ItemGroup>

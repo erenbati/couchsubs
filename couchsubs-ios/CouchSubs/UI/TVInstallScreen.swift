@@ -7,17 +7,6 @@ import SafariServices
 import SwiftUI
 import WebKit
 
-/// Kurulumun durumu (her marka için aynı).
-enum TVInstallPhase: Equatable {
-    case idle
-    case working(InstallStep)
-    case done(version: String, installed: Bool)
-    case failed(text: String)
-
-    var isWorking: Bool { if case .working = self { true } else { false } }
-    var isDone: Bool { if case .done = self { true } else { false } }
-}
-
 struct TVInstallScreen: View {
     @EnvironmentObject private var model: PhoneModel
     /// Ana ekrandaki "TV uygulamasını güncelle": o TV'nin kurulumu kendiliğinden başlar.
@@ -45,14 +34,13 @@ struct TVInstallScreen: View {
                 case .lg: LGInstallSection(update: update?.brand == .lg ? update : nil, working: $working, onDone: finish)
                 }
             } else {
-                HStack(spacing: Mobile.Space.gap) {
-                    ProgressView().tint(Mobile.Palette.accent)
-                    Text(verbatim: TVText.searching).font(Mobile.TypeScale.body).foregroundStyle(Mobile.Palette.secondary)
-                }
+                InstallSearching()
             }
         } bottom: {
             EmptyView()
         }
+        // Kurulum adımı: ortam ışığı (boşta çok yavaş; kurulumda reklam yok).
+        .perdeAmbient()
         .task {
             guard brand == nil else { return }
             // Marka: güncellenen TV, bu telefonun kurduğu TV, eşlenen TV; yoksa ağda ilk görülen TV.
@@ -82,97 +70,6 @@ func installStepText(_ step: InstallStep) -> String {
     case .installing: TVText.stepInstalling
     case .uninstalling: TVText.stepUninstalling
     case .launching: TVText.stepLaunching
-    }
-}
-
-/// Başlık, açıklama ve bilgi notu.
-struct InstallIntro: View {
-    let body1: String
-    let note: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Mobile.Space.inline) {
-            Text(verbatim: body1).font(Mobile.TypeScale.body).foregroundStyle(Mobile.Palette.secondary).fixedSize(horizontal: false, vertical: true)
-            Text(verbatim: note).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.tertiary).fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-/// Numaralı adımlar karosu.
-struct InstallSteps: View {
-    let title: String
-    let steps: [String]
-    var highlight: String?
-    var after: [String] = []
-
-    var body: some View {
-        Tile {
-            Text(verbatim: title).font(Mobile.TypeScale.headline)
-            ForEach(steps, id: \.self) { step in
-                Text(verbatim: step).font(Mobile.TypeScale.body).foregroundStyle(Mobile.Palette.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            if let highlight { Text(verbatim: highlight).font(Mobile.TypeScale.title).foregroundStyle(Mobile.Palette.accent).textSelection(.enabled) }
-            ForEach(after, id: \.self) { step in
-                Text(verbatim: step).font(Mobile.TypeScale.body).foregroundStyle(Mobile.Palette.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-}
-
-/// Ağda görülen bir TV satırı.
-struct InstallCandidateRow: View {
-    let name: String
-    let detail: String
-    var status: (String, Bool)?
-    let selected: Bool
-
-    var body: some View {
-        Tile(emphasis: selected ? .selected : .none) {
-            HStack(spacing: Mobile.Space.gap) {
-                MobileTileIcon(symbol: "tv")
-                VStack(alignment: .leading, spacing: Mobile.Space.hair) {
-                    Text(verbatim: name).font(Mobile.TypeScale.headline)
-                    Text(verbatim: detail).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                    if let status {
-                        Text(verbatim: status.0).font(Mobile.TypeScale.caption).foregroundStyle(status.1 ? Mobile.Palette.success : Mobile.Palette.warning)
-                    }
-                }
-                Spacer()
-                if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Mobile.Palette.accent) }
-            }
-        }
-        .contentShape(Rectangle())
-    }
-}
-
-/// Kurulumun sonucu: ilerleme, başarı ya da ne yapılacağı (ve günlüğü paylaşma).
-struct InstallResult: View {
-    let phase: TVInstallPhase
-
-    var body: some View {
-        switch phase {
-        case .idle:
-            EmptyView()
-        case .working(let step):
-            Tile {
-                HStack(spacing: Mobile.Space.gap) {
-                    ProgressView().tint(Mobile.Palette.accent)
-                    Text(verbatim: installStepText(step)).font(Mobile.TypeScale.body).fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        case .done(let version, let installed):
-            Tile(emphasis: .selected) {
-                Label(installed ? TVText.done(version) : TVText.upToDate(version), systemImage: "checkmark.circle.fill")
-                    .font(Mobile.TypeScale.headline).foregroundStyle(Mobile.Palette.text)
-                Text(verbatim: TVText.next)
-                    .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        case .failed(let text):
-            MobileNote(text: text)
-            ShareLink(item: InstallLog.shared.file) { Text(verbatim: TVText.shareLog) }
-                .font(Mobile.TypeScale.caption).tint(Mobile.Palette.accent)
-        }
     }
 }
 
@@ -265,9 +162,9 @@ struct SamsungInstallSection: View {
 
     var body: some View {
         InstallIntro(body1: TVText.body, note: TVText.samsungNote)
-        Text(verbatim: TVText.tvs).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+        InstallListTitle(text: TVText.tvs, searching: candidates == nil)
         if let candidates {
-            if candidates.isEmpty { MobileNote(text: TVText.none, tone: Mobile.Palette.secondary) }
+            if candidates.isEmpty { MobileNote(text: TVText.none) }
             ForEach(candidates, id: \.tv.host) { item in
                 Button { if !phase.isWorking { host = item.tv.host } } label: {
                     InstallCandidateRow(name: item.info?.name ?? item.tv.name, detail: [item.info?.model, item.tv.host].compactMap { $0 }.joined(separator: " · "),
@@ -276,7 +173,7 @@ struct SamsungInstallSection: View {
                 .buttonStyle(.plain)
             }
         } else {
-            ProgressView().tint(Mobile.Palette.accent)
+            InstallSearching()
         }
         if manual {
             TVAddressField(label: TVText.address, text: $host)
@@ -285,7 +182,7 @@ struct SamsungInstallSection: View {
         }
         InstallSteps(title: TVText.stepsTitle, steps: [TVText.step1, TVText.step2, TVText.step3],
                      highlight: phoneAddress(near: host) ?? TVText.phoneIpUnknown, after: [TVText.step4])
-        Text(verbatim: TVText.signinNote).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary).fixedSize(horizontal: false, vertical: true)
+        InfoBox(text: TVText.signinNote, tone: Mobile.Palette.secondary)
         InstallResult(phase: phase)
         Group {
             if phase.isDone {
@@ -330,8 +227,8 @@ struct SamsungInstallSection: View {
     private func install(replaceForeign: Bool = false) {
         // Virgüllü yazım ("192,168,1,5"), "http://…" ya da port temizlenir (LG ve Mac'teki gibi).
         let typed = host.trimmingCharacters(in: .whitespaces)
-        let target = ManualAddress.normalize(typed) ?? typed.replacingOccurrences(of: ",", with: ".")
-        guard !target.isEmpty else { return }
+        let typedTarget = ManualAddress.normalize(typed) ?? typed.replacingOccurrences(of: ",", with: ".")
+        guard !typedTarget.isEmpty else { return }
         phase = .working(.connecting)
         working = true
         UIApplication.shared.isIdleTimerDisabled = true
@@ -340,6 +237,12 @@ struct SamsungInstallSection: View {
                 working = false
                 UIApplication.shared.isIdleTimerDisabled = false
             }
+            // Kayıtlı TV'nin adresi hiç yanıt vermiyorsa TV ağda yeniden aranır; bulunursa kurulum yeni adresle sürer (LG ile aynı).
+            guard let target = await model.relocateForInstall(host: typedTarget, brand: .samsung) else {
+                phase = .failed(text: TVText.tvNotResponding + "\n\n" + TVText.tvNotRespondingHint)
+                return
+            }
+            if target != typedTarget { host = target }
             do {
                 let result = try await runInstall({ progress in
                     try SamsungInstaller(host: target, signIn: {
@@ -398,6 +301,8 @@ struct SamsungInstallSection: View {
         case .installFailed: TVText.errFailed
         case .foreignApp: TVText.foreignMessage
         }
+        // Kurulum bağlantısı reddedildi ("IP hatası", #1158): hangi menüde ne yapılacağı bu cihazın adresiyle tek satırda.
+        if failure.error == .unreachable { text += "\n\n" + TVText.hostPcSteps(phone ?? phoneAddress(near: nil) ?? "?") }
         if let detail = failure.detail, !detail.isEmpty { text += "\n\n" + TVText.details(detail) }
         if failure.error == .installFailed || failure.error == .certificateRejected { text += "\n\n" + TVText.maintenance }
         // TV'nin kendi "Samsung sunucusuna bağlanılamıyor (AS400)" uyarısı (Samsung 7 Series 2018, 21 Kas; Mac/Windows/Android ile aynı).
@@ -469,9 +374,9 @@ struct AndroidTVInstallSection: View {
 
     var body: some View {
         InstallIntro(body1: TVText.androidBody, note: TVText.androidNote)
-        Text(verbatim: TVText.androidTvs).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+        InstallListTitle(text: TVText.androidTvs, searching: candidates == nil)
         if let candidates {
-            if candidates.isEmpty { MobileNote(text: TVText.androidNone, tone: Mobile.Palette.secondary) }
+            if candidates.isEmpty { MobileNote(text: TVText.androidNone) }
             ForEach(candidates, id: \.host) { item in
                 Button {
                     guard !phase.isWorking else { return }
@@ -485,11 +390,12 @@ struct AndroidTVInstallSection: View {
                 .buttonStyle(.plain)
             }
         } else {
-            ProgressView().tint(Mobile.Palette.accent)
+            InstallSearching()
         }
-        Text(verbatim: TVText.androidMode).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-        SegmentedTabs(options: [false: LocalizedStringKey(TVText.androidModeNetwork), true: LocalizedStringKey(TVText.androidModeWireless)],
-                      selection: $wireless)
+        SettingUnit(title: LocalizedStringKey(TVText.androidMode)) {
+            SegmentedTabs(options: [false: LocalizedStringKey(TVText.androidModeNetwork), true: LocalizedStringKey(TVText.androidModeWireless)],
+                          selection: $wireless)
+        }
         TVAddressField(label: wireless ? TVText.androidAddressWireless : TVText.androidAddress, text: $address,
                        placeholder: wireless ? nil : TVText.addressExample, keyboard: .numbersAndPunctuation)
         if wireless {
@@ -502,10 +408,8 @@ struct AndroidTVInstallSection: View {
                         : [TVText.androidStep1, TVText.androidStep2, TVText.androidStep3])
         if offerWireless, !wireless, case .failed = phase {
             // Eskiden yalnız genel "TV yanıt vermedi" yazısı vardı; 5555 kapalı TV'de çözüm kablosuz hata ayıklamadır.
-            MobileNote(text: TVText.androidErrLegacyClosed)
+            InstallErrorBox(text: TVText.androidErrLegacyClosed)
             Button(TVText.androidTryWireless) { switchToWireless() }.buttonStyle(.mobileSecondary)
-            ShareLink(item: InstallLog.shared.file) { Text(verbatim: TVText.shareLog) }
-                .font(Mobile.TypeScale.caption).tint(Mobile.Palette.accent)
         } else {
             InstallResult(phase: phase)
         }
@@ -555,7 +459,7 @@ struct AndroidTVInstallSection: View {
     }
 
     private func install(allowReplace: Bool = false, replaceForeign: Bool = false) {
-        guard let target = AndroidTvInstaller.parseAddress(address, defaultPort: wireless ? 0 : AdbConnection.defaultPort), target.1 > 0 else {
+        guard let initial = AndroidTvInstaller.parseAddress(address, defaultPort: wireless ? 0 : AdbConnection.defaultPort), initial.1 > 0 else {
             phase = .failed(text: TVText.androidNeedPort)
             return
         }
@@ -580,6 +484,23 @@ struct AndroidTVInstallSection: View {
                 working = false
                 UIApplication.shared.isIdleTimerDisabled = false
             }
+            // Kayıtlı Android TV'nin adresi hiç yanıt vermiyorsa ağda hata ayıklaması açık TV aranır (LG ve Samsung ile aynı).
+            // Kablosuz hata ayıklamada port TV'den yazıldığı için adres değiştirilmez.
+            var resolved = initial
+            if !usedWireless, initial.1 == AdbConnection.defaultPort {
+                let near = initial.0
+                guard let host = await model.relocateForInstall(host: initial.0, brand: .androidTV, search: {
+                    await scanSubnet(port: AdbConnection.defaultPort, near: near).map { LGTV(name: "Android TV", host: $0, brand: .androidTV) }
+                }) else {
+                    phase = .failed(text: TVText.tvNotResponding + "\n\n" + TVText.tvNotRespondingHint)
+                    return
+                }
+                if host != initial.0 {
+                    resolved = (host, initial.1)
+                    address = host
+                }
+            }
+            let target = resolved
             do {
                 guard TVPackages.androidVersion != nil else { throw AndroidInstallFailure(error: .packageMissing) }
                 // Uygulama telefonun adresiyle açılır: TV telefonu ağda aramadan bağlanır.

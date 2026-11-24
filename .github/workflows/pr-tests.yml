@@ -26,6 +26,10 @@ jobs:
           persist-credentials: false
       - name: Eşitlik denetimi
         run: python3 scripts/parity-check.py
+      - name: Metin denetimi (eksik Türkçe)
+        run: |
+          python3 scripts/check-strings.py
+          python3 -m unittest scripts/test_check_strings.py
 
   # Yalnız ilgili klasör değişince pahalı (özellikle macOS) işler çalışsın. Elle çalıştırmada hepsi çalışır.
   changes:
@@ -63,7 +67,8 @@ jobs:
           echo "windows=$(match "^windows/|^testdata/frames/|${res}|${wf}")" >> "$GITHUB_OUTPUT"
           # TVAppPairingLiveTests TV uygulamasının kendisini (tv-webos/app.js) Swift sunucusuyla eşleştirir.
           echo "swift=$(match "^core/|^tv-webos/|^scripts/tv-pair-live\.js$|${frames}|${wf}")" >> "$GITHUB_OUTPUT"
-          echo "android=$(match "^couchsubs-android/|^tv-webos/|^tv-tizen/|^testdata/frames/|${res}|${wf}")" >> "$GITHUB_OUTPUT"
+          # design/yeni-arayuz: Perde belirteçleri (tasarim.json) ve reklam listesi derlemede Android uygulamasına girer.
+          echo "android=$(match "^couchsubs-android/|^tv-webos/|^tv-tizen/|^testdata/frames/|^design/yeni-arayuz/|${res}|${wf}")" >> "$GITHUB_OUTPUT"
 
   windows:
     name: Windows / .NET

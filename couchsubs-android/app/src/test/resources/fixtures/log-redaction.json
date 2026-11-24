@@ -17,5 +17,6 @@
  {"input": "#12 \"Get down! I'm going to the store\" → çeviri 340 ms", "expected": "#12 \"Get down! I'm going to the store\" → çeviri 340 ms"},
  {"input": "PS5 oturumu: PS5-123 192.168.1.20 dinlenmede, uyandırılıyor", "expected": "PS5 oturumu: PS5-123 192.168.1.20 dinlenmede, uyandırılıyor"},
  {"input": "Xbox: play yanıtı: oturum 1a2b3c4d…", "expected": "Xbox: play yanıtı: oturum 1a2b3c4d…"},
- {"input": "/var/mobile/Containers/Data/Application/Library/Logs/CouchSubs/remoteplay.log", "expected": "/var/mobile/Containers/Data/Application/Library/Logs/CouchSubs/remoteplay.log"}
+ {"input": "/var/mobile/Containers/Data/Application/Library/Logs/CouchSubs/remoteplay.log", "expected": "/var/mobile/Containers/Data/Application/Library/Logs/CouchSubs/remoteplay.log"},
+ {"input": "TV kurulumu: passphrase=A1B2C3 api_key: AIzaSyX x-goog-api-key=abc secret=\"s3\"", "expected": "TV kurulumu: passphrase=*** api_key: *** x-goog-api-key=*** secret=\"***\""}
 ]

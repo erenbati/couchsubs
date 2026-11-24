@@ -263,17 +263,36 @@ public static class AutoScreenTextMigration
 }
 
 /// <summary>
-/// "Bilinen oyunlarda hazır alanları kullan" ve "GTA 6 telefonunu otomatik çevir" bir kerelik göçü (Mac/iPhone
-/// migratingScreenTextExtras, Android aynı kural); <see cref="AutoScreenTextMigration"/>'dan sonra uygulanır. Hazır alanlar
-/// beta.63–68'de varsayılan açık geliyordu ve otomatik ekran yazısı kapalıyken de GTA 6'da menüyü ve bildirimleri
-/// çeviriyordu. İşaret yoksa: otomatik ekran yazısı kapalıysa ikisi de kapatılır; kullanıcı onu açmışsa dokunulmaz. Sonra
-/// işaret konur; kullanıcı ikisini bilerek yeniden açabilir.
+/// "Bilinen oyunlarda hazır alanları kullan" bir kerelik göçü (Mac/iPhone migratingScreenTextExtras, Android aynı kural);
+/// <see cref="AutoScreenTextMigration"/>'dan sonra uygulanır. Hazır alanlar beta.63–68'de varsayılan açık geliyordu ve
+/// otomatik ekran yazısı kapalıyken de GTA 6'da menüyü ve bildirimleri çeviriyordu. İşaret yoksa: otomatik ekran yazısı
+/// kapalıysa hazır alanlar kapatılır; kullanıcı onu açmışsa dokunulmaz. Sonra işaret konur. GTA 6 telefonuna artık
+/// dokunulmaz (<see cref="GamePhoneMigration"/>): bu göç telefonu da kapatıyordu, telefon hiç okunmuyordu (#1202).
 /// </summary>
 public static class ScreenTextExtrasMigration
 {
     public static UserSettings Apply(UserSettings settings) => settings.ScreenTextExtrasReset ? settings
         : settings.AutoScreenText ? settings with { ScreenTextExtrasReset = true }
-        : settings with { GameAreaPresets = false, AutoReadGamePhone = false, ScreenTextExtrasReset = true };
+        : settings with { GameAreaPresets = false, ScreenTextExtrasReset = true };
+}
+
+/// <summary>
+/// "GTA 6 telefonunu otomatik çevir" bir kerelik açılışı (Mac/iPhone migratingGamePhone, Android aynı kural);
+/// <see cref="ScreenTextExtrasMigration"/>'dan sonra uygulanır. Eski göç otomatik ekran yazısı kapalıyken telefonu da
+/// kapatıyordu; GTA 6 oyuncularının telefonu hiç çevrilmiyordu (GitHub #1202, #1197, #1193, #1170). İşaret yoksa telefon
+/// açılır, işaret konur; kullanıcı sonra bilerek kapatabilir. Telefon izleyicisi yalnız GTA 6 seçiliyken çalışır.
+/// </summary>
+public static class GamePhoneMigration
+{
+    public static UserSettings Apply(UserSettings settings) => settings.GamePhoneReenabled ? settings
+        : settings with { AutoReadGamePhone = true, GamePhoneReenabled = true };
+}
+
+/// <summary>"oturum başladı" günlük satırının ekran yazısı kısmı (Mac/iPhone SubtitleLog.areaSummary'nin sonu).</summary>
+public static class SessionSummary
+{
+    public static string ScreenText(UserSettings settings) =>
+        $"otomatik ekran yazısı: {(settings.AutoScreenText ? "açık" : "kapalı")}, telefon: {(settings.ReadsGamePhone ? "açık" : "kapalı")}";
 }
 
 public sealed record UserSettings
@@ -316,8 +335,11 @@ public sealed record UserSettings
     public int CpuTranslationThreads { get; init; } = CpuThreadOptions.Default;
     /// <summary>Değişmeyen altyazı bölgesinde tam OCR okumasını en fazla iki kare yeniden kullan.</summary>
     public bool FastSubtitleDetection { get; init; }
-    /// <summary>GTA 6'da ekrandaki telefon açılınca yazılarını otomatik çevirir (deneysel).</summary>
-    public bool AutoReadGamePhone { get; init; }
+    /// <summary>
+    /// GTA 6'da ekrandaki telefon açılınca yazılarını otomatik çevirir. Varsayılan açık (yalnız GTA 6 seçiliyken çalışır;
+    /// kapalı gelince telefon hiç çevrilmiyordu, #1202).
+    /// </summary>
+    public bool AutoReadGamePhone { get; init; } = true;
     /// <summary>
     /// "GTA 6 Telefon Mesajları": açıkken (Yanda Panel, varsayılan) telefonun mesajları telefonun yanındaki sohbet panelinde
     /// (karşı taraf solda, oyuncu sağda), kapalıyken (Balonların Üstünde) her mesajın çevirisi kendi balonunun üstünde
@@ -344,6 +366,8 @@ public sealed record UserSettings
     /// yoktur (false).
     /// </summary>
     public bool ScreenTextExtrasReset { get; init; }
+    /// <summary>GTA 6 telefonu bir kerelik açıldı (<see cref="GamePhoneMigration"/>). Eski dosyalarda yoktur (false).</summary>
+    public bool GamePhoneReenabled { get; init; }
     /// <summary>
     /// Otomatik ekran yazısında hangi türler çevrilir (bkz. <see cref="ScreenTextKind"/>); yalnız <see cref="AutoScreenText"/>
     /// açıkken geçerli. Eski ayar dosyalarında yoktur; varsayılanla gelir: telefon, görev, yardım/eylemler açık; menüler ve
@@ -432,12 +456,16 @@ public sealed record UserSettings
     /// <summary>Altyazıdaki konuşan adı ("ARTHUR: …") çeviride gösterilir; kapalıysa yalnız Türkçe cümle görünür.</summary>
     public bool ShowSpeakerNames { get; init; } = true;
     /// <summary>
-    /// Konuşana göre renk: "Mattia: …" satırında ad ve satır o konuşana özgü renkte görünür (TV, bilgisayar ekranındaki
+    /// Konuşan adını renklendir: "Mattia: …" satırında yalnız ad o konuşana özgü renkte, cümle yazı renginde (TV, bilgisayar ekranındaki
     /// pencere ve yayın penceresi; bkz. <see cref="Core.SpeakerColors"/>). Eski ayar dosyalarında yoktur; açık başlar.
     /// </summary>
     public bool SpeakerColors { get; init; } = true;
     /// <summary>Koyu, açık ya da sistemle aynı. Eski ayar dosyalarında yoktur; onlar da koyu açılır.</summary>
     public AppAppearance Appearance { get; init; } = AppAppearance.Dark;
+    /// <summary>Ayarlar › Temel › Açılış Sesi: ilk kurulumun açılış adımındaki marka sesi (design/yeni-arayuz/METINLER.md). Eski ayar dosyalarında yoktur; açık.</summary>
+    public bool StartupSound { get; init; } = true;
+    /// <summary>Ayarlar › Temel › Geçiş Animasyonları: kapalıyken yeni arayüzde yalnız kısa solma. Eski ayar dosyalarında yoktur; açık.</summary>
+    public bool TransitionAnimations { get; init; } = true;
     /// <summary>Görüntü PS5 bağlantısından mı, bu bilgisayardaki Remote Play penceresinden mi okunur.</summary>
     public FrameSource FrameSource { get; init; } = FrameSource.Ps5;
     /// <summary>Xbox seçiliyken görüntü Xbox bağlantısından mı, seçilen pencereden mi okunur (bkz. <see cref="Shell.XboxFrameSource"/>).</summary>
@@ -674,14 +702,20 @@ public sealed record AreaSet(CropRegion Region, AreaPreset AreaPreset, IReadOnly
 /// <param name="Target">Kısayolla bir kez okununca sonucun gösterildiği yer.</param>
 public sealed record ExtraArea(string Id, string Name, CropRegion Region, bool Enabled = true, ResultTarget Target = ResultTarget.Tv)
 {
-    /// <summary>En çok bu kadar ek alan tanımlanır (her biri saniyede bir okunur; kısayolları Num 1-3).</summary>
-    public const int MaxCount = 3;
+    /// <summary>
+    /// En çok 50 ek alan (yeni arayüz, METINLER.md; eskiden 3): her alan saniyede bir okunur. Yalnız ilk
+    /// <see cref="ShortcutCount"/> alanın kısayolu vardır (Num 1-3 / Ctrl+Shift+1-3); sonrakiler kısayolsuzdur.
+    /// </summary>
+    public const int MaxCount = 50;
+
+    /// <summary>Kısayolu olan ilk ek alanların sayısı.</summary>
+    public const int ShortcutCount = 3;
 
     /// <summary>Hazır seçimle yeni alan (yeni kimlik).</summary>
     public static ExtraArea Create(string name, CropRegion region) => new(Guid.NewGuid().ToString(), name, region);
 
     /// <summary>Ekranda ve günlükte görünen ad: verilen ad, yoksa "Alan 1".</summary>
-    public string DisplayName(int number) => string.IsNullOrWhiteSpace(Name) ? Localizer.Current[$"Area {number}"] : Name;
+    public string DisplayName(int number) => string.IsNullOrWhiteSpace(Name) ? Localizer.Current.Format("Area %lld", number) : Name;
 
     /// <summary>Elle değiştirilmiş ya da bozuk kayıt: eksik kimlik/ad/bölge tamamlanır, yinelenen kimlik ve fazlası atılır.</summary>
     internal static IReadOnlyList<ExtraArea> Sanitize(IReadOnlyList<ExtraArea>? areas)
@@ -747,6 +781,8 @@ public interface IKeeper
     void Start(TimeSpan interval);
     void Stop();
     void Reconnect();
+    /// <summary>LG: uygulama kapatıldı (kurulumdan sonra); bağlı görünse de bir kez açılır (TvKeeper.ReopenApp).</summary>
+    void ReopenApp() => Reconnect();
 }
 
 public enum GameConsoleKind { PlayStation, Xbox }
@@ -827,6 +863,11 @@ public interface IAppServices
     /// <summary>TV kurulum günlüğüne (tvinstall.log) bir satır; kurulum başlamadıysa nedeni buraya yazılır.</summary>
     void WriteTvInstallLog(string line) { }
     Task<bool> IsDevModeOnAsync(string host);
+    /// <summary>
+    /// Kayıtlı TV adresinde bir şey yanıt veriyor mu (TvReach.RespondsAsync: kapılardan biri bağlanır ya da reddeder). Hayırsa
+    /// TV ağda yeniden aranır; adresi değişmiş TV'de "geliştirici modu kapalı" ya da "Key Server kapalı" denmez.
+    /// </summary>
+    Task<bool> TvRespondsAsync(string host, TvBrand brand) => Task.FromResult(true);
     Task<string> FetchDevKeyAsync(string host, string passphrase);
     /// <summary>TV'deki sürüm; TV'de CouchSubs'ın kimliğiyle başka bir uygulama varsa DevModeError.ForeignApp fırlatır.</summary>
     Task<string?> InstalledTvAppVersionAsync(string host, string devKey);
@@ -836,6 +877,8 @@ public interface IAppServices
     /// önce kaldırılır. Üç markada da (bu ve aşağıdaki iki yük) onay yoksa hiçbir şey silinmez, ForeignApp fırlatılır.
     /// </summary>
     Task InstallTvAppAsync(string host, string devKey, bool replaceForeign) => InstallTvAppAsync(host, devKey);
+    /// <summary>LG: TV'de açık CouchSubs'ı kapatır (eski sürümde çalışıyorsa; kurulum bunu kendisi de yapar).</summary>
+    Task CloseTvAppAsync(string host, string devKey) => Task.CompletedTask;
     /// <summary>LG geliştirici modunun süresini baştan başlatır; kalan saati döner (bilinmiyorsa null).</summary>
     Task<int?> RenewDevSessionAsync(string host, string devKey);
     /// <summary>Samsung ve Android TV için uygulamayla gelen paket (geliştirici derlemesinde olmayabilir).</summary>
@@ -980,8 +1023,12 @@ public sealed record SamsungPreflight(SamsungDeveloperInfo? Info, string? Comput
 /// <summary>Durum noktasının rengi: bağlı (yeşil), sorun var (turuncu), boşta (gri).</summary>
 public enum StatusTone { Idle, Warning, Good }
 
-/// <summary><c>BetterTranslation</c>: isteğe bağlı ücretsiz Gemini anahtarı; atlanabilir (Mac'teki betterTranslation).</summary>
-public enum OnboardingStep { Welcome, SecondAccount, PsnLogin, Console, Tv, Translation, Test, BetterTranslation, Done }
+/// <summary>
+/// <c>BetterTranslation</c>: isteğe bağlı ücretsiz Gemini anahtarı; atlanabilir (Mac'teki betterTranslation).
+/// <c>Hdmi</c>: TV Girişi (yalnız TV eşleştiyse ve Android TV değilse); seçilen giriş <c>style.hdmiInput</c> ile TV'ye gider.
+/// Sıra Mac'teki yeni kurulumla aynı: deneme en sonda, Daha İyi Çeviri'den sonra.
+/// </summary>
+public enum OnboardingStep { Welcome, SecondAccount, PsnLogin, Console, Tv, Hdmi, Translation, BetterTranslation, Test, Done }
 
 public enum AppError
 {

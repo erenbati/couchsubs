@@ -92,8 +92,12 @@ class GamePhoneTracker(private val locate: (PhoneImage) -> GamePhoneGeometry.Pos
     companion object {
         const val INTERVAL_MS = 330L
 
-        /** Açık telefon art arda bu kadar örnekte bulunamazsa kapanır (330 ms aralıkla ~0,7 sn; Mac ve Windows ile aynı). */
-        const val MISS_GRACE = 2
+        /**
+         * Açık telefon art arda bu kadar örnekte bulunamazsa kapanır (330 ms aralıkla ~1–1,3 sn; Mac ve Windows ile aynı).
+         * Önceden 2 örnekti (~0,7 sn): telefonun ekranı bir an okunamayınca panel kaybolup baştan çevrilerek geri geliyordu
+         * (X, 22 Kas, GTA 6 telefonu).
+         */
+        const val MISS_GRACE = 3
 
         /** Telefon kutusunun alanı (kareye oranla) bu aralıkta olmalı. */
         const val MIN_AREA = 0.04

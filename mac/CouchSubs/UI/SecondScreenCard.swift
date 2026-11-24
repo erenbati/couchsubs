@@ -9,7 +9,6 @@ import SwiftUI
 /// (TV, bilgisayar ekranı, ikisi) değiştirmez.
 struct SecondScreenPanel: View {
     @EnvironmentObject private var model: AppModel
-    @State private var copied = false
 
     private var address: String? {
         AppModel.localAddress(near: nil).map { SecondScreen.address(host: $0, port: Int(model.serverPort), key: model.subtitleAccessKey) }
@@ -17,7 +16,7 @@ struct SecondScreenPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.space("m")) {
-            Text("Show on another device").font(.csHeadline)
+            Text("Show on another device").font(.dsCardTitle)
             if let address {
                 if let code = SecondScreen.qrImage(for: address) {
                     // Koyu temada da okunsun diye kod beyaz zeminde; büyütülürken yumuşatılmaz.
@@ -29,21 +28,8 @@ struct SecondScreenPanel: View {
                         .background(Color.white, in: RoundedRectangle(cornerRadius: Theme.radius("control"), style: .continuous))
                         .accessibilityLabel(Text("Show on another device"))
                 }
-                HStack(spacing: Theme.space("m")) {
-                    Text(verbatim: address)
-                        .font(.csBody.monospaced())
-                        .textSelection(.enabled)
-                        .padding(.horizontal, Theme.space("l"))
-                        .frame(maxWidth: .infinity, minHeight: Theme.size("buttonHeight"), alignment: .leading)
-                        .background(Color.csSurface2, in: RoundedRectangle(cornerRadius: Theme.radius("control"), style: .continuous))
-                    Button(copied ? "Copied" : "Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(address, forType: .string)
-                        copied = true
-                    }
-                    .buttonStyle(.secondary)
-                    .resetsAfterDelay($copied)
-                }
+                // Kopyala simgesi kutunun içinde; adres tek satır, sığmazsa ortadan kısalır.
+                AddressRow(address: address)
                 HintText(text: "Scan the code with the camera of a phone or tablet on the same Wi-Fi. While translating, the subtitles appear large in its browser; no app or internet needed.")
             } else {
                 HintText(text: "Connect to Wi-Fi to show subtitles on another device.")

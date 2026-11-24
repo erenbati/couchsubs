@@ -131,6 +131,84 @@ object CouchIcons {
         }
     }
 
+    /** Ayar kaydırıcıları (Ayarlar sekmesi, Temel). */
+    val Sliders: ImageVector by lazy {
+        icon("Sliders") {
+            stroke {
+                moveTo(4f, 6f); horizontalLineTo(20f)
+                moveTo(4f, 12f); horizontalLineTo(20f)
+                moveTo(4f, 18f); horizontalLineTo(20f)
+            }
+            fill {
+                dot(9f, 6f, 2.6f)
+                dot(15f, 12f, 2.6f)
+                dot(8f, 18f, 2.6f)
+            }
+        }
+    }
+
+    /** Yazı boyu ("Aa"; Altyazı Görünümü). */
+    val TextSize: ImageVector by lazy {
+        icon("TextSize") {
+            stroke {
+                // Büyük A.
+                moveTo(3f, 19f); lineTo(8.5f, 5f); lineTo(14f, 19f)
+                moveTo(5.2f, 14f); horizontalLineTo(11.8f)
+                // Küçük a.
+                moveTo(15.5f, 13f); lineTo(18f, 8f); lineTo(20.5f, 13f)
+                moveTo(16.3f, 11.4f); horizontalLineTo(19.7f)
+            }
+        }
+    }
+
+    /** Vizör (Altyazı Alanı). */
+    val Viewfinder: ImageVector by lazy {
+        icon("Viewfinder") {
+            stroke {
+                moveTo(4f, 9f); verticalLineTo(5f); horizontalLineTo(8f)
+                moveTo(16f, 5f); horizontalLineTo(20f); verticalLineTo(9f)
+                moveTo(20f, 15f); verticalLineTo(19f); horizontalLineTo(16f)
+                moveTo(8f, 19f); horizontalLineTo(4f); verticalLineTo(15f)
+            }
+        }
+    }
+
+    /** Ses dalgası (Türkçe Seslendirme). */
+    val Waveform: ImageVector by lazy {
+        icon("Waveform") {
+            stroke {
+                moveTo(4f, 10f); verticalLineTo(14f)
+                moveTo(8f, 7f); verticalLineTo(17f)
+                moveTo(12f, 4f); verticalLineTo(20f)
+                moveTo(16f, 8f); verticalLineTo(16f)
+                moveTo(20f, 10.5f); verticalLineTo(13.5f)
+            }
+        }
+    }
+
+    /** Ev (Ana Ekran sekmesi). */
+    val Home: ImageVector by lazy {
+        icon("Home") {
+            stroke {
+                moveTo(4f, 10.5f); lineTo(12f, 4f); lineTo(20f, 10.5f)
+                moveTo(6f, 9f); verticalLineTo(19f); horizontalLineTo(18f); verticalLineTo(9f)
+                moveTo(10f, 19f); verticalLineTo(14f); horizontalLineTo(14f); verticalLineTo(19f)
+            }
+        }
+    }
+
+    /** Saat (Geçmiş sekmesi). */
+    val Clock: ImageVector by lazy {
+        icon("Clock") {
+            stroke {
+                moveTo(12f, 3.5f)
+                arcTo(8.5f, 8.5f, 0f, isMoreThanHalf = true, isPositiveArc = true, x1 = 11.99f, y1 = 3.5f)
+                close()
+                moveTo(12f, 7.5f); verticalLineTo(12f); horizontalLineTo(15.5f)
+            }
+        }
+    }
+
     private inline fun icon(name: String, block: ImageVector.Builder.() -> Unit): ImageVector =
         ImageVector.Builder(name = name, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f)
             .apply(block)

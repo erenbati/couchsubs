@@ -58,10 +58,26 @@ targets:
       - path: ../mac/CouchSubs/UI/LocalAIText.swift
       # Altyazı bölgesinin canlı önizlemesi (sürüklenen çerçeve).
       - path: ../mac/CouchSubs/UI/RegionPreview.swift
+      # Ayarların ortak değerleri: hız ön ayarları, altyazı renk listeleri, açılış sesi (Mac ile aynı).
+      - path: ../mac/CouchSubs/UI/Yeni/SubtitlePalette.swift
+      # Perde tasarım dili: tasarim.json'un okunuşu, hareket kapısı, efektler, yeni bileşenler ve bileşen kataloğu (Mac ile
+      # aynı kod; platforma özgü küçük farklar dosyaların içinde).
+      - path: ../mac/CouchSubs/UI/Yeni/DSTokens.swift
+      - path: ../mac/CouchSubs/UI/Yeni/Perde.swift
+      - path: ../mac/CouchSubs/UI/Yeni/PerdeCatalog.swift
       # Ekran metinleri Mac uygulamasıyla aynı katalogda (Türkçe).
       - path: ../mac/CouchSubs/Resources/Localizable.xcstrings
         buildPhase: resources
       - path: ../design/tokens.json
+        buildPhase: resources
+      # Yeni arayüzün tasarım değerleri, alt reklam şeridinin reklamları ve uygulama simgeleri (Mac ve Windows aynı
+      # dosyaları okur).
+      - path: ../design/yeni-arayuz/tasarim.json
+        buildPhase: resources
+      - path: ../design/yeni-arayuz/reklamlar.json
+        buildPhase: resources
+      - path: ../design/yeni-arayuz/reklam
+        type: folder
         buildPhase: resources
       - path: Config
         buildPhase: none
@@ -135,7 +151,8 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        UIUserInterfaceStyle: Dark
+        # Yeni arayüz açık ve koyu görünümü sistemden alır (eskiden hep koyuydu).
+        UIUserInterfaceStyle: Automatic
         # Config/App.xcconfig + Secrets.xcconfig'ten (bkz. AppConfig.swift).
         CSPacksBaseURL: $(PACKS_API_BASE_URL)
         CSPacksFallbackURL: $(PACKS_API_FALLBACK_URL)

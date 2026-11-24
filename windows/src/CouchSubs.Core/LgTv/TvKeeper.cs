@@ -28,10 +28,31 @@ namespace CouchSubs.Core.LgTv;
 /// <param name="consolePort">TV uygulamasının gösterdiği HDMI girişi (1-4; altyazı akışına bağlanırken bildirir), bilinmiyorsa null.</param>
 /// <param name="onOpenResult">Her açma denemesinin sonucu: açıldıysa null, TV'ye ulaşılamadıysa ya da açamadıysa
 /// <see cref="TvOpenProblem.Unreachable"/> (ana ekrandaki satır).</param>
+/// <param name="tvConnected">LG: TV uygulaması bilgisayara bağlı mı (altyazı akışı açık). Verilirse açık ve bağlı uygulamaya
+/// yeni kurulan bağlantıda açma komutu gitmez (bkz. <see cref="ReopenBackoff"/>).</param>
 public sealed class TvKeeper(Func<Task<ITvControl>> connect, string appId, IReadOnlyDictionary<string, string> parameters,
                              Func<bool>? appConnected = null, TimeSpan? relaunchInterval = null, Func<DateTime>? clock = null,
-                             Func<int?>? consolePort = null, Action<TvOpenProblem?>? onOpenResult = null) : IDisposable
+                             Func<int?>? consolePort = null, Action<TvOpenProblem?>? onOpenResult = null,
+                             Func<bool>? tvConnected = null) : IDisposable
 {
+    /// <summary>
+    /// LG'de yeniden kurulan SSAP bağlantısında (TV kapanıp açıldı, bağlantı koptu, alındı kesildi) iki açma arasındaki en
+    /// kısa süre: ilk yeniden açma hemen, sonra 30 sn, 1, 2, 5 dk. #1055 (beta.86, LG OLED C4): bekçi her yeni bağlantıda,
+    /// uygulama açık ve bağlıyken de <c>system.launcher/launch</c> gönderiyordu; webOS uygulamayı yeniden başlatıp HDMI
+    /// görüntüsünü yeniden kuruyor, ekran kararıp "HDR" yazısıyla geri geliyordu. Alındı denetimi her kopuşta bekçiyi
+    /// yenilediği için bu, çeviri başlarken 6-7 kez ve sonra aralıklı oldu. Mac/iPhone ve Android ile aynı.
+    /// </summary>
+    public static readonly TimeSpan[] ReopenBackoff =
+        [TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(300)];
+    /// <summary>Uygulama bu kadar kesintisiz bağlı kalınca geri çekilme sıfırlanır.</summary>
+    public static readonly TimeSpan HealthyReset = TimeSpan.FromMinutes(10);
+    private bool opened;
+    /// <summary>LG: uygulama kurulumdan sonra kapatıldı (<see cref="ReopenApp"/>); yeni bağlantıda bağlı görünse de açılır.</summary>
+    private bool launchAfterClose;
+    private int reopens;
+    private DateTime? lastReopen;
+    private DateTime? connectedSince;
+
     /// <summary>Bu kadar zorla geri getirmeden sonra TV yine girişteyse bekçi çekilir.</summary>
     public const int StandDownAfter = 3;
     public static readonly TimeSpan StandDownWindow = TimeSpan.FromSeconds(90);
@@ -85,11 +106,17 @@ public sealed class TvKeeper(Func<Task<ITvControl>> connect, string appId, IRead
             {
                 var fresh = await connect();
                 control = fresh;
+                if (tvConnected is not null)
+                {
+                    await OpenOnFreshConnectionAsync(fresh);
+                    return;
+                }
                 await fresh.LaunchAsync(appId, parameters);
                 onOpenResult?.Invoke(null);
                 return;
             }
             var time = now();
+            NoteHealth(time);
             if (lastForced is { } last && time - last < LaunchSettle) return;
             var current = await control.ForegroundAppIdAsync();
             if (current == appId)
@@ -134,6 +161,68 @@ public sealed class TvKeeper(Func<Task<ITvControl>> connect, string appId, IRead
         finally
         {
             tickLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// LG, yeni kurulan SSAP bağlantısı (<c>tvConnected</c> verildiyse). Açık ve bağlı uygulamaya açma komutu gitmez: webOS
+    /// önde çalışan uygulamayı da yeniden başlatıyor, HDMI görüntüsü yeniden kuruluyordu (#1055). İlk açılışta uygulama
+    /// bağlı değilse eskisi gibi bir kez açılır (adres ve anahtar parametreyle gider). Sonraki bağlantılarda uygulama bağlı
+    /// değilse (kapandı, arka plana düştü ya da önde ama yanıtsız) <see cref="ReopenBackoff"/> aralığıyla açılır; aralık
+    /// dolmadıysa bir sonraki kontrol önplana bakar (PS tuşundan dönüş eskisi gibi).
+    /// </summary>
+    private async Task OpenOnFreshConnectionAsync(ITvControl fresh)
+    {
+        var time = now();
+        NoteHealth(time);
+        if (launchAfterClose)
+        {
+            // Kurulumdan sonra uygulama kapatıldı: sunucu kopan akışı henüz fark etmemiş olabilir, bağlı sayılmaz.
+            launchAfterClose = false;
+            await fresh.LaunchAsync(appId, parameters);
+            opened = true;
+            onOpenResult?.Invoke(null);
+            return;
+        }
+        if (tvConnected?.Invoke() == true)
+        {
+            opened = true;
+            onOpenResult?.Invoke(null);
+            return;
+        }
+        if (!opened)
+        {
+            await fresh.LaunchAsync(appId, parameters);
+            opened = true;
+            onOpenResult?.Invoke(null);
+            return;
+        }
+        if (lastReopen is { } last && reopens > 0 && time - last < ReopenBackoff[Math.Min(reopens - 1, ReopenBackoff.Length - 1)])
+        {
+            onOpenResult?.Invoke(null);
+            return;
+        }
+        reopens++;
+        lastReopen = time;
+        lastForced = time;
+        await fresh.LaunchAsync(appId, parameters);
+        onOpenResult?.Invoke(null);
+    }
+
+    /// <summary>Uygulama <see cref="HealthyReset"/> boyunca kesintisiz bağlı kaldıysa yeniden açmanın geri çekilmesi sıfırlanır.</summary>
+    private void NoteHealth(DateTime time)
+    {
+        if (tvConnected is null) return;
+        if (!tvConnected())
+        {
+            connectedSince = null;
+            return;
+        }
+        connectedSince ??= time;
+        if (time - connectedSince >= HealthyReset)
+        {
+            reopens = 0;
+            lastReopen = null;
         }
     }
 
@@ -226,6 +315,16 @@ public sealed class TvKeeper(Func<Task<ITvControl>> connect, string appId, IRead
         forced.Clear();
         consoleReturns.Clear();
         lastForced = null;
+    }
+
+    /// <summary>
+    /// LG: TV uygulaması kurulumdan sonra (ya da eski sürümde çalıştığı için) kapatıldı; bağlantı yeniden kurulur ve uygulama
+    /// bağlı görünse de bir kez açılır (adres ve anahtar parametreyle). Mac TVKeeper.reopenApp ile aynı.
+    /// </summary>
+    public void ReopenApp()
+    {
+        Reconnect();
+        launchAfterClose = true;
     }
 
     public void Stop()

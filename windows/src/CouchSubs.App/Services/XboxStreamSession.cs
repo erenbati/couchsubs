@@ -44,6 +44,15 @@ internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, 
     private DispatcherTimer? pictureTimer;
     private long pictureCallbacks;
 
+    /// <summary>
+    /// Kare sıklığı (<see cref="FrameCadence"/>): oynatıcı her kareyi JPEG'e çevirip gönderir (1080p'de işlemciyi en çok yoran
+    /// iş); "frameDone" ile bir sonraki kareye kadar beklenecek süre gider (işlemci doluysa ve okuma yavaşsa uzar).
+    /// </summary>
+    private FrameCadence cadence = new();
+    private readonly SystemCpuLoad cpu = new();
+
+    public void UseCadence(FrameCadence value) => cadence = value;
+
     public event Action<Frame>? FrameReceived;
     public event Action<SessionState>? StateChanged;
     public event Action<RegisteredConsole>? ConsoleMoved { add { } remove { } }
@@ -185,12 +194,12 @@ internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, 
             {
                 Log(permanent ? "kalıcı hata: yeniden denenmiyor, yayın durdu"
                     : noFirstFrame ? $"{XboxRetryPlan.MaxNoPictureAttempts} bağlantıda da görüntü gelmedi: yeniden denenmiyor, yayın durdu"
-                    : $"{XboxRetryPlan.DelaysMs.Length} deneme bitti: yeniden denenmiyor, yayın durdu");
+                    : "yeniden bağlanma denendi: yeniden denenmiyor, yayın durdu");
                 Volatile.Write(ref gaveUp, true);
                 StateChanged?.Invoke(SessionState.Disconnected(DisconnectKind.Refused, XboxStop.Message(Localizer.Current, reason, noFirstFrame)));
                 break;
             }
-            Log($"yeniden deneme {retries.Failures}/{XboxRetryPlan.DelaysMs.Length}: {delay / 1000} sn sonra");
+            Log($"yeniden deneme {retries.Failures}: {delay / 1000} sn sonra");
             // Ekranda kapanmanın türü kısa metinle (sunucu kapattı / yanıt yok / bağlantı koptu); ham neden günlükte.
             StateChanged?.Invoke(SessionState.Disconnected(DisconnectKind.Other,
                 Localizer.Current[noFirstFrame ? XboxStop.NoPictureRetrying : XboxEndCauses.RetryMessage(cause)]));
@@ -559,9 +568,11 @@ internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, 
             finally
             {
                 Volatile.Write(ref frameBusy, 0);
+                cpu.Report(cadence);
+                var next = cadence.IntervalMs;
                 view?.Dispatcher.InvokeAsync(() =>
                 {
-                    try { if (browser == view) view.CoreWebView2?.PostWebMessageAsJson("{\"kind\":\"frameDone\"}"); }
+                    try { if (browser == view) view.CoreWebView2?.PostWebMessageAsJson($"{{\"kind\":\"frameDone\",\"nextMs\":{next}}}"); }
                     catch { /* Oynatıcı bu arada kapandı. */ }
                 });
             }
@@ -581,7 +592,8 @@ internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, 
 
     /// <summary>
     /// WebRTC bağlandıktan sonra 30 sn'de bir Xbox oturumunu canlı tutar. Tek başarısız istek yayını kesmez (eskiden
-    /// oynatıcıdaki <c>rpc('keepalive').catch(fail)</c> keserdi); ardışık <see cref="XboxKeepalive.MaxFailures"/> hata keser.
+    /// oynatıcıdaki <c>rpc('keepalive').catch(fail)</c> keserdi); görüntü durmuşken ardışık
+    /// <see cref="XboxKeepalive.MaxFailures"/> hata ya da 404/410 keser (bkz. <see cref="XboxKeepalive.ShouldEnd"/>).
     /// </summary>
     private void StartKeepalive()
     {
@@ -606,9 +618,14 @@ internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, 
                     {
                         var end = keepalive.Failed();
                         Log($"canlı tutma başarısız ({keepalive.Failures}/{XboxKeepalive.MaxFailures}): {XboxStop.Shorten(error.Message)}");
-                        // Oturum Xbox hizmetinde yok (404/410): Xbox yayını kapatmış, beklemek boşuna.
+                        // Oturum Xbox hizmetinde yok (404/410) ya da hatalar sınıra vardı; görüntü akıyorsa yayın sürer.
                         var gone = XboxKeepalive.SessionGone(error.Message);
-                        if (!end && !gone) continue;
+                        var flowing = pictureWatch?.IsFlowing(Environment.TickCount64) == true;
+                        if (!XboxKeepalive.ShouldEnd(gone, end, flowing))
+                        {
+                            if (flowing && (gone || end)) Log("görüntü akıyor: canlı tutma hatası yayını kapatmıyor");
+                            continue;
+                        }
                         var why = gone ? $"Xbox oturumu kapattı (canlı tutma: {XboxStop.Shorten(error.Message, 60)})"
                             : Localizer.Current["The Xbox stopped answering keep-alive requests."];
                         // Arayüz iş parçacığında: endReason ve oynatıcı orada değişir.

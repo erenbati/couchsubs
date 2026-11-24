@@ -15,6 +15,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -64,13 +71,21 @@ fun WelcomeScreen(onDemo: () -> Unit = {}, onDone: () -> Unit) {
     val pager = rememberPagerState { 3 }
     val scope = rememberCoroutineScope()
     val last = pager.currentPage == 2
-    ScreenScaffold(scroll = false, top = {
-        TopBar { if (!last) GhostButton(stringResource(R.string.skip), onClick = onDone) }
+    // Açılış sesi yalnız ilk açılışta ve Ayarlar › Temel › Açılış Sesi açıkken (Mac ve iPhone ile aynı).
+    LaunchedEffect(Unit) { if (Services.settings.startupSound && !Services.settings.welcomeSeen) StartupChime.play() }
+    // Perde: karşılamada ortam ışığı; başlık üstte, örnek kart altında; ilerleme noktaları (etkin nokta amber ve uzun).
+    val gate = motionGate()
+    ScreenScaffold(scroll = false, ambient = true, top = {
+        Row(Modifier.fillMaxWidth().heightIn(min = Tokens.Control.icon), verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.weight(1f))
+            if (!last) GhostButton(stringResource(R.string.skip), onClick = onDone)
+        }
     }, bottom = {
-        Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Space.inline)) {
+        Row(Modifier.clearAndSetSemantics { }, horizontalArrangement = Arrangement.spacedBy(Tokens.Space.inline)) {
             repeat(3) { index ->
                 val on = pager.currentPage == index
-                Box(Modifier.size(if (on) 10.dp else 8.dp).background(if (on) Tokens.Color.accent else Tokens.Color.borderStrong, CircleShape))
+                val width by animateDpAsState(if (on) 24.dp else 8.dp, perdeTween(Tokens.Motion.medium, gate), label = "dot")
+                Box(Modifier.size(width, 8.dp).background(if (on) Tokens.Color.accent else Tokens.Color.borderStrong, CircleShape))
             }
         }
         PrimaryButton(stringResource(if (last) R.string.welcome_start else R.string.next)) {
@@ -79,43 +94,43 @@ fun WelcomeScreen(onDemo: () -> Unit = {}, onDone: () -> Unit) {
         // Kurulumdan önce: konsolu olmayan (ve mağaza incelemesi) uygulamayı örnek görüntülerle dener.
         GhostButton(stringResource(R.string.demo_mode_try), Modifier.fillMaxWidth(), onClick = onDemo)
     }) {
-        HorizontalPager(pager, Modifier.fillMaxWidth().weight(1f)) { page ->
-            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Tokens.Space.gap, Alignment.Bottom)) {
+        HorizontalPager(pager, Modifier.fillMaxWidth().weight(1f), verticalAlignment = Alignment.Top) { page ->
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Tokens.Space.cards)) {
                 when (page) {
                     0 -> {
-                        Tile(Modifier.fillMaxWidth()) {
-                            Text(stringResource(R.string.welcome1_sample_tr), style = Tokens.Type.subtitleCurrent, color = Tokens.Color.accentText)
-                            Text(stringResource(R.string.welcome1_sample_en), style = Tokens.Type.caption, color = Tokens.Color.secondary)
-                        }
                         Heading(stringResource(R.string.welcome1_title), stringResource(R.string.welcome1_body))
-                    }
-                    1 -> {
-                        Tile(Modifier.fillMaxWidth()) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Tokens.Space.gap)) {
-                                GameMonogram("GTA")
-                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Tokens.Space.hair)) {
-                                    Text("Grand Theft Auto V", style = Tokens.Type.headline, color = Tokens.Color.text)
-                                    Text(stringResource(R.string.welcome2_gta), style = Tokens.Type.caption, color = Tokens.Color.secondary)
-                                }
-                                Pill(stringResource(R.string.packs_free))
+                        Tile(Modifier.fillMaxWidth(), spacing = Tokens.Space.gap) {
+                            Text(stringResource(R.string.welcome1_sample_en), style = Tokens.Type.caption, color = Tokens.Color.secondary)
+                            Text(stringResource(R.string.welcome1_sample_tr), style = Tokens.Type.cardTitle, color = Tokens.Color.text)
+                            Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Space.inline)) {
+                                StatusChip(stringResource(R.string.perde_paired), ChipTone.OK)
+                                StatusChip(stringResource(R.string.perde_ready_translation), ChipTone.AMBER, dot = false)
                             }
                         }
-                        TwoColumns(
-                            { PackTile("RDR", "Red Dead 2", stringResource(R.string.welcome2_rdr_lines), it) },
-                            { PackTile("MAF", "Mafia", stringResource(R.string.welcome2_maf_lines), it) },
-                        )
+                    }
+                    1 -> {
                         Heading(stringResource(R.string.welcome2_title), stringResource(R.string.welcome2_body))
+                        // Tipografik kapak rafı: hazır paketli oyunlar (gerçek kapak görseli yok).
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Tokens.Space.gap)) {
+                            listOf("Grand Theft Auto V" to stringResource(R.string.welcome2_gta),
+                                "Red Dead Redemption 2" to stringResource(R.string.welcome2_rdr_lines),
+                                "Mafia" to stringResource(R.string.welcome2_maf_lines)).forEachIndexed { index, (title, lines) ->
+                                BoxWithConstraints(Modifier.weight(1f)) { val coverWidth = maxWidth
+                                    Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.titleToBody)) {
+                                        GameCover(title, selected = index == 0, width = coverWidth)
+                                        Text(lines, style = Tokens.Type.captionNumeric, color = Tokens.Color.secondary, maxLines = 2)
+                                    }
+                                }
+                            }
+                        }
                     }
                     else -> {
-                        TwoColumns(
-                            { StatusTile(CouchIcons.Tv, stringResource(R.string.welcome3_tv_label), stringResource(R.string.welcome3_tv), it) },
-                            { StatusTile(CouchIcons.Smartphone, stringResource(R.string.welcome3_phone_label), stringResource(R.string.welcome3_phone), it) },
-                        )
-                        Tile(Modifier.fillMaxWidth()) {
-                            Text(stringResource(R.string.welcome3_wifi), style = Tokens.Type.headline, color = Tokens.Color.text)
-                            Text(stringResource(R.string.welcome3_wifi_body), style = Tokens.Type.caption, color = Tokens.Color.secondary)
-                        }
                         Heading(stringResource(R.string.welcome3_title), stringResource(R.string.welcome3_body))
+                        TwoColumns(
+                            { StatusTile(CouchIcons.Tv, stringResource(R.string.welcome3_tv_label), stringResource(R.string.welcome3_tv), it, iconTone = IconTone.AMBER) },
+                            { StatusTile(CouchIcons.Smartphone, stringResource(R.string.welcome3_phone_label), stringResource(R.string.welcome3_phone), it, iconTone = IconTone.TEAL) },
+                        )
+                        NoticeBox(stringResource(R.string.welcome3_wifi_body), NoticeTone.INFO, stringResource(R.string.welcome3_wifi))
                     }
                 }
             }
@@ -155,7 +170,11 @@ fun PairScreen(onBack: (() -> Unit)? = null, onSkip: (() -> Unit)? = null, onDon
         if (consoles.isNullOrEmpty()) manual = true
     }
     val pin = Registration.parsePin(code)
-    ScreenScaffold(top = { TopBar(onBack = onBack) { SkipAction(onSkip) } }, bottom = {
+    // Perde başarı anı: "Eşleşti" (ışın + yaylı tik + başarı titreşimi), ardından sonraki adım.
+    var paired by remember { mutableStateOf<String?>(null) }
+    val view = LocalView.current
+    Box(Modifier.fillMaxSize()) {
+    ScreenScaffold(ambient = true, top = { TopBar(onBack = onBack) { SkipAction(onSkip) } }, bottom = {
         if (!manual) GhostButton(stringResource(R.string.pair_not_found)) { manual = true }
         PrimaryButton(stringResource(R.string.pair_button), enabled = !working && pin != null && host.isNotBlank()) {
             val accountId = settings.accountId ?: return@PrimaryButton
@@ -171,11 +190,16 @@ fun PairScreen(onBack: (() -> Unit)? = null, onSkip: (() -> Unit)? = null, onDon
             problem = null
             scope.launch {
                 try {
-                    settings.console = withContext(Dispatchers.IO) { Registration.register(address, accountId, pin!!) }
+                    val console = withContext(Dispatchers.IO) { Registration.register(address, accountId, pin!!) }
+                    settings.console = console
+                    paired = console.name.ifEmpty { address }
+                    kotlinx.coroutines.delay(CELEBRATION_MS + 100)
                     onDone()
                 } catch (error: RegistrationException) {
+                    Haptics.error(view)
                     problem = failures(error.failure) + (error.detail?.let { " ($it)" } ?: "")
                 } catch (error: Exception) {
+                    Haptics.error(view)
                     problem = error.message
                 } finally {
                     working = false
@@ -214,6 +238,8 @@ fun PairScreen(onBack: (() -> Unit)? = null, onSkip: (() -> Unit)? = null, onDon
         // PS5 bağlıyken "Uzaktan Oynama bağlandı" yazısı kalıcıdır; bildirim ayarı değil, bu ayar gizler (GitHub #177).
         Text(stringResource(R.string.pair_hide_status), style = Tokens.Type.caption, color = Tokens.Color.secondary)
         if (working) Text(stringResource(R.string.pair_working), style = Tokens.Type.body, color = Tokens.Color.secondary)
+    }
+    paired?.let { SuccessOverlay(stringResource(R.string.perde_paired), it) }
     }
 }
 

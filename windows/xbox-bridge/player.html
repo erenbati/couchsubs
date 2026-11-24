@@ -17,6 +17,8 @@
   // Uygulama önceki kareyi bitirmeden yenisi gönderilmez:
   // kareler ileti kuyruğunda birikip eski kare okunmasın (en çok FRAME_WAIT_MS beklenir, yanıt kaybolursa akış durmasın).
   let frameMs = 66;
+  // Uygulamanın istediği kare aralığı (FrameCadence: en çok 10 kare/sn, işlemci doluysa ve okuma yavaşsa daha seyrek).
+  let cadenceMs = 100;
   const FRAME_WAIT_MS = 1000;
   let frameSentAt = 0;
   let frameWaiting = false;
@@ -83,7 +85,7 @@
   function capture(video) {
     if (!video || !video.videoWidth || !video.videoHeight) return;
     const now = performance.now();
-    if (now - lastFrame < frameMs) return;
+    if (now - lastFrame < Math.max(frameMs, cadenceMs)) return;
     if (frameWaiting && now - frameSentAt < FRAME_WAIT_MS) return;
     // Kare sayılabiliyorsa yalnız yeni kare okunur.
     if (firstFrameSent && frameCallbacks === capturedCallbacks) return;
@@ -211,7 +213,10 @@
       if (!item) return;
       pending.delete(message.id);
       if (message.error) item.reject(new Error(message.error)); else item.resolve(message.value);
-    } else if (message.kind === 'frameDone') frameWaiting = false;
+    } else if (message.kind === 'frameDone') {
+      frameWaiting = false;
+      if (Number.isFinite(message.nextMs)) cadenceMs = Math.min(Math.max(message.nextMs, 0), 1000);
+    }
     else if (message.kind === 'keyframe') {
       if (controlOpen()) player.getChannelProcessor('control')?.requestKeyframeRequest();
     }

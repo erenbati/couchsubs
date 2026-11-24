@@ -1,9 +1,17 @@
 # Oyun paketi yapım araçları
 
-Marvel's Spider-Man 2 ve Death Stranding Director's Cut paketleri bu betiklerle yapıldı (2026-11-12).
+Marvel's Spider-Man 2 paketi bu betiklerle yapıldı (2026-11-12).
 Akış: `extract.py` (herkese açık kaynaktan İngilizce satırlar) → `poolfix.py` (ortak havuzdaki OCR satırlarını
 düzeltme) → `translate.py` (Claude ile cümle cümle çeviri) → `review.py` ve `fixcase.py` (denetim) → `build.py`
 (biçim 2 paket: SHA-256 anahtarlar, parçalar, bulanık imzalar) → `coverage.py` (havuz satırlarıyla kapsam ölçümü).
+
+GTA VI için kısa OCR satırlarını kapsama önizlemesine dahil etmek üzere:
+`python3 tools/packs/coverage.py yerel-rows.jsonl yerel-havuz.json - --title "Grand Theft Auto VI"`.
+Başlık verilmezse genel 16 karakterlik alt sınır kullanılır; GTA başlığıyla Windows GTA
+paketlerindeki 8 karakterlik bulanık eşleşme alt sınırı kullanılır. **Bu yalnız tahmindir:**
+`fuzzy>=0.6` gerçek istemcinin benzerlik/eşsiz aday eşiği değildir, 8–15 karakterlik
+bulanık aramayı Mac/iOS dahil tüm platformlarda garanti etmez. Yerel oyun metinleri ve
+OCR dışa aktarımları repoya eklenmez.
 
 Anthropic anahtarı `~/.config/couchsubs/anthropic-key` dosyasından okunur; depoya konmaz. Harcama `ledger.jsonl`'a
 yazılır. Kaynaklar ve lisansları THIRD-PARTY-NOTICES.md'de.
@@ -57,7 +65,7 @@ güncellemesiyle gider; kuruluysa paket R2'ye yüklenince Mac, Windows, iPhone v
    → temiz satır sayısı, en sık satırlar ve tahmini maliyet yazılır. Sözlüğü (`glossary/gta6.json`) gözden geçir.
 4. Onaydan sonra çeviri: `… plan /tmp/gta6-pool.json --id gta-6 --out-dir /tmp/gta6 --translate --limit 1000`.
 5. Denetim: `python3 tools/packs/fixcase.py core/Sources/CouchSubsCore/Resources/packs /tmp/gta6/gta-6.tr.json` ve en
-   sık 100 satıra göz at (`review.py` şu an eksik `translate_rules` modülünü istiyor; o dosya eklenene dek kullanılamaz).
+   sık 100 satıra göz at. İsteğe bağlı ikinci Claude denetimi: `python3 tools/packs/review.py gta-6 /tmp/gta6/gta-6.tr.json /tmp/gta6/gta-6.reviewed.json` (API maliyeti vardır; kullanılırsa 6. adımda `.tr.json` yerine `.reviewed.json` dosyasını ver).
 6. Paket: `python3 tools/packs/build.py /tmp/gta6/gta-6.tr.json core/Sources/CouchSubsCore/Resources/packs/gta-6.json.gz
    gta-6 "Grand Theft Auto VI" "CouchSubs havuzu + Claude" core/Sources/CouchSubsCore/Resources/packs`
 7. Dağıtım: uygulama sürümüne koy; paket sunucusu varsa `server/packs/README.md`'deki gibi R2'ye yükle ve index.json'u

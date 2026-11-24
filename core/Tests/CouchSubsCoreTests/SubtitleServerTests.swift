@@ -125,7 +125,7 @@ final class SubtitleServerTests: XCTestCase {
         old.task.cancel(); fresh.task.cancel()
     }
 
-    /// Konuşana göre renk açıkken adlı satır `speakers` alanını taşır; adsız satırda ve ayar kapalıyken alan yoktur.
+    /// Konuşan adını renklendir açıkken adlı satır `speakerNames` alanını taşır; adsız satırda ve ayar kapalıyken alan yoktur.
     func testSubtitleCarriesSpeakerColorsWhenEnabled() async throws {
         let server = SubtitleServer(port: 0)
         let port = try await server.start()
@@ -140,11 +140,13 @@ final class SubtitleServerTests: XCTestCase {
 
         let data = try await readLines(bytes, until: "event: clear").filter { $0.hasPrefix("data:") && $0.contains("\"text\"") }
         XCTAssertEqual(data.count, 3)
-        XCTAssertFalse(data[0].contains("speakers"))
-        XCTAssertTrue(data[1].contains("\"speakers\":[{"))
-        XCTAssertTrue(data[1].contains("\"name\":\"Mattia\"") && data[1].contains("#90CAF9"))
-        XCTAssertTrue(data[1].contains("\"name\":\"Lucia\"") && data[1].contains("#F06292"))
-        XCTAssertFalse(data[2].contains("speakers"))
+        XCTAssertFalse(data[0].contains("speaker"))
+        XCTAssertTrue(data[1].contains("\"speakerNames\":[{"))
+        // Eski alan gitmez: 0.9.79'dan eski TV uygulamaları onunla bütün satırı boyuyordu.
+        XCTAssertFalse(data[1].contains("\"speakers\""))
+        XCTAssertTrue(data[1].contains("\"name\":\"Mattia\"") && data[1].contains("#F76AB7"))
+        XCTAssertTrue(data[1].contains("\"name\":\"Lucia\"") && data[1].contains("#2AD5E5"))
+        XCTAssertFalse(data[2].contains("speaker"))
     }
 
     /// Telefon, sunucu düştüyse (iOS arka planda dinleyiciyi kapatır) bunu `isListening` ile anlar ve aynı nesneyi
@@ -198,6 +200,141 @@ final class SubtitleServerTests: XCTestCase {
         XCTAssertEqual(Array(lines.suffix(2)), ["event: ping", "data: {}"])
     }
 
+    /// TV akışı `link` olayıyla kimliğini alır; `/ack` bilinen kimliğe 204, bilinmeyene 404 döner (TV hemen yeniden bağlanır).
+    func testTVStreamGetsALinkIdThatAcksAccept() async throws {
+        let server = SubtitleServer(port: 0)
+        let port = try await server.start()
+        defer { server.stop() }
+        let (bytes, _) = try await URLSession.shared.bytes(from: URL(string: "http://127.0.0.1:\(port)/events")!)
+        var link: String?
+        var previous = ""
+        for try await line in bytes.lines {
+            if previous == "event: link", line.hasPrefix("data:") {
+                let json = try JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any]
+                link = json?["id"] as? String
+                break
+            }
+            previous = line
+        }
+        let id = try XCTUnwrap(link)
+        XCTAssertTrue(id.count == 16 && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) })
+        let (_, ok) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/ack?c=\(id)")!)
+        XCTAssertEqual((ok as? HTTPURLResponse)?.statusCode, 204)
+        let (_, unknown) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/ack?c=nope")!)
+        XCTAssertEqual((unknown as? HTTPURLResponse)?.statusCode, 404)
+    }
+
+    /// `link` olayı bu cihazdaki TV paketinin sürümünü (`latest`) taşır; TV daha eskiyse paneli "TV uygulaması eski" der.
+    func testLinkCarriesBundledTVAppVersion() async throws {
+        let server = SubtitleServer(port: 0)
+        server.latestTVAppVersion = "0.9.95"
+        let port = try await server.start()
+        defer { server.stop() }
+        let (bytes, _) = try await URLSession.shared.bytes(from: URL(string: "http://127.0.0.1:\(port)/events?v=0.9.71")!)
+        var latest: String?
+        var previous = ""
+        for try await line in bytes.lines {
+            if previous == "event: link", line.hasPrefix("data:") {
+                let json = try JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any]
+                latest = json?["latest"] as? String
+                break
+            }
+            previous = line
+        }
+        XCTAssertEqual(latest, "0.9.95")
+    }
+
+    /// OBS gibi izleyiciler alındı göndermez; onlara `link` gitmez.
+    func testViewersGetNoLink() async throws {
+        let server = SubtitleServer(port: 0, pingInterval: 0.05)
+        let port = try await server.start()
+        defer { server.stop() }
+        let (bytes, _) = try await URLSession.shared.bytes(from: URL(string: "http://127.0.0.1:\(port)/events?viewer=obs")!)
+        var lines: [String] = []
+        for try await line in bytes.lines {
+            lines.append(line)
+            if line == "event: ping" { break }
+        }
+        XCTAssertFalse(lines.contains("event: link"))
+    }
+
+    /// Alındı gönderip susan TV (askıya alınan LG uygulaması) kopmuş sayılır: bağlantı kapanır, sayı düşer, `onTVStale`
+    /// çağrılır. Hiç alındı göndermeyen eski TV uygulaması bağlı kalır.
+    func testTVThatStopsAckingIsDroppedButOldTVsStay() async throws {
+        let server = SubtitleServer(port: 0, pingInterval: 0.1)
+        let stale = Locked(false)
+        server.onTVStale = { stale.set(true) }
+        let port = try await server.start()
+        defer { server.stop() }
+
+        let old = Task {
+            let (bytes, _) = try await URLSession.shared.bytes(from: URL(string: "http://127.0.0.1:\(port)/events")!)
+            for try await _ in bytes.lines {}
+        }
+        defer { old.cancel() }
+        try await waitUntil { server.connectedClients == 1 }
+
+        let (bytes, _) = try await URLSession.shared.bytes(from: URL(string: "http://127.0.0.1:\(port)/events?v=0.9.76")!)
+        var link: String?
+        var previous = ""
+        for try await line in bytes.lines {
+            if previous == "event: link", line.hasPrefix("data:") {
+                link = (try JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any])?["id"] as? String
+                break
+            }
+            previous = line
+        }
+        let id = try XCTUnwrap(link)
+        try await waitUntil { server.connectedClients == 2 }
+        // Birkaç ping turu boyunca alındı gelir: bağlantı açık kalır.
+        for _ in 0..<5 {
+            _ = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/ack?c=\(id)")!)
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertEqual(server.connectedClients, 2)
+        XCTAssertFalse(stale.value)
+        // TV susar (askıya alındı): 3 ping turu sonra bağlantı kapanır; eski TV kalır.
+        try await waitUntil { server.connectedClients == 1 }
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(server.connectedClients, 1)
+        // #1055: TV'nin başka bağlantısı açıkken bekçi yenilenmez (yenilenen bekçi LG'de uygulamayı yeniden başlatıyordu).
+        XCTAssertFalse(stale.value)
+        let (_, gone) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/ack?c=\(id)")!)
+        XCTAssertEqual((gone as? HTTPURLResponse)?.statusCode, 404)
+    }
+
+    /// #1055: TV'nin tek bağlantısı susunca `onTVStale` bir kez çağrılır; alındı gönderen TV ping turları boyunca
+    /// hiç düşmez.
+    func testOnlyTheLastSilentTVConnectionRenewsTheKeeper() async throws {
+        let server = SubtitleServer(port: 0, pingInterval: 0.1)
+        let stale = Locked(0)
+        server.onTVStale = { stale.set(stale.value + 1) }
+        let port = try await server.start()
+        defer { server.stop() }
+        let (bytes, _) = try await URLSession.shared.bytes(from: URL(string: "http://127.0.0.1:\(port)/events?v=0.9.80")!)
+        var link: String?
+        var previous = ""
+        for try await line in bytes.lines {
+            if previous == "event: link", line.hasPrefix("data:") {
+                link = (try JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any])?["id"] as? String
+                break
+            }
+            previous = line
+        }
+        let id = try XCTUnwrap(link)
+        try await waitUntil { server.connectedClients == 1 }
+        for _ in 0..<10 {
+            _ = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/ack?c=\(id)")!)
+            try await Task.sleep(nanoseconds: 80_000_000)
+        }
+        XCTAssertEqual(server.connectedClients, 1)
+        XCTAssertEqual(stale.value, 0)
+        try await waitUntil { server.connectedClients == 0 }
+        try await waitUntil { stale.value == 1 }
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(stale.value, 1)
+    }
+
     func testStreamsScreenTranslationsAndTheirClear() async throws {
         let server = SubtitleServer(port: 0)
         let port = try await server.start()
@@ -236,6 +373,60 @@ final class SubtitleServerTests: XCTestCase {
         XCTAssertTrue(lines.contains(#"data: {"box":{"bottom":0.12,"left":0.7,"right":0.95,"top":0.05},"id":"q","line":0.03,"text":"Demirciyi bul"}"#), "\(lines)")
         XCTAssertTrue(lines.contains(#"data: {"id":"q","text":""}"#), "\(lines)")
         XCTAssertEqual(received.all, [.region(id: "q", text: "Demirciyi bul", box: box), .region(id: "q", text: "", box: nil), .regionClear])
+    }
+
+    /// #1198: yeniden bağlanan TV o an gösterilen alanları alır (`region-sync` ve `keep`'li olaylar); kopukken kaçan
+    /// temizleme komutu yüzünden kalmış alanları TV listeye bakıp kaldırır.
+    func testNewStreamGetsTheLiveRegionsAfterASync() async throws {
+        let server = SubtitleServer(port: 0)
+        let port = try await server.start()
+        defer { server.stop() }
+        let box = TextBox(left: 0.7, top: 0.05, right: 0.95, bottom: 0.12)
+        server.sendRegion(id: "q", text: "Demirciyi bul", box: box, lineHeight: 0.03)
+        server.sendRegion(id: "game-phone", text: "Neredesin?", box: box, lineHeight: 0.03)
+        server.sendRegion(id: "gone", text: "Eski", box: box, lineHeight: 0.03)
+        server.sendRegion(id: "gone", text: "", box: nil)
+        let (bytes, _) = try await URLSession.shared.bytes(from: URL(string: "http://127.0.0.1:\(port)/events")!)
+        var lines: [String] = []
+        for try await line in bytes.lines {
+            lines.append(line)
+            if line.contains(#""id":"q""#) { break }
+        }
+        let sync = try XCTUnwrap(lines.firstIndex(of: "event: region-sync"))
+        XCTAssertEqual(lines[sync + 1], #"data: {"ids":["game-phone","q"]}"#)
+        XCTAssertTrue(lines.contains { $0.contains(#""id":"game-phone""#) && $0.contains(#""keep":true"#) }, "\(lines)")
+        XCTAssertTrue(lines.last!.contains(#""keep":true"#))
+        XCTAssertFalse(lines.contains { $0.contains(#""id":"gone""#) })
+
+        server.clearRegions()
+        let (again, _) = try await URLSession.shared.bytes(from: URL(string: "http://127.0.0.1:\(port)/events")!)
+        var next: [String] = []
+        for try await line in again.lines {
+            next.append(line)
+            if line.hasPrefix(#"data: {"ids""#) { break }
+        }
+        XCTAssertEqual(next.last, #"data: {"ids":[]}"#)
+    }
+
+    /// Gösterilen alanlar düzenli yenilenir (TV'deki 15 sn'lik ömür dolmasın); telefon kartı yenilenmez.
+    func testLiveRegionsAreRefreshedExceptThePhoneCard() async throws {
+        let server = SubtitleServer(port: 0)
+        server.regionRefreshInterval = 0.05
+        let port = try await server.start()
+        defer { server.stop() }
+        let (bytes, _) = try await URLSession.shared.bytes(from: URL(string: "http://127.0.0.1:\(port)/events")!)
+        try await waitUntil { server.connectedClients == 1 }
+        let box = TextBox(left: 0.7, top: 0.05, right: 0.95, bottom: 0.12)
+        server.sendRegion(id: "game-phone", text: "Neredesin?", box: box, lineHeight: 0.03)
+        server.sendRegion(id: "q", text: "Demirciyi bul", box: box, lineHeight: 0.03)
+        var lines: [String] = []
+        var refreshes = 0
+        for try await line in bytes.lines {
+            lines.append(line)
+            if line.contains(#""id":"q""#), line.contains(#""keep":true"#) { refreshes += 1 }
+            if refreshes == 3 { break }
+        }
+        XCTAssertFalse(lines.contains { $0.contains(#""id":"game-phone""#) && $0.contains(#""keep":true"#) }, "\(lines)")
     }
 
     func testOnlyPhoneBlocksCarryNativeSurfaceOnTVAndDesktop() async throws {
@@ -607,4 +798,12 @@ private final class LockedEvents: @unchecked Sendable {
     private var events: [SubtitleEvent] = []
     func append(_ event: SubtitleEvent) { lock.withLock { events.append(event) } }
     var all: [SubtitleEvent] { lock.withLock { events } }
+}
+
+private final class Locked<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: T
+    init(_ value: T) { stored = value }
+    var value: T { lock.lock(); defer { lock.unlock() }; return stored }
+    func set(_ value: T) { lock.lock(); stored = value; lock.unlock() }
 }

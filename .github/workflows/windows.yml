@@ -413,7 +413,17 @@ jobs:
           if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "ekran görüntüsü aracı zamanında bitmedi" }
           if (Test-Path screens/errors.txt) { Get-Content screens/errors.txt; throw "ekranlardan biri hata verdi" }
           $count = (Get-ChildItem screens -Filter *.png).Count
-          if ($count -lt 22) { throw "beklenen 22 ekran görüntüsü, bulunan: $count" }
+          if ($count -lt 86) { throw "beklenen 86 ekran görüntüsü (ScreenRenderer.ExpectedCount), bulunan: $count" }
+
+      # Perde: boşta işlemci (hedef ≤ %2). Sanal makinede ekran kartı yok (WPF yazılımla çizer), değer gerçek bilgisayardakinden
+      # yüksek çıkar; bilgi amaçlıdır, adımı düşürmez. Aynı komut bir Windows bilgisayarda gerçek değeri verir.
+      - name: Boşta işlemci (bilgi)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $p = Start-Process publish/CouchSubs/CouchSubs.exe -ArgumentList "--olc-bosta", "10", "$PWD/bosta.txt" -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); Write-Host "ölçüm zamanında bitmedi" }
+          if (Test-Path bosta.txt) { Get-Content bosta.txt -Encoding UTF8 } else { Write-Host "ölçüm sonucu yok" }
 
       # Antivirüs bir DLL'i karantinaya alınca uygulama sessizce kapanmamalı, eksik dosyayı söylemeli.
       - name: Eksik DLL ile açılış

@@ -61,8 +61,12 @@ public sealed class GamePhoneTracker
 
     public WatchedArea WithPose(WatchedArea area) => area with { PhonePose = shownPose };
 
-    /// <summary>Açık telefon art arda bu kadar örnekte bulunamazsa kapanır (330 ms aralıkla ~0,7 sn; Mac ve Android ile aynı).</summary>
-    internal const int MissGrace = 2;
+    /// <summary>
+    /// Açık telefon art arda bu kadar örnekte bulunamazsa kapanır (330 ms aralıkla ~1–1,3 sn; Mac ve Android ile aynı).
+    /// Önceden 2 örnekti (~0,7 sn): telefonun ekranı bir an okunamayınca panel kaybolup baştan çevrilerek geri geliyordu
+    /// (X, 22 Kas, GTA 6 telefonu).
+    /// </summary>
+    internal const int MissGrace = 3;
     private int misses;
 
     /// <summary>Telefon kutusunun alanı (kareye oranla) bu aralıkta olmalı.</summary>

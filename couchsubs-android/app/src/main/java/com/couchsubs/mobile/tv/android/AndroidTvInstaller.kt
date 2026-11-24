@@ -295,7 +295,6 @@ class AndroidTvInstaller(
                 log.write("Diğer uygulama kaldırılıyor (kullanıcı onayladı): ${adb.run("shell:pm uninstall $PACKAGE_NAME").trim()}")
                 dumpsys = adb.run("shell:dumpsys package $PACKAGE_NAME")
             }
-            val ours = isOurs(dumpsys)
             if (canInstallExisting(dumpsys)) {
                 // TV uygulamayı yalnız ana kullanıcıdan kaldırmış, başka profilde duruyor: APK göndermeden geri getirilir (#528).
                 val existing = runCatching { adb.run(INSTALL_EXISTING_COMMAND) }.getOrDefault("")
@@ -304,9 +303,11 @@ class AndroidTvInstaller(
             }
             val installed = installedVersionFromDumpsys(dumpsys)
             val fromPlay = installedFromPlay(dumpsys)
+            val ours = isOurs(dumpsys)
             if (isLeftover(dumpsys)) log.write("TV'de CouchSubs'ın kaydı kalmış ama uygulama kurulu değil; yeniden kuruluyor.")
             log.write("TV'deki CouchSubs: ${installed ?: "yok"}${if (fromPlay) " (Google Play'den)" else ""}")
-            if (installed != null && version != null && !SamsungDiagnostics.isNewer(version, installed)) {
+            // Unknown signatures must not make another app with this package name appear up to date.
+            if (installed != null && ours && version != null && !SamsungDiagnostics.isNewer(version, installed)) {
                 grantOverlay(adb, log)
                 launch(adb)
                 return Result(installed, false)

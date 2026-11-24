@@ -86,6 +86,9 @@ public static class Motion
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
     }
 
+    /// <summary>Başarı tiki ve küçük "oturma" geri bildirimleri: hafif aşmalı yay (tasarim.json › motion.spring).</summary>
+    public static readonly IEasingFunction Spring = Curve("spring", [0.34, 1.56, 0.64, 1]);
+
     // ── Ekli özellikler: XAML'de m:Motion.Enter="True", m:Motion.Pulse="True", m:Motion.Breathe="True". ──
 
     public static readonly DependencyProperty EnterProperty = DependencyProperty.RegisterAttached("Enter", typeof(bool), typeof(Motion),
@@ -93,45 +96,59 @@ public static class Motion
     public static bool GetEnter(DependencyObject d) => (bool)d.GetValue(EnterProperty);
     public static void SetEnter(DependencyObject d, bool value) => d.SetValue(EnterProperty, value);
 
-    /// <summary>Canlı noktası: 1,4 sn'de bir %35 saydamlığa iner ve döner (tasarım: .live i, .btnlive .ld).</summary>
+    /// <summary>
+    /// Canlı noktası: 1,6 sn'de bir %35 saydamlığa iner ve döner. Hareket kapısına bağlı (<see cref="MotionGate.Live"/>):
+    /// hareket azaltılmışken ya da pencere arka plandayken durağan.
+    /// </summary>
     public static readonly DependencyProperty PulseProperty = DependencyProperty.RegisterAttached("Pulse", typeof(bool), typeof(Motion),
-        new PropertyMetadata(false, (d, e) => Hook(d, e, element => Loop(element, UIElement.OpacityProperty, 1, 0.35, 0.7))));
+        new PropertyMetadata(false, (d, e) =>
+        {
+            if (d is not FrameworkElement element || e.NewValue is not true) return;
+            Gated(element, () => MotionGate.Live,
+                () => element.BeginAnimation(UIElement.OpacityProperty, Fps(new DoubleAnimation(1, 0.35, new Duration(TimeSpan.FromSeconds(0.8)))
+                {
+                    AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = InOut,
+                }, 30)),
+                () => element.BeginAnimation(UIElement.OpacityProperty, null));
+        }));
     public static bool GetPulse(DependencyObject d) => (bool)d.GetValue(PulseProperty);
     public static void SetPulse(DependencyObject d, bool value) => d.SetValue(PulseProperty, value);
 
-    /// <summary>Logodaki altyazı çubuklarının nefesi: genişlik 1,6 sn'de %60'a iner ve döner (tasarım: .b1, .b2).</summary>
+    /// <summary>
+    /// Logodaki altyazı çubuklarının nefesi: genişlik 1,6 sn'de %60'a iner ve döner. Yalnız boşta (<see cref="MotionGate.Ambient"/>):
+    /// çeviri sürerken, hareket azaltılmışken ya da pencere arka plandayken durağan.
+    /// </summary>
     public static readonly DependencyProperty BreatheProperty = DependencyProperty.RegisterAttached("Breathe", typeof(double), typeof(Motion),
         new PropertyMetadata(-1.0, (d, e) =>
         {
             if (d is not FrameworkElement element || (double)e.NewValue < 0) return;
             var delay = TimeSpan.FromSeconds((double)e.NewValue);
-            void Start()
-            {
-                var scale = new ScaleTransform(1, 1);
-                element.RenderTransformOrigin = new Point(0.5, 0.5);
-                element.RenderTransform = scale;
-                if (Reduced) return;
-                var anim = new DoubleAnimation(1, 0.6, new Duration(TimeSpan.FromSeconds(0.8)))
+            var scale = new ScaleTransform(1, 1);
+            element.RenderTransformOrigin = new Point(0.5, 0.5);
+            element.RenderTransform = scale;
+            Gated(element, () => MotionGate.Ambient,
+                () => scale.BeginAnimation(ScaleTransform.ScaleXProperty, Fps(new DoubleAnimation(1, 0.6, new Duration(TimeSpan.FromSeconds(0.8)))
                 {
                     AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = InOut, BeginTime = delay,
-                };
-                scale.BeginAnimation(ScaleTransform.ScaleXProperty, anim);
-            }
-            if (element.IsLoaded) Start(); else element.Loaded += (_, _) => Start();
+                }, 30)),
+                () => scale.BeginAnimation(ScaleTransform.ScaleXProperty, null));
         }));
     public static double GetBreathe(DependencyObject d) => (double)d.GetValue(BreatheProperty);
     public static void SetBreathe(DependencyObject d, double value) => d.SetValue(BreatheProperty, value);
 
-    /// <summary>Dönen yükleme halkası (tasarım: .spin, 1,1 sn'de bir tur).</summary>
+    /// <summary>Dönen yükleme halkası (1,1 sn'de bir tur). Yalnız boşta; kapı kapalıyken durağan.</summary>
     public static readonly DependencyProperty SpinProperty = DependencyProperty.RegisterAttached("Spin", typeof(bool), typeof(Motion),
-        new PropertyMetadata(false, (d, e) => Hook(d, e, element =>
+        new PropertyMetadata(false, (d, e) =>
         {
+            if (d is not FrameworkElement element || e.NewValue is not true) return;
             var rotate = new RotateTransform();
             element.RenderTransformOrigin = new Point(0.5, 0.5);
             element.RenderTransform = rotate;
-            var duration = TimeSpan.FromSeconds(Reduced ? 3 : 1.1);
-            rotate.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, 360, duration) { RepeatBehavior = RepeatBehavior.Forever });
-        })));
+            Gated(element, () => MotionGate.Ambient,
+                () => rotate.BeginAnimation(RotateTransform.AngleProperty,
+                    Fps(new DoubleAnimation(0, 360, TimeSpan.FromSeconds(1.1)) { RepeatBehavior = RepeatBehavior.Forever }, 30)),
+                () => rotate.BeginAnimation(RotateTransform.AngleProperty, null));
+        }));
     public static bool GetSpin(DependencyObject d) => (bool)d.GetValue(SpinProperty);
     public static void SetSpin(DependencyObject d, bool value) => d.SetValue(SpinProperty, value);
 
@@ -142,13 +159,50 @@ public static class Motion
         else element.Loaded += (_, _) => start(element);
     }
 
-    private static void Loop(FrameworkElement element, DependencyProperty property, double from, double to, double halfSeconds)
+    /// <summary>Sürekli animasyonun kare hızı sınırı (WPF varsayılanı 60): boşta işlemci yükü düşük kalsın.</summary>
+    public static T Fps<T>(T timeline, int fps) where T : Timeline
     {
-        if (Reduced) return;
-        element.BeginAnimation(property, new DoubleAnimation(from, to, new Duration(TimeSpan.FromSeconds(halfSeconds)))
+        Timeline.SetDesiredFrameRate(timeline, fps);
+        return timeline;
+    }
+
+    /// <summary>
+    /// Kapıya bağlı sürekli animasyon: öğe yüklü, görünür ve <paramref name="open"/> doğruyken <paramref name="start"/>,
+    /// değilse <paramref name="stop"/> (durağan kare). Kapı değişince (çeviri başladı, pencere arka plana geçti, Geçiş
+    /// Animasyonları kapandı) kendiliğinden güncellenir. Animasyon hatası uygulamayı düşürmez.
+    /// </summary>
+    public static void Gated(FrameworkElement element, Func<bool> open, Action start, Action stop)
+    {
+        var running = false;
+        void Update()
         {
-            AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = InOut,
-        });
+            try
+            {
+                var want = element.IsLoaded && element.IsVisible && open();
+                if (want == running) return;
+                running = want;
+                if (want) start(); else stop();
+            }
+            catch (Exception error) { System.Diagnostics.Debug.WriteLine($"Animasyon: {error.Message}"); }
+        }
+        void OnGate() => element.Dispatcher.BeginInvoke(Update);
+        element.Loaded += (_, _) =>
+        {
+            MotionGate.Changed -= OnGate;
+            MotionGate.Changed += OnGate;
+            Update();
+        };
+        element.Unloaded += (_, _) =>
+        {
+            MotionGate.Changed -= OnGate;
+            Update();
+        };
+        element.IsVisibleChanged += (_, _) => Update();
+        if (element.IsLoaded)
+        {
+            MotionGate.Changed += OnGate;
+            Update();
+        }
     }
 
     private static T Freeze<T>(T freezable) where T : Freezable
@@ -156,6 +210,67 @@ public static class Motion
         freezable.Freeze();
         return freezable;
     }
+}
+
+/// <summary>
+/// Uygulamanın tek hareket kapısı (Perde; Mac DSMotionGate). Sürekli animasyonlar buradan karar verir:
+/// <list type="bullet">
+/// <item><see cref="Ambient"/>: boşta süren efektler (ortam ışığı, logo nefesi, arama halkası, çubuk yükleyici, parıltı,
+/// başarı ışınları). Çeviri sürerken, hareket azaltılmışken (Windows'un "Animasyon efektleri" ya da Ayarlar › Geçiş
+/// Animasyonları kapalı) ya da pencere önde değilken (simge durumunda, arka planda) durağan.</item>
+/// <item><see cref="Live"/>: canlı nabız; çeviri sürerken de atar (ekrandaki tek sürekli animasyon), hareket
+/// azaltılmışken ya da pencere arka plandayken durağan.</item>
+/// </list>
+/// Boşta işlemci hedefi ≤ %2: sürekli animasyonlar 15–30 kare/sn ile sınırlı, kapı kapanınca kaldırılır.
+/// </summary>
+public static class MotionGate
+{
+    private static bool translating;
+    private static bool active = true;
+
+    static MotionGate()
+    {
+        Motion.ReducedChanged += Raise;
+        SystemParameters.StaticPropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(SystemParameters.ClientAreaAnimation)) Raise();
+        };
+    }
+
+    /// <summary>Çeviri sürüyor (kabuk denetleyicinin IsRunning'inden kurar).</summary>
+    public static bool Translating
+    {
+        get => translating;
+        set
+        {
+            if (translating == value) return;
+            translating = value;
+            Raise();
+        }
+    }
+
+    /// <summary>Uygulamanın bir penceresi önde (etkin) ve simge durumunda değil.</summary>
+    public static bool WindowActive
+    {
+        get => active;
+        set
+        {
+            if (active == value) return;
+            active = value;
+            Raise();
+        }
+    }
+
+    /// <summary>Yalnız ekran görüntüsü ve ölçüm aracı: kapıyı zorla açar (true) ya da kapatır (false).</summary>
+    public static bool? Forced { get; set; }
+
+    public static bool Reduced => Motion.Reduced;
+    public static bool Ambient => Forced ?? (!Motion.Reduced && !translating && active);
+    public static bool Live => Forced ?? (!Motion.Reduced && active);
+
+    public static event Action? Changed;
+
+    private static void Raise() => Changed?.Invoke();
 }
 
 /// <summary>CSS cubic-bezier(x1, y1, x2, y2) eğrisi.</summary>

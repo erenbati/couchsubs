@@ -82,6 +82,13 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     private TextBox? lastSubtitleBox;
     /// <summary>Hatta aynı anda tek kare girer; durdurma ve yeni hat kapıyı sıfırlar, takılan okuma hattı yeniden kurdurur.</summary>
     private readonly FrameGate frameGate = new();
+    /// <summary>Oturumların kare kopyalama sıklığı (oyun takılmasın): okuma süresi buradan bildirilir (bkz. <see cref="FrameCadence"/>).</summary>
+    private readonly FrameCadence frameCadence = new();
+    /// <summary>Kare kopyalama sıklığı; testler ve tanı için.</summary>
+    public FrameCadence FrameCadence => frameCadence;
+    /// <summary>Okuma sürerken atlanan son kare; okuma bitince okunur (bkz. <see cref="FrameGate.Leave"/>).</summary>
+    private (Frame Frame, long Arrived)? skippedFrame;
+    private readonly object skippedGate = new();
     private Dubber? dubber;
     private string? updateVersion;
     private bool updating;
@@ -156,8 +163,10 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         };
         // beta.63'te varsayılan açık gelen otomatik ekran yazısı bir kez kapatılır; açık olanlara bir kez söylenir.
         (settings, ShowsAutoScreenTextNotice) = AutoScreenTextMigration.Apply(settings);
-        // Otomatik ekran yazısı kapalıyken hazır alanlar ve GTA 6 telefonu da bir kez kapatılır (altyazı dışında çeviri yok).
+        // Otomatik ekran yazısı kapalıyken hazır alanlar bir kez kapatılır (altyazı dışında çeviri yok).
         settings = ScreenTextExtrasMigration.Apply(settings);
+        // Eski göçün kapattığı GTA 6 telefonu bir kez açılır (#1202).
+        settings = GamePhoneMigration.Apply(settings);
         // Uygulama oturum sürerken kapandıysa oyunun profili açık kalmış olabilir: açılışta genel alanlar geri gelir.
         if (settings.ActiveAreaProfile is not null || settings.GeneralAreas is not null) settings = settings.WithGeneralAreas();
         services.Translation.SelectCpuThreads(settings.CpuTranslationThreads);
@@ -204,9 +213,11 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         server.LegacyClientConnected += OnLegacyClient;
         server.TvAppVersionReported += OnTvAppVersion;
         server.PairingRequested += OnPairingRequest;
+        server.TvStale += OnTvStale;
         server.SendsToTv = settings.Output.ShowsOnTv();
         server.SpeakerColors = settings.SpeakerColors;
         server.SetApart = settings.SetTextApart;
+        ShareLatestTvAppVersion();
     }
 
     private void DetachServer()
@@ -216,6 +227,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         server.LegacyClientConnected -= OnLegacyClient;
         server.TvAppVersionReported -= OnTvAppVersion;
         server.PairingRequested -= OnPairingRequest;
+        server.TvStale -= OnTvStale;
     }
 
     public event Action<SubtitlePairing.Ticket>? TvPairingRequested;
@@ -273,6 +285,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         await StartServerAsync();
         server.Pairing.Open();
         SubtitleLog.Write($"TV eşleştirme elle açıldı (2 dk); port={ServerPort}");
+        // Eşli TV yanıt vermiyorsa kart bunu söyler (adres değişmiş olabilir); önceden düğme hiçbir şey göstermiyordu.
+        await EnsureTvReachableAsync();
     }
     public bool LegacyTvWarning => server.HasLegacyClient;
     public string ObsAddress => $"http://localhost:{ServerPort}/obs?k={server.AccessKey}";
@@ -301,9 +315,21 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         {
             if (tvAppOutdated == value) return;
             tvAppOutdated = value;
-            Changed(nameof(TvAppOutdated), nameof(ShowTvAppUpdate), nameof(TvStatusText), nameof(TvTone));
+            if (value is null) tvAppStaleRunning = false;
+            Changed(nameof(TvAppOutdated), nameof(ShowTvAppUpdate), nameof(TvStatusText), nameof(TvTone), nameof(TvAppStaleRunning));
         }
     }
+
+    /// <summary>
+    /// LG: TV'deki paket güncel ama çalışan uygulama kapatıp açtıktan sonra da eski sürümde (beta.89). Ana ekran "TV'de
+    /// CouchSubs'ı kapatıp yeniden açın" der (<see cref="TvAppOutdated"/> o sürümleri taşır). Mac ile aynı.
+    /// </summary>
+    public bool TvAppStaleRunning => tvAppStaleRunning;
+    private bool tvAppStaleRunning;
+    /// <summary>LG: kurulumdan ya da kapat-aç'tan sonra çalışan uygulamanın sürümü bekleniyor.</summary>
+    private TvAppRunningCheck? runningCheck;
+    /// <summary>Bağlı TV uygulamasının son bildirdiği sürüm (boş: eski uygulama); bağlı uygulama yoksa null.</summary>
+    private string? runningTvAppVersion;
 
     /// <summary>Ana ekranda "TV uygulamasını güncelle" görünür.</summary>
     public bool ShowTvAppUpdate => HasTv && tvAppOutdated is not null;
@@ -319,6 +345,9 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     /// </summary>
     public void TvAppReported(string version)
     {
+        runningTvAppVersion = version;
+        ShareLatestTvAppVersion();
+        if (tv?.Brand == TvBrand.Lg && LgRunningReported(version)) return;
         if (BundledVersionForTv is not { } bundled || !SubtitleServer.IsTvAppOutdated(version, bundled))
         {
             TvAppOutdated = null;
@@ -338,6 +367,43 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         lastTvAppAutoUpdate = DateTime.UtcNow;
         SubtitleLog.Write($"TV uygulaması eski: TV {installed}, bu bilgisayardaki paket {bundled}; güncelleme deneniyor.");
         _ = RefreshTvAppAsync();
+    }
+
+    /// <summary>
+    /// LG, kurulumdan ya da kapat-aç'tan sonraki ilk sürüm bildirimi: çalışan uygulama kurulan sürümdeyse denetim biter;
+    /// eskiyse bir kez daha kapatılıp açılır, yine eskiyse ana ekran "TV'de CouchSubs'ı kapatıp yeniden açın" der (fiş
+    /// çekmek gerekmez). true: bildirim burada ele alındı. Mac, iPhone ve Android ile aynı.
+    /// </summary>
+    private bool LgRunningReported(string version)
+    {
+        if (runningCheck is not { } check) return false;
+        var shown = version.Length == 0 ? Shell.TvAppOutdated.Unreported : version;
+        switch (check.Report(version))
+        {
+            case TvAppRunningVerdict.Running:
+                runningCheck = null;
+                tvAppStaleRunning = false;
+                services.WriteTvInstallLog($"TV'de çalışan CouchSubs: {shown} (kurulan {check.Expected}).");
+                return false;
+            case TvAppRunningVerdict.RestartAgain when tv is { } target && store.Load<string>(StoreKeys.TvDevKey) is { } devKey:
+                services.WriteTvInstallLog($"TV'de çalışan CouchSubs hâlâ {shown}, kurulu {check.Expected}; uygulama bir kez daha kapatılıp açılıyor.");
+                _ = RestartLgAppAsync(target, devKey);
+                return true;
+            default:
+                runningCheck = null;
+                services.WriteTvInstallLog($"TV'de çalışan CouchSubs kapatıp açtıktan sonra da {shown}, kurulu {check.Expected}; kullanıcıdan TV'de kapatıp açması isteniyor.");
+                TvAppOutdated = new TvAppOutdated(shown, check.Expected);
+                tvAppStaleRunning = true;
+                Changed(nameof(TvAppStaleRunning), nameof(TvStatusText));
+                return true;
+        }
+    }
+
+    /// <summary>LG: TV'deki CouchSubs'ı kapatır ve yeniden açar (adres ve anahtar parametreyle).</summary>
+    private async Task RestartLgAppAsync(LgTv target, string devKey)
+    {
+        await services.CloseTvAppAsync(target.Host, devKey);
+        await OpenTvAppAfterInstallAsync(target);
     }
 
     /// <summary>Eski TV uygulamasının sessiz güncellemesi en son ne zaman denendi (en çok saatte bir).</summary>
@@ -680,10 +746,56 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     private bool TestTvNotConnected { get => testTvNotConnected; set => Set(ref testTvNotConnected, value, [nameof(ShowTestTvHint)]); }
 
     private bool testTvNotConnected;
-    public StatusTone TvTone => !HasTv ? StatusTone.Idle : tvAppOutdated is not null ? StatusTone.Warning : TvToneFor(tvClients, isRunning);
+    public StatusTone TvTone => !HasTv ? StatusTone.Idle
+        : tvAppOutdated is not null || (tvNotResponding && tvClients == 0) ? StatusTone.Warning : TvToneFor(tvClients, isRunning);
     public string TvStatusText => !HasTv ? text["Not set up"]
+        : tvAppOutdated is { } stale && tvAppStaleRunning
+            ? text.Format("CouchSubs on the TV is still running an old version (%@). On the TV, close CouchSubs and open it again.", stale.Installed)
         : tvAppOutdated is { } outdated ? text.Format("TV app is out of date (%@ → %@)", outdated.Installed, outdated.Bundled)
-        : tvClients > 0 ? text["Connected"] : text["Waiting for the TV app"];
+        : tvClients > 0 ? text["Connected"]
+        // TV'nin adresi sessizse "TV uygulaması bekleniyor" yanlış olur: TV yeniden aranırken bu söylenir.
+        : tvNotResponding ? text[NotRespondingStatus]
+        : tvReconnecting ? text["Reconnecting…"] : text["Waiting for the TV app"];
+
+    /// <summary>Eşli TV kartının ve TV durumunun metni (Mac, iPhone ve Android ile aynı).</summary>
+    public const string NotRespondingStatus = "Not responding — searching again…";
+
+    /// <summary>
+    /// TV bağlantısı çeviri sürerken koptu (TV alındı göndermeyi bıraktı ya da bağlantı kapandı): TV durumu "Bağlı" ya da
+    /// "TV uygulaması bekleniyor" yerine "Yeniden bağlanılıyor…" der. TV bağlanınca, çeviri durunca ya da
+    /// <see cref="TvReconnectingFor"/> sonra kalkar (Mac, iPhone ve Android ile aynı).
+    /// </summary>
+    public bool TvReconnecting => tvReconnecting;
+    internal static readonly TimeSpan TvReconnectingFor = TimeSpan.FromSeconds(60);
+    private bool tvReconnecting;
+    private DateTime tvReconnectingSince;
+
+    private void SetTvReconnecting(bool value)
+    {
+        if (value) tvReconnectingSince = Clock();
+        Set(ref tvReconnecting, value, [nameof(TvStatusText)], nameof(TvReconnecting));
+    }
+
+    /// <summary>Süresi dolan "Yeniden bağlanılıyor" kalkar (bağlantı denetimi turlarında).</summary>
+    private void ExpireTvReconnecting()
+    {
+        if (tvReconnecting && (!isRunning || tvClients > 0 || Clock() - tvReconnectingSince >= TvReconnectingFor)) SetTvReconnecting(false);
+    }
+
+    /// <summary>
+    /// Sunucu alındı göndermeyen TV bağlantısını kapattı (LG'de uygulama arka planda askıya alındı, Wi-Fi koptu): bekçi
+    /// yenilenir (TV'ye yeniden bağlanır, geri çekilmesi sıfırlanır, uygulamayı öne getirir). Eskiden bilgisayar
+    /// "Bağlı" görüyor, bekçi uygulamayı açık sandığı için hiçbir şey yapmıyordu.
+    /// </summary>
+    /// #1055: TV'nin başka bağlantısı açıksa (yeni akışını açtı, susan eski, yarı açık bağlantısıydı) bekçiye dokunulmaz;
+    /// eskiden bekçi yine yenileniyor, LG'de açık uygulamaya açma komutu gidip ekran kararıyordu (Mac/iPhone ile aynı).
+    private void OnTvStale() => post(() =>
+    {
+        if (!isRunning || !ShowsOnTv || server.ConnectedClients > 0) return;
+        SetTvReconnecting(true);
+        if (keeper is null) StartKeeper();
+        else keeper.Reconnect();
+    });
     /// <summary>Eşleşmiş bir TV var.</summary>
     public bool HasTv => tv is not null && store.Load<string>(StoreKeys.TvKey) is not null;
     /// <summary>Ana ekranda TV durumu gösterilir mi (altyazı yalnız bilgisayar ekranındaysa gösterilmez).</summary>
@@ -723,6 +835,13 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     /// </summary>
     public bool ShowsAutoScreenTextNotice { get => showsAutoScreenTextNotice; private set => Set(ref showsAutoScreenTextNotice, value); }
     private bool showsAutoScreenTextNotice;
+    /// <summary>
+    /// GTA 6 telefonu kapalıyken telefon listesi altyazı yolunda atıldı: "Telefon çevirisi kapalı, açmak ister misiniz?"
+    /// (oturum başına bir kez, <see cref="GamePhoneHint"/>). Telefon açılınca kalkar.
+    /// </summary>
+    public bool ShowsGamePhoneHint { get => showsGamePhoneHint; private set => Set(ref showsGamePhoneHint, value); }
+    private bool showsGamePhoneHint;
+    private readonly GamePhoneHint gamePhoneHint = new();
     private bool showsSubtitleOffTip;
     /// <summary>Görüntünün bu bağlantıda ilk geldiği an (bağlantı koparsa sıfırlanır).</summary>
     private DateTime? framesSince;
@@ -751,6 +870,14 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     /// <summary>Canlı altyazı çevirisi duraklatıldı (Num 0); ek bölge ve serbest alan çevirileri çalışmaya devam eder.</summary>
     public bool SubtitlesPaused { get => subtitlesPaused; private set => Set(ref subtitlesPaused, value); }
     public Frame? LastFrame { get => lastFrame; private set => Set(ref lastFrame, value); }
+    /// <summary>Son karenin geldiği an (ana ekrandaki "Görüntü Durdu" ve kare hızı için; bildirilmez, okunur).</summary>
+    public DateTime? LastFrameAt { get; private set; }
+    /// <summary>Ekranda oyun menüsü açık (otomatik ekran yazısı açıkken bilinir); altyazı bu sırada gösterilmez.</summary>
+    public bool ScreenMenuOpen => Volatile.Read(ref screenText)?.InMenu == true;
+    /// <summary>TV'ye giden son satırların gecikmesi (ms), en eskisi başta, en çok 10 (ana ekrandaki Ortalama Gecikme).
+    /// <see cref="MetricsText"/> ile birlikte değişir.</summary>
+    public IReadOnlyList<int> RecentDelaysMs => [.. recentDelays];
+    private readonly Queue<int> recentDelays = new();
     public string? ActiveSourceLanguage { get; private set; }
     /// <summary>Sunucunun gerçekten dinlediği port (8787 doluysa rastgele bir port).</summary>
     public int ServerPort { get; private set; } = DefaultServerPort;
@@ -784,6 +911,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             if ((old.MisreadWaitMs != value.MisreadWaitMs || old.PartialWaitMs != value.PartialWaitMs) && pipeline is not null) ApplyWaits(pipeline);
             if (old.SharePool != value.SharePool) services.Pool?.SetEnabled(value.SharePool);
             if (old.AutoScreenText != value.AutoScreenText) ShowsAutoScreenTextNotice = false;
+            if (value.ReadsGamePhone) ShowsGamePhoneHint = false;
             if (old.UsageData != value.UsageData) services.Usage?.SetEnabled(value.UsageData);
             if (old.UsageNoticeSeen != value.UsageNoticeSeen) Changed(nameof(ShowsUsageNotice));
             if (old.TranslationDevice != value.TranslationDevice)
@@ -840,6 +968,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     public bool CanAdvance => step switch
     {
         OnboardingStep.Welcome or OnboardingStep.SecondAccount or OnboardingStep.Test or OnboardingStep.BetterTranslation => true,
+        // TV Girişi: görüntü onaylanınca (seçilen giriş kaydedilir) geçilir.
+        OnboardingStep.Hdmi => settings.Style.HdmiInput is not null,
         OnboardingStep.PsnLogin => IsXbox ? xboxToken is not null : accountId is not null,
         OnboardingStep.Console => IsXbox ? xboxConsole is not null : console is not null,
         OnboardingStep.Tv => HasTv || !ShowsOnTv,
@@ -865,12 +995,32 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             Step = OnboardingStep.Done;
             return;
         }
-        Step = step == OnboardingStep.Welcome && IsXbox ? OnboardingStep.PsnLogin : step + 1;
+        var next = step == OnboardingStep.Welcome && IsXbox ? OnboardingStep.PsnLogin : step + 1;
+        if (next == OnboardingStep.Hdmi && !NeedsHdmiStep) next++;
+        Step = next;
+    }
+
+    /// <summary>TV Girişi adımı yalnız TV eşleştiyse ve Android TV değilse (Android TV kendi girişini bilir; Mac ile aynı).</summary>
+    public bool NeedsHdmiStep => HasTv && ShowsOnTv && tv is { Brand: not TvBrand.AndroidTv };
+
+    /// <summary>
+    /// Kurulumun TV Girişi adımı: giriş TV'ye gönderilir (<c>style.hdmiInput</c>, TV uygulaması 0.9.77+ o girişi açar).
+    /// <paramref name="confirmed"/> false iken yalnız denenir (kaydedilmez, "Sırayla Dene"); onaylanınca kaydedilir.
+    /// </summary>
+    public void TryHdmiInput(int input, bool confirmed)
+    {
+        if (input is < 1 or > 4) return;
+        var style = settings.Style with { HdmiInput = input };
+        if (confirmed) Settings = settings with { Style = style };
+        else server.SendStyle(style);
     }
 
     public void Back()
     {
-        if (step > OnboardingStep.Welcome) Step = step == OnboardingStep.PsnLogin && IsXbox ? OnboardingStep.Welcome : step - 1;
+        if (step <= OnboardingStep.Welcome) return;
+        var previous = step == OnboardingStep.PsnLogin && IsXbox ? OnboardingStep.Welcome : step - 1;
+        if (previous == OnboardingStep.Hdmi && !NeedsHdmiStep) previous--;
+        Step = previous;
     }
 
     /// <summary>Ücretsiz Gemini anahtarı kayıtlı ve çeviri Gemini ile yapılıyor ("Daha iyi çeviri" adımı tamam).</summary>
@@ -1203,13 +1353,21 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             LgSkipped("TV'nin adresi yok");
             return;
         }
-        var devModeOn = await services.IsDevModeOnAsync(target.Host);
+        var dev = await LgDevModeAsync(target, userAsked: false);
         // Beklerken parola alanından kurulum başladıysa kart geri "geliştirici modu kapalı"ya dönmez.
         if (TvApp.Kind == TvAppKind.Working) return;
         // Eski TV uygulaması da eksik gibi kurulum adımlarını gösterir: bağlı (eski) uygulamada kart boş kalıyor, "TV
         // uygulamasını güncelle" TV adımını açıp yalnız eşleştirme/test gösteriyor, ana ekrana dönülüyordu (Mac ile aynı).
         var needsSteps = tvAppMissing || tvAppOutdated is not null;
-        if (!devModeOn)
+        if (dev is not { } found)
+        {
+            // Kayıtlı adres hiç yanıt vermiyor ve TV ağda bulunamadı: "geliştirici modu kapalı" denmez.
+            if (needsSteps) LgSkipped($"{TvReach.NotRespondingLine} ({target.Host})");
+            TvApp = needsSteps ? new TvAppState(TvAppKind.Failed, Error: DevModeError.TvNotResponding) : TvAppState.Unknown;
+            return;
+        }
+        target = found.Target;
+        if (!found.DevModeOn)
         {
             if (needsSteps) LgSkipped($"geliştirici modu kapalı ya da TV'ye ulaşılamıyor ({target.Host}:9922)");
             TvApp = needsSteps ? new TvAppState(TvAppKind.DevModeOff) : TvAppState.Unknown;
@@ -1222,6 +1380,18 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             return;
         }
         await InstallTvAppAsync(target, devKey, bundled);
+    }
+
+    /// <summary>
+    /// LG geliştirici modu açık mı (9922 ya da 9991). Kapalı görünürse önce adres yoklanır: hiçbir kapı yanıt vermiyorsa TV ağda
+    /// aranır ve bulunursa yeni adreste yeniden bakılır. TV hiç bulunamazsa null (kart "TV bu adreste yanıt vermiyor" der).
+    /// </summary>
+    private async Task<(LgTv Target, bool DevModeOn)?> LgDevModeAsync(LgTv target, bool userAsked)
+    {
+        if (await services.IsDevModeOnAsync(target.Host)) return (target, true);
+        if (await LocateTvAsync(target, userAsked) is not { } located) return null;
+        if (located == target) return (target, false);
+        return (located, await services.IsDevModeOnAsync(located.Host));
     }
 
     /// <summary>Kurulum günlüğüne en son yazılan "LG kurulumu başlamadı" nedeni (aynısı art arda yazılmaz).</summary>
@@ -1244,7 +1414,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     /// </summary>
     private static TvAppState FailedState(DevModeException error, bool alwaysShowDetail = false) =>
         new(TvAppKind.Failed, Error: error.Error,
-            Reason: (alwaysShowDetail || error.Error is DevModeError.InstallFailed or DevModeError.NotEnoughSpace) &&
+            Reason: (alwaysShowDetail || error.Error is DevModeError.InstallFailed or DevModeError.NotEnoughSpace
+                        or DevModeError.DevConnectionClosed) &&
                     !string.IsNullOrWhiteSpace(error.Detail)
                 ? error.Detail.Trim() : null);
 
@@ -1256,7 +1427,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     /// (sertifika yoksa Samsung girişi istenir). Önceden yalnız bu bilgisayarın kurduğu sürüm hatırlanıyordu; TV'de eski
     /// kalan uygulama (ör. 0.9.10 gelirken 0.9.7) hiç güncellenmiyordu.
     /// </summary>
-    private async Task RefreshSamsungAppAsync(LgTv target)
+    private async Task RefreshSamsungAppAsync(LgTv target, bool followed = false)
     {
         if (services.BundledApp(TvBrand.Samsung) is not { } bundled) return;
         // "TV uygulamasını yeniden kur": güncel uygulama da TV'de açılır (Android'deki gibi). İstek bir kerelik.
@@ -1269,6 +1440,23 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         // bilgisayarı kabul etmedi" görünüyordu (#343); bu durumda sdb hiç denenmez, iki adres de söylenir.
         var check = await services.CheckSamsungAsync(target.Host);
         var devModeOn = check.Info?.DeveloperMode != false && await services.IsSamsungDevModeOnAsync(target.Host);
+        if (!devModeOn && !followed)
+        {
+            // Kayıtlı adres hiç yanıt vermiyorsa TV ağda aranır: adresi değişmiş TV'de "geliştirici modu kapalı" denmez.
+            var located = await LocateTvAsync(target, userAsked: false);
+            if (located is null)
+            {
+                TvApp = remembered ? new TvAppState(TvAppKind.UpToDate, InstalledAppVersion ?? bundled.Version)
+                    : new TvAppState(TvAppKind.Failed, Error: DevModeError.TvNotResponding);
+                return;
+            }
+            if (located != target)
+            {
+                openTvAppAfterCheck = open;
+                await RefreshSamsungAppAsync(located, followed: true);
+                return;
+            }
+        }
         if (!devModeOn)
         {
             // Geliştirici modu kapalıyken TV'ye sorulamaz; bu bilgisayarın kurduğu sürüme bakılır.
@@ -1339,6 +1527,13 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             var hosts = AndroidTvPick.Hosts(found);
             if (AndroidTvPick.Pick(found, [choice, target.Host]) is not { } picked)
             {
+                // Hata ayıklaması açık TV yok: kayıtlı adres hiç yanıt vermiyorsa TV ağda aranır (bulunursa adres güncellenir,
+                // hata ayıklama adımları yeni adresle gösterilir); bulunamazsa "TV bu adreste yanıt vermiyor".
+                if (hosts.Count == 0 && target.Host.Length > 0 && await LocateTvAsync(target, userAsked: false) is null)
+                {
+                    TvApp = new TvAppState(TvAppKind.Failed, Error: DevModeError.TvNotResponding);
+                    return;
+                }
                 TvApp = hosts.Count == 0 ? new TvAppState(TvAppKind.DevModeOff) : new TvAppState(TvAppKind.ChooseAndroidTv, Hosts: hosts);
                 return;
             }
@@ -1356,11 +1551,21 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             var version = await services.InstallAndroidAppAsync(host, bundled, open, launch, replaceForeignApp, e => post(() => InstallEvent(e)));
             // TV'nin adresi bundan sonra sürüm denetimi için kullanılır.
             var located = target with { Host = host };
+            var addressChanged = tv?.Host != located.Host;
+            if (addressChanged && target.Host.Length > 0) services.WriteTvInstallLog(TvReach.MovedLine(target.Host, located.Host));
             tv = located;
             store.Save(StoreKeys.Tv, located);
             store.Save(StoreKeys.TvAppVersion, version);
             Changed(nameof(Tv));
             TvApp = new TvAppState(TvAppKind.UpToDate, version);
+            if (addressChanged && keeper is not null)
+            {
+                // Çeviri sürerken ADB bekçisi eski adresi tutar; yeni TV kaydıyla yeniden kurulur (Mac ile aynı).
+                var stale = keeper;
+                keeper = null;
+                stale.Stop();
+                StartKeeper(refreshApp: false);
+            }
         }
         catch (DevModeException error)
         {
@@ -1495,7 +1700,15 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         // Kurulum adımları görünsün: TV uygulaması bağlı değil, kullanıcı yeniden kurmak istiyor.
         tvAppMissing = true;
         TvApp = new TvAppState(TvAppKind.Working);
-        if (!await services.IsDevModeOnAsync(target.Host))
+        // "Ana ekrandan TV uygulamasını güncelle" de buradan geçer: adres sessizse TV önce ağda yeniden aranır.
+        if (await LgDevModeAsync(target, userAsked: true) is not { } dev)
+        {
+            LgSkipped($"{TvReach.NotRespondingLine} ({target.Host})");
+            TvApp = new TvAppState(TvAppKind.Failed, Error: DevModeError.TvNotResponding);
+            return;
+        }
+        target = dev.Target;
+        if (!dev.DevModeOn)
         {
             LgSkipped($"geliştirici modu kapalı ya da TV'ye ulaşılamıyor ({target.Host}:9922)");
             TvApp = new TvAppState(TvAppKind.DevModeOff);
@@ -1515,15 +1728,36 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     {
         if (tv is not { } target || services.BundledTvAppVersion is not { } bundled) return;
         TvApp = new TvAppState(TvAppKind.Working);
+        string devKey;
         try
         {
-            var devKey = await services.FetchDevKeyAsync(target.Host, passphrase.Trim());
-            store.Save(StoreKeys.TvDevKey, devKey);
-            await InstallTvAppAsync(target, devKey, bundled);
+            devKey = await FetchDevKeyFollowingTvAsync(target, passphrase.Trim());
         }
         catch (DevModeException error)
         {
             TvApp = new TvAppState(TvAppKind.NeedsPassphrase, Error: error.Error);
+            return;
+        }
+        store.Save(StoreKeys.TvDevKey, devKey);
+        await InstallTvAppAsync(tv ?? target, devKey, bundled);
+    }
+
+    /// <summary>
+    /// Key Server'dan anahtarı alır. 9991 yanıt vermezse "Key Server kapalı" ancak TV bu adreste yanıt veriyorsa söylenir:
+    /// adres sessizse TV ağda aranır, bulunursa anahtar yeni adresten istenir; bulunamazsa hata TvNotResponding olur.
+    /// </summary>
+    private async Task<string> FetchDevKeyFollowingTvAsync(LgTv target, string passphrase)
+    {
+        try
+        {
+            return await services.FetchDevKeyAsync(target.Host, passphrase);
+        }
+        catch (DevModeException error) when (error.Error is DevModeError.KeyServerOff or DevModeError.Unreachable)
+        {
+            var located = await LocateTvAsync(target, userAsked: true);
+            if (located is null) throw new DevModeException(DevModeError.TvNotResponding, target.Host);
+            if (located == target) throw;
+            return await services.FetchDevKeyAsync(located.Host, passphrase);
         }
     }
 
@@ -1543,12 +1777,22 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             if (!force && installed is not null && !DevModeInstaller.IsNewer(bundled, installed))
             {
                 TvApp = new TvAppState(TvAppKind.UpToDate, installed);
+                // Paket güncel ama TV'de çalışan uygulama eski (beta.89: webOS kurulumdan sonra eski süreci tuttu):
+                // yeniden kurmak gerekmez, uygulama kapatılıp açılır (Mac ile aynı).
+                if (tvClients > 0 && runningTvAppVersion is { } running && TvAppRunningCheck.IsStale(running, installed))
+                {
+                    services.WriteTvInstallLog($"TV'deki paket {installed}, çalışan CouchSubs {(running.Length == 0 ? Shell.TvAppOutdated.Unreported : running)}; uygulama kapatılıp yeniden açılıyor.");
+                    runningCheck = new TvAppRunningCheck(installed);
+                    await RestartLgAppAsync(target, devKey);
+                }
                 await RenewDevSessionIfDueAsync(target, devKey);
                 return;
             }
             await services.InstallTvAppAsync(target.Host, devKey, replace);
             TvApp = new TvAppState(TvAppKind.UpToDate, bundled);
             tvAppMissing = false;
+            // Kurulum açık uygulamayı kapattı; açılan uygulamanın bildirdiği sürüm denetlenir (LgRunningReported).
+            runningCheck = new TvAppRunningCheck(bundled);
             await RenewDevSessionIfDueAsync(target, devKey);
             await OpenTvAppAfterInstallAsync(target);
         }
@@ -1585,7 +1829,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     {
         if (keeper is not null)
         {
-            keeper.Reconnect();
+            // Kurulum uygulamayı kapattı: sunucu kopan akışı henüz fark etmese de uygulama açılır.
+            keeper.ReopenApp();
             return;
         }
         try { await services.PairTvAsync(target, store.Load<string>(StoreKeys.TvKey), ServerAddress(target), server.AccessKey); }
@@ -1595,10 +1840,196 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     /// <summary>TV ağda yeni bir adreste bulundu.</summary>
     public void TvMoved(LgTv moved)
     {
-        if (moved.Brand == TvBrand.Samsung) SamsungAppKnowledge.Carry(tv?.Host, moved.Host);
+        if (moved.Brand == TvBrand.Samsung)
+        {
+            SamsungAppKnowledge.Carry(tv?.Host, moved.Host);
+            // Bilgi bu denetleyicinin kaydına doğrudan yazılır: SamsungAppKnowledge.Changed ortak bir kanca, aynı anda başka bir
+            // denetleyici kurulursa (testlerde paralel) başka kayda gidebiliyordu.
+            if (SamsungAppKnowledge.IsKnown(moved.Host)) store.Save(StoreKeys.TvAppSeen, moved.Host);
+        }
         tv = moved;
         store.Save(StoreKeys.Tv, moved);
         Changed(nameof(Tv));
+    }
+
+    // MARK: Kayıtlı TV adresi sessizse yeniden bulma (Mac/iPhone TVReach, Android TvReach ile aynı)
+
+    /// <summary>
+    /// Kayıtlı TV adresi hiç yanıt vermiyor ve TV ağda bulunamadı: eşli TV kartı ve TV durumu "Yanıt vermiyor — yeniden
+    /// aranıyor…" der. beta.89'da (Mac) TV'nin adresi değişmişti; kart "TV uygulaması bekleniyor", kurulum "geliştirici
+    /// modu kapalı" ve "Key Server kapalı" diyordu, oysa TV'de ikisi de açıktı.
+    /// </summary>
+    public bool TvNotResponding { get => tvNotResponding; private set => Set(ref tvNotResponding, value, [nameof(TvStatusText), nameof(TvTone)]); }
+    private bool tvNotResponding;
+
+    /// <summary>TV ağda en çok bu sıklıkla aranır (kullanıcının düğmesiyle başlayan istek hariç).</summary>
+    public static readonly TimeSpan TvSearchInterval = TimeSpan.FromSeconds(30);
+    private DateTime? lastTvSearch;
+    private bool checkingTvReach;
+
+    /// <summary>
+    /// Kayıtlı adres yanıt veriyor mu; vermiyorsa TV ağda aranır, aynı TV bulunursa adres güncellenir ("TV'nin adresi
+    /// değişmiş: eski → yeni") ve yeni kayıt döner. Bulunamazsa null (günlükte "TV bu adreste yanıt vermiyor").
+    /// </summary>
+    /// <param name="userAsked">Kullanıcının düğmesiyle başladı: ağ araması 30 sn kısıtına takılmaz.</param>
+    private async Task<LgTv?> LocateTvAsync(LgTv target, bool userAsked)
+    {
+        if (target.Host.Length == 0) return target;
+        var (location, moved) = await TvReach.LocateAsync(target, host => services.TvRespondsAsync(host, target.Brand),
+            () => SearchTvsAsync(userAsked));
+        switch (location)
+        {
+            case TvLocation.Moved when moved is not null:
+                services.WriteTvInstallLog(TvReach.MovedLine(target.Host, moved.Host));
+                SubtitleLog.Write(TvReach.MovedLine(target.Host, moved.Host));
+                TvMoved(moved);
+                RestartKeeperForMovedTv();
+                TvNotResponding = false;
+                return moved;
+            case TvLocation.Silent:
+                if (!TvNotResponding) services.WriteTvInstallLog($"{TvReach.NotRespondingLine} ({target.Host})");
+                TvNotResponding = true;
+                return null;
+            default:
+                TvNotResponding = false;
+                return target;
+        }
+    }
+
+    private async Task<IReadOnlyList<LgTv>> SearchTvsAsync(bool force)
+    {
+        var now = Clock();
+        if (!force && lastTvSearch is { } last && now - last < TvSearchInterval) return [];
+        lastTvSearch = now;
+        return await services.DiscoverTvsAsync();
+    }
+
+    /// <summary>Çeviri sürerken bekçi eski adresi tutar; yeni TV kaydıyla yeniden kurulur.</summary>
+    private void RestartKeeperForMovedTv()
+    {
+        if (keeper is null) return;
+        var stale = keeper;
+        keeper = null;
+        stale.Stop();
+        StartKeeper(refreshApp: false);
+    }
+
+    /// <summary>
+    /// Eşli TV kartı görünürken (TV uygulaması bağlı değilse) ~10 sn'de bir: adres sessizse kart "Yanıt vermiyor — yeniden
+    /// aranıyor…" der ve TV ağda aranır (en çok 30 sn'de bir); bulunursa kart yeni adresi gösterir.
+    /// </summary>
+    public async Task CheckTvReachableAsync()
+    {
+        if (tv is not { } target || tvClients > 0 || checkingTvReach)
+        {
+            if (tvClients > 0) TvNotResponding = false;
+            return;
+        }
+        checkingTvReach = true;
+        try { if (await LocateTvAsync(target, userAsked: false) is not null) TvUnreachableProblem = null; }
+        finally { checkingTvReach = false; }
+    }
+
+    /// <summary>
+    /// Eşli TV kartındaki "Eşleşmeyi Kaldır": kayıtlı TV, TV izni/jetonu, LG anahtarı ve TV uygulaması sürüm kaydı silinir,
+    /// bekçi durur. Altyazı yalnız TV'ye gidiyorsa bilgisayar ekranına geçer; TV yeniden "TV'yi Değiştir" ile seçilir.
+    /// </summary>
+    public void RemoveTvPairing()
+    {
+        if (tv is not { } target) return;
+        SubtitleLog.Write($"Eşli TV kaldırıldı: {target.Brand} {target.Host}");
+        services.WriteTvInstallLog($"Eşli TV kaldırıldı: {target.Brand} {target.Host}");
+        keeper?.Stop();
+        keeper = null;
+        tv = null;
+        store.Remove(StoreKeys.Tv);
+        store.Remove(StoreKeys.TvKey);
+        store.Remove(StoreKeys.TvDevKey);
+        store.Remove(StoreKeys.TvAppVersion);
+        store.Remove(StoreKeys.TvAppSeen);
+        tvAppMissing = false;
+        lastLgSkipReason = null;
+        TvNotResponding = false;
+        TvUnreachableProblem = null;
+        TvApp = TvAppState.Unknown;
+        if (settings.Output == SubtitleOutput.Tv) Settings = settings with { Output = SubtitleOutput.Computer };
+        Changed(nameof(Tv), nameof(CanAdvance), nameof(CanInstallTvApp), nameof(CanReinstallTvApp), nameof(CanReconnectTv), nameof(CanChangeTv),
+            nameof(HasTv), nameof(NeedsTv), nameof(CanStart), nameof(TvStatusText), nameof(TvTone), nameof(ShowTvOpenHint), nameof(TvOpenHintText));
+    }
+
+    /// <summary>Eşli TV kartındaki "TV'yi Değiştir": TV adımı (ağdaki TV'ler ve elle adres) açılır.</summary>
+    public void ChangeTv() => Step = OnboardingStep.Tv;
+
+    /// <summary>
+    /// Eşli TV kartında "TV'yi Eşleştir" ya da "Deneme Altyazısı Gönder" TV'ye ulaşamadı: "TV 192.168.1.238 adresinde yanıt
+    /// vermiyor; TV'nin adresi değişmiş olabilir." Kart altında "TV'yi Yeniden Ara" ve "IP Adresi Gir" düğmeleri görünür.
+    /// Önceden bu düğmeler hiçbir hata göstermiyordu (beta.89, Mac).
+    /// </summary>
+    public string? TvUnreachableProblem
+    {
+        get => tvUnreachableProblem;
+        private set => Set(ref tvUnreachableProblem, value, [nameof(HasTvUnreachableProblem)]);
+    }
+    private string? tvUnreachableProblem;
+    public bool HasTvUnreachableProblem => tvUnreachableProblem is not null;
+
+    /// <summary>
+    /// Eşli TV'ye ulaşılabiliyor mu (TV uygulaması bağlıysa evet). Adres sessizse TV ağda hemen aranır (kullanıcı düğmesi:
+    /// 30 sn kısıtı yok); aynı TV bulunursa adres güncellenir ve evet. Bulunamazsa kartta hata görünür ve hayır.
+    /// </summary>
+    public async Task<bool> EnsureTvReachableAsync()
+    {
+        if (tv is not { } target || target.Host.Length == 0 || tvClients > 0)
+        {
+            TvUnreachableProblem = null;
+            return true;
+        }
+        if (await LocateTvAsync(target, userAsked: true) is null)
+        {
+            TvUnreachableProblem = text.Format(TvAppMessages.TvNotRespondingAtMessage, target.Host);
+            return false;
+        }
+        TvUnreachableProblem = null;
+        return true;
+    }
+
+    /// <summary>Kartın "TV'yi Yeniden Ara" düğmesi: ağ araması beklemeden hemen yapılır; bulunursa kart yeni adresi gösterir.</summary>
+    public async Task<bool> SearchTvAgainAsync()
+    {
+        lastTvSearch = null;
+        return await EnsureTvReachableAsync();
+    }
+
+    /// <summary>
+    /// Kartın "IP Adresi Gir" alanı: adresteki TV tanınırsa (marka ve ad TV'ye sorulur, bkz. PairedTv/ManualTv) kayıtlı TV o
+    /// adrese taşınır. Aynı markadaysa izin/jeton korunur (TvMoved); başka marka ise TV yeniden eşlenir. Tanınmazsa hayır.
+    /// </summary>
+    public async Task<bool> UseTvAddressAsync(string address)
+    {
+        if (LgDiscovery.NormalizeHost(address) is not { } host)
+        {
+            TvUnreachableProblem = text["This is not a valid IP address. Type it like 192.168.1.20, without http:// or a port number."];
+            return false;
+        }
+        var found = await services.IdentifyTvAsync(host);
+        if (found is null)
+        {
+            TvUnreachableProblem = text.Format(TvAppMessages.TvNotRespondingAtMessage, host);
+            return false;
+        }
+        if (tv is { } saved && saved.Brand == found.Brand)
+        {
+            if (saved.Host != host) services.WriteTvInstallLog(TvReach.MovedLine(saved.Host, host));
+            TvMoved(saved with { Host = host });
+            RestartKeeperForMovedTv();
+        }
+        else
+        {
+            await PairAsync(found);
+        }
+        TvNotResponding = false;
+        TvUnreachableProblem = null;
+        return true;
     }
 
     public void StartModelDownload()
@@ -1656,6 +2087,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         // alamaz, "TV'de test et"e TV'de yalnız "Eşleştirme tamamlanmadı" çıkıyordu. Deneme, Ayarlar'daki "TV eşleştir"
         // gibi iki dakikalık onay penceresi açar; TV kodu gösterince bilgisayarda onay sorulur.
         if (!isRunning) server.Pairing.Open();
+        // Eşli TV'nin adresi sessizse önce ağda aranır (adresi değişmiş TV yeni adresle açılır); bulunamazsa kart söyler.
+        if (ShowsOnTv && HasTv) await EnsureTvReachableAsync();
         // TV uygulaması bağlı değilse deneme altyazısı kimseye gitmiyordu: bekçi yalnız çeviri sürerken çalışır, TV
         // uygulaması kapalıysa ya da bilgisayarı arıyorsa "TV'de test et"e TV'de hiçbir şey çıkmıyordu (Samsung 65S95F).
         // Önce TV uygulaması açılır (Samsung'da geliştirici bağlantısıyla) ve bağlanması beklenir.
@@ -2133,15 +2566,20 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             // Konuşan renkleri oturum başına: yeni oturumda kişiler yeniden sıralanır.
             server.SpeakerBook.Reset();
             SubtitlesPaused = false;
+            recentDelays.Clear();
+            LastFrameAt = null;
             MetricsText = "";
             framesSince = null;
             sawLineThisRun = false;
             ShowsSubtitleOffTip = false;
+            ShowsGamePhoneHint = false;
+            lock (gamePhoneHint) gamePhoneHint.Reset();
             MakePipeline();
             if (settings.Dubbing.Enabled && DubbingInstalled) MakeDubber()?.Prepare();
             SubtitleLog.Write($"oturum başladı: {settings.SourceLanguage}→{settings.TargetLanguage}, "
                 + $"motor: {(OnlineTranslationActive ? settings.OnlineEngine.ToString() : "ücretsiz")}, seçilen motor: {settings.Engine}, paketler: {(settings.GamePacks ? "açık" : "kapalı")}, "
-                + $"görüntü: {(demoMode ? "deneme modu" : readsCapture ? IsXbox ? "seçilen pencere (Xbox, bağlanılmaz)" : "seçilen pencere" : IsXbox ? "Xbox" : readsWindow ? "Remote Play penceresi" : "PS5")}");
+                + $"görüntü: {(demoMode ? "deneme modu" : readsCapture ? IsXbox ? "seçilen pencere (Xbox, bağlanılmaz)" : "seçilen pencere" : IsXbox ? "Xbox" : readsWindow ? "Remote Play penceresi" : "PS5")}"
+                + $", {SessionSummary.ScreenText(settings)}");
 
             IStreamSession stream;
             if (demoMode)
@@ -2212,16 +2650,22 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     /// TV uygulamasını başlatır ve açık tutar; TV kapalıysa açıldığında bağlanır. Altyazı TV'ye gitmiyorsa ya da TV
     /// yoksa bir şey yapmaz.
     /// </summary>
-    private void StartKeeper()
+    private void StartKeeper(bool refreshApp = true)
     {
         if (keeper is not null || !ShowsOnTv || !HasTv || tv is not { } target) return;
         var running = server;
-        var tvKeeper = services.MakeKeeper(target, store.Load<string>(StoreKeys.TvKey), new Dictionary<string, string> { ["server"] = ServerAddress(target), ["key"] = server.AccessKey },
+        IKeeper? tvKeeper = null;
+        tvKeeper = services.MakeKeeper(target, store.Load<string>(StoreKeys.TvKey), new Dictionary<string, string> { ["server"] = ServerAddress(target), ["key"] = server.AccessKey },
             () => running.ConnectedClients > 0, moved => post(() => TvMoved(moved)), key => post(() => store.Save(StoreKeys.TvKey, key)), () => server.ConsolePort,
-            problem => post(() => OpenResult(problem, target.Brand)));
+            problem => post(() =>
+            {
+                // Yerine yenisi kurulan (eski adresteki) bekçinin geç gelen sonucu yok sayılır.
+                if (!ReferenceEquals(keeper, tvKeeper)) return;
+                OpenResult(problem, target.Brand);
+            }));
         tvKeeper.Start(TimeSpan.FromSeconds(5));
         keeper = tvKeeper;
-        _ = RefreshTvAppAsync();
+        if (refreshApp) _ = RefreshTvAppAsync();
     }
 
     /// <summary>Altyazının yeri değişti: TV seçildiyse TV uygulaması açılır, kaldırıldıysa artık açık tutulmaz.</summary>
@@ -2411,6 +2855,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         UpdateRegionWatcher();
         // Yeni "Başlat" eski oturumdan kalan (belki takılmış) okumayı beklemeden temiz başlar.
         frameGate.Reset();
+        frameCadence.Reset();
+        lock (skippedGate) skippedFrame = null;
         activeReader = null;
         screenWork?.Cancel();
         screenWork = null;
@@ -2422,6 +2868,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         StopDubber();
         if (isRunning) sleep.End();
         IsRunning = false;
+        SetTvReconnecting(false);
         SessionState = SessionState.Disconnected(DisconnectKind.Stopped);
         reconnectOffer.Reset();
         sessionIsConsole = false;
@@ -2472,6 +2919,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         {
             if (ReferenceEquals(session, stream)) HandleFrame(frame);
         };
+        stream.UseCadence(frameCadence);
     }
 
     /// <summary>
@@ -2490,6 +2938,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         old?.Stop();
         old?.Dispose();
         frameGate.Reset();
+        frameCadence.Reset();
+        lock (skippedGate) skippedFrame = null;
         framesSince = null;
         IStreamSession stream;
         try
@@ -2524,7 +2974,9 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     public static bool ReconnectsOnReturn(SessionState state) =>
         state.Phase != SessionPhase.Disconnected || state.Reason?.Kind is not
             (DisconnectKind.RegistrationInvalid or DisconnectKind.LoginPasscode or DisconnectKind.LoginPasscodeIncorrect
-             or DisconnectKind.Stopped);
+             or DisconnectKind.Stopped
+             // PS5 oturumu bilerek iki kez kapattı: kendiliğinden yeniden bağlanmak PS5'teki oyunu yine böler (GitHub #353).
+             or DisconnectKind.ConsoleClosedRepeatedly);
 
     /// <summary>
     /// Ana ekrandaki "Yeniden bağlan" düğmesi: oturum yeniden denemeyi bıraktıysa hemen, süren denemelerde 45 sn sonra
@@ -2599,7 +3051,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             // Eskiden "Yeniden bağlanılıyor… (Unknown Session Request Error)" diye sonsuza kadar deneniyordu.
             DisconnectKind.RegistrationInvalid => text["The PS5 didn't accept this pairing. Pair the PS5 again with the second account in Settings."],
             // Eskiden ağ hatası, bulunamayan PS5 ve diğer nedenler hep yalnız "Yeniden bağlanılıyor…" idi.
-            DisconnectKind.NotFound => text.Format("PS5 not found at %@. Make sure it is on and on the same network. Reconnecting…", detail ?? "?"),
+            DisconnectKind.NotFound => text.Format("PS5 not found at %@. Searching the network for it. Make sure it is on and on the same network; if its address changed, use Enter IP Address in Settings > Console. Reconnecting…", detail ?? "?"),
             // Kablosuz ağda akış sık kopuyordu (GitHub #388, #401): yeniden bağlanılır, kalıcı çözüm kablodur.
             DisconnectKind.Network => text["Lost the connection to the PS5. Reconnecting… If this keeps happening, connect the PS5 to the router with a cable."],
             // 0x80108b12: PS5'te Uzaktan Oynatma kapalı (GitHub #9). Ayar açılınca yeniden denemede bağlanılır.
@@ -2611,6 +3063,9 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             // Eskiden İngilizce "Remote Play on Console has crashed" ile sonsuza kadar "Yeniden bağlanılıyor…" (GitHub #519).
             // PS5 akışı kendisi kapattı (ör. oyun sırasında PS5'te kullanıcı değişti): eskiden "kabloyla bağlayın" deniyordu.
             DisconnectKind.ConsoleClosed => text["The PS5 ended Remote Play. This usually happens when the user is switched on the PS5 during the game. Reconnecting…"],
+            // PS5 yeniden bağlanmadan sonra da kapattı: durulur (eskiden sınırsız deneniyor, oyun bölünüyordu; GitHub #353).
+            DisconnectKind.ConsoleClosedRepeatedly => text["The PS5 ended Remote Play. While playing, choose your own main account on the PS5; don't play with the second account CouchSubs uses."],
+            DisconnectKind.ReconnectGaveUp => text["The connection to the PS5 kept dropping, so reconnecting stopped. Make sure the PS5 is on and on the same network, then press Reconnect."],
             DisconnectKind.ConsoleRemotePlayCrashed => text["Remote Play on the PS5 has crashed. Turn the PS5 off completely (not rest mode) and back on, then connect again."],
             DisconnectKind.Other when !string.IsNullOrEmpty(detail) => text.Format("Reconnecting… (%@)", detail),
             _ => text["Reconnecting…"],
@@ -2663,11 +3118,20 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     /// <summary>"Hangi oyunu oynuyorsunuz?" kartı açık.</summary>
     public bool AskingGame { get => askingGame; private set => Set(ref askingGame, value); }
 
-    /// <summary>Bu PS5'te son seçilen oyun.</summary>
+    /// <summary>
+    /// Xbox'ta çeviri sürüyor ve oyun bilinmiyor: Xbox oynanan oyunu bildirmez; ana ekranda Oyun karosu vurgulanır ve
+    /// "oyunu seçin" notu görünür (zorlayıcı kart açılmaz). Oyun seçilince kalkar (Mac/iPhone GameChoice.xboxNeedsGame,
+    /// Android LiveStatus.xboxNeedsGame ile aynı).
+    /// </summary>
+    public bool XboxNeedsGame { get => xboxNeedsGame; private set => Set(ref xboxNeedsGame, value); }
+    private bool xboxNeedsGame;
+
+    /// <summary>Bu PS5'te (Xbox'ta Xbox için) son seçilen oyun.</summary>
     public string? LastPlayedGame =>
         GameConsoleName is { } name && store.Load<Dictionary<string, string>>(StoreKeys.LastGames) is { } saved ? saved.GetValueOrDefault(name) : null;
 
-    private string? GameConsoleName => console is null ? null : string.IsNullOrEmpty(console.Name) ? console.Host : console.Name;
+    private string? GameConsoleName => IsXbox ? GameSense.XboxConsole
+        : console is null ? null : string.IsNullOrEmpty(console.Name) ? console.Host : console.Name;
 
     /// <summary>Kartın önerileri: son oynanan, kurulu paketlerin oyunları ve popüler oyunlar.</summary>
     public IReadOnlyList<string> GameSuggestions(string query) =>
@@ -2678,6 +3142,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     {
         if (RunningGame.Named(name)?.Name is not { } clean) return;
         gameSense.Choose(clean);
+        if (IsXbox && session is not null && !demoMode) SubtitleLog.Write(GameSense.XboxChosenLog(clean));
         if (GameConsoleName is { } consoleName)
         {
             var saved = store.Load<Dictionary<string, string>>(StoreKeys.LastGames) ?? new Dictionary<string, string>();
@@ -2881,6 +3346,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         services.GamePacks?.LimitToGame(gameSense.PackLimit);
         var current = gameSense.Current;
         PlayedGame = current?.Name;
+        XboxNeedsGame = IsXbox && session is not null && !demoMode && current is null;
         FollowGameAreas();
         if (current == publishedGame) return;
         // Yeni oyunda aynı HUD satırının çevirisi ve paketi farklı olabilir.
@@ -2895,6 +3361,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     private void StartGameSense()
     {
         gameSense.StartSession();
+        // Xbox çalışan oyunu bildirmez: Xbox için son seçilen oyun kendiliğinden kullanılır; yoksa günlükte tek satır.
+        if (IsXbox) SubtitleLog.Write(gameSense.StartXbox(LastPlayedGame));
         publishedGame = null;
         AskingGame = false;
         PublishGame();
@@ -2925,6 +3393,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         gameAsk?.Dispose();
         gameAsk = null;
         AskingGame = false;
+        XboxNeedsGame = false;
     }
 
     /// <summary>Paketler yalnız İngilizce→Türkçede ve ayar açıkken kullanılır.</summary>
@@ -2949,6 +3418,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         OnboardingStep.Tv => "tv",
         OnboardingStep.Translation => "translation",
         OnboardingStep.Test => "test",
+        OnboardingStep.Hdmi => "hdmi",
         OnboardingStep.BetterTranslation => "better_translation",
         _ => "home",
     };
@@ -3166,6 +3636,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         ResetRegionWatcher(discard: true);
         // Eski hatta süren okuma beklenmez; yeni hat ilk karesini hemen alır.
         frameGate.Reset();
+        frameCadence.Reset();
+        lock (skippedGate) skippedFrame = null;
         ActiveSourceLanguage = settings.SourceLanguage;
         var reader = services.MakeReader(settings.SourceLanguage, settings.OcrEngine);
         activeReader = reader;
@@ -3187,7 +3659,12 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             EchoPaused = () => Volatile.Read(ref screenText)?.InMenu == true,
             FindsPhone = settings.ReadsGamePhone && GameName.Key(gameSense.Current?.Name) == "gta 6",
         };
-        built.MetricsReady += metrics => post(() => MetricsText = metrics.Summary(text));
+        built.MetricsReady += metrics => post(() =>
+        {
+            recentDelays.Enqueue(metrics.TotalMs);
+            while (recentDelays.Count > 10) recentDelays.Dequeue();
+            MetricsText = metrics.Summary(text);
+        });
         built.PairShown += (source, translation) =>
         {
             var box = built.LastBox;
@@ -3219,6 +3696,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         built.Log = SubtitleLog.Write;
         built.PackName = () => services.GamePacks?.SearchScope;
         built.MissionChanged += OnMissionChanged;
+        built.OnSceneTextDropped += OnSceneTextDropped;
         built.NoticesChanged += OnNoticesChanged;
         ConnectPacks(built);
         ApplyWaits(built);
@@ -3276,6 +3754,29 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     /// stilinde görünür. Görev kalkınca alan çıkar (RegionWatcher kutusunu kaldırır). Otomatik ekran yazısı kapalıysa
     /// görev yine altyazıya girmez ama ayrıca gösterilmez.
     /// </summary>
+    /// <summary>
+    /// Altyazı yolu sahne yazısı attı: GTA 6 telefonu kapalıyken bu bir telefon listesiyse oturumda bir kez "Telefon
+    /// çevirisi kapalı, açmak ister misiniz?" ipucu (<see cref="GamePhoneHint"/>, #1202). Okuma iş parçacığında çağrılır.
+    /// </summary>
+    private void OnSceneTextDropped(string reason)
+    {
+        bool offer;
+        lock (gamePhoneHint) offer = gamePhoneHint.Observe(reason, settings.ReadsGamePhone, gameSense.Current?.Name);
+        if (!offer) return;
+        SubtitleLog.Write("telefon çevirisi kapalı: telefon listesi altyazı yolunda atıldı, açma ipucu gösterildi");
+        post(() => ShowsGamePhoneHint = !settings.ReadsGamePhone);
+    }
+
+    /// <summary>İpucundaki "Aç": GTA 6 telefonunu otomatik çevir açılır.</summary>
+    public void EnableGamePhone()
+    {
+        ShowsGamePhoneHint = false;
+        Settings = Settings with { AutoReadGamePhone = true };
+    }
+
+    /// <summary>İpucundaki "Hayır": bu oturumda yeniden gösterilmez.</summary>
+    public void DismissGamePhoneHint() => ShowsGamePhoneHint = false;
+
     private void OnMissionChanged(CropRegion? region)
     {
         var request = false;
@@ -3700,6 +4201,34 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         Changed(nameof(Console), nameof(Ps5StatusText));
     }
 
+    /// <summary>
+    /// Konsol kartında PS5 "IP Adresi Gir": PS5'in adresi değişti ve ağda kendiliğinden bulunamıyorsa kullanıcı yeni adresi
+    /// yazar; kayıt (anahtarlar korunarak) o adrese taşınır ve çeviri sürüyorsa oturum yeni adresle yeniden açılır. Önceden
+    /// yeni arayüzde PS5 adresi hiçbir yerden değiştirilemiyordu (Mac, iPhone, Android ile aynı).
+    /// </summary>
+    public bool UsePs5Address(string address)
+    {
+        if (console is not { } saved) return false;
+        if (MovedConsole(saved, address) is not { } moved)
+        {
+            Ps5AddressProblem = text["This is not a valid IP address. Type it like 192.168.1.20, without http:// or a port number."];
+            return false;
+        }
+        Ps5AddressProblem = null;
+        if (moved.Host != saved.Host) RemotePlayLog.Note($"PS5 adresi elle değiştirildi: {saved.Host} -> {moved.Host}");
+        ConsoleMoved(moved);
+        if (isRunning && !IsXbox) Reconnect("PS5 adresi elle girildi");
+        return true;
+    }
+
+    /// <summary>Elle yazılan adres geçerli IPv4 ise kayıtlı PS5'in o adrese taşınmış hali (kimlik ve anahtarlar aynı); değilse null.</summary>
+    public static RegisteredConsole? MovedConsole(RegisteredConsole saved, string? typed) =>
+        LgDiscovery.NormalizeHost(typed) is { } host ? saved.WithHost(host) : null;
+
+    /// <summary>PS5 "IP Adresi Gir" alanına yazılan adres geçersiz: kartta açıklama.</summary>
+    public string? Ps5AddressProblem { get => ps5AddressProblem; private set => Set(ref ps5AddressProblem, value); }
+    private string? ps5AddressProblem;
+
     /// <summary>altyazi.log'a yazılan kopma nedeni: türü; adres (NotFound) yazılmaz, PS5'in kodu ve libchiaki metni yazılır.</summary>
     public static string DisconnectLogName(DisconnectReason? reason) => reason switch
     {
@@ -3758,9 +4287,13 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         {
             post(() =>
             {
+                LastFrameAt = Clock();
                 LastFrame = frame;
                 UpdateSubtitleOffTip(frameArrived: true);
             });
+            // Çevirisi gösterilen ekran yazıları hâlâ yerinde mi: özgün yazı kalkınca çevirisi de bu karede kalkar
+            // (ScreenPresence; Mac/iPhone/Android aynı).
+            server.Observe(frame);
             // Duraklatıldıysa kare yalnız ek bölgeler ve serbest alan için saklanır; altyazı okunmaz.
             if (subtitlesPaused) return;
             // Önceki kare hâlâ işleniyorsa bu kare atlanır; okuma kareleri biriktirmez.
@@ -3776,14 +4309,37 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
                 post(MakePipeline);
                 return;
             }
-            if (entry.Kind != FrameGate.EntryKind.Enter) return;
-            try
+            if (entry.Kind != FrameGate.EntryKind.Enter)
             {
-                await current.ProcessAsync(frame, settings.Region, arrived);
+                if (entry.Kind == FrameGate.EntryKind.Busy) lock (skippedGate) skippedFrame = (frame, arrived);
+                return;
             }
-            finally
+            lock (skippedGate) skippedFrame = null;
+            var token = entry.Token;
+            var next = (Frame: frame, Arrived: arrived);
+            while (true)
             {
-                frameGate.Leave(entry.Token);
+                bool skipped;
+                try
+                {
+                    await current.ProcessAsync(next.Frame, settings.Region, next.Arrived);
+                }
+                finally
+                {
+                    skipped = frameGate.Leave(token);
+                    // Okuma kare aralığından uzun sürüyorsa oturum kareleri o kadar seyrek kopyalar (atılacak kare kopyalanmaz).
+                    frameCadence.ReportReadMs(current.LastReadMs);
+                }
+                // Okuma sürerken atlanan son kare hemen okunur: pencere yakalaması değişmeyen ekranda kare göndermez;
+                // altyazı belirirken gelen son kare atlanınca yeni satır kamera oynatılana dek okunmuyordu (GitHub #1019).
+                (Frame Frame, long Arrived)? waiting;
+                lock (skippedGate) { waiting = skippedFrame; skippedFrame = null; }
+                if (!skipped || waiting is not { } latest) return;
+                if (!ReferenceEquals(pipeline, current) || subtitlesPaused) return;
+                var again = frameGate.TryEnter(Environment.TickCount64);
+                if (again.Kind != FrameGate.EntryKind.Enter) return;
+                token = again.Token;
+                next = latest;
             }
         }
         catch
@@ -3794,8 +4350,15 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
 
     private bool preferredPortApplied;
 
+    /// <summary>
+    /// Bu bilgisayardaki TV paketinin sürümü altyazı akışının <c>link</c> olayıyla TV'ye gider; TV'deki uygulama daha
+    /// eskiyse TV'nin paneli "TV uygulaması eski" der (GitHub #1199). TV seçilmemişse LG paketi (sürümler aynı).
+    /// </summary>
+    private void ShareLatestTvAppVersion() => server.LatestTvAppVersion = BundledVersionForTv ?? services.BundledTvAppVersion;
+
     private async Task StartServerAsync()
     {
+        ShareLatestTvAppVersion();
         if (serverStarted) return;
         // Linux sunucusunda port elle seçilebilir (COUCHSUBS_SERVER_PORT, #617); doluysa aşağıdaki gibi boş bir porta geçilir.
         if (!preferredPortApplied && services.PreferredServerPort is { } preferred && preferred != DefaultServerPort)
@@ -3829,9 +4392,25 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     private void LoadSamsungAppKnowledge()
     {
         SamsungAppKnowledge.Changed = host => store.Save(StoreKeys.TvAppSeen, host);
+        // TV'nin listesi uygulamanın silindiğini söyledi (#1158): kayıtlar da silinir; yoksa açılışta bilgi yeniden
+        // işaretleniyor, kart "güncel" gösteriyor ve sdb reddedilince kurulum adımı hiç çıkmıyordu.
+        SamsungAppKnowledge.Missing = host => post(() => SamsungAppMissing(host));
         SamsungAppKnowledge.Log = SubtitleLog.Write;
         SamsungAppKnowledge.Mark(store.Load<string>(StoreKeys.TvAppSeen), notify: false);
         if (tv is { Brand: TvBrand.Samsung } known && InstalledAppVersion is not null) SamsungAppKnowledge.Mark(known.Host, notify: false);
+    }
+
+    /// <summary>
+    /// Samsung TV'nin kurulu uygulama listesi CouchSubs'ın silindiğini söyledi (bkz. <see cref="SamsungAppKnowledge.AppMissing"/>):
+    /// bu bilgisayarın kurduğu sürümün ve "uygulama bağlandı" kaydı silinir, kart kurulum adımlarını gösterir. Mac, iPhone
+    /// ve Android ile aynı.
+    /// </summary>
+    public void SamsungAppMissing(string host)
+    {
+        if (SamsungAppKnowledge.SameHost(store.Load<string>(StoreKeys.TvAppSeen), host)) store.Remove(StoreKeys.TvAppSeen);
+        if (tv is not { Brand: TvBrand.Samsung } paired || !SamsungAppKnowledge.SameHost(paired.Host, host)) return;
+        store.Remove(StoreKeys.TvAppVersion);
+        if (TvApp.Kind == TvAppKind.UpToDate) TvApp = new TvAppState(TvAppKind.Unknown);
     }
 
     private void OnClientsChanged(int count) => post(() =>
@@ -3839,9 +4418,14 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         // TV uygulaması bağlandı: bu TV'de kurulu olduğu artık biliniyor (liste "yok" demiş olsa da).
         if (count > 0 && tv is { Brand: TvBrand.Samsung } connected) SamsungAppKnowledge.Mark(connected.Host);
         if (tvClients == 0 && count > 0 && isRunning) services.Usage?.Record(UsageStats.Event.TvConnected(count, UsageBrand(tv?.Brand)));
+        // Çeviri sürerken TV bağlantısı düştü: TV kendiliğinden yeniden bağlanana kadar "Yeniden bağlanılıyor…".
+        var lost = tvClients > 0 && count == 0 && isRunning && ShowsOnTv;
         TvClients = count;
+        if (lost) SetTvReconnecting(true);
+        else if (count > 0 && tvReconnecting) SetTvReconnecting(false);
         // Eski uygulama TV'den kalktı (silindi, kapandı): "TV uygulamasını güncelle" bellekte kalmıyor (Mac ile aynı).
         if (count == 0) TvAppOutdated = null;
+        if (count == 0) runningTvAppVersion = null;
         if (count > 0) OpenProblem = null;
         UpdateTroubleClocks();
     });
@@ -3907,6 +4491,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     {
         UpdateConnectingHint();
         UpdateTroubleClocks();
+        ExpireTvReconnecting();
         UpdateReconnectOffer();
         if (!isRunning || services.Firewall is not { } firewall) return;
         if (ps5TroubleSince is null && tvWaitingSince is null)
@@ -4038,7 +4623,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         var ps5Trouble = !IsXbox && isRunning && sessionState.Phase != SessionPhase.Streaming && sessionState.Reason?.Kind is not
             (DisconnectKind.ConsoleAsleep or DisconnectKind.InUse or DisconnectKind.Refused or DisconnectKind.LoginPasscode
              or DisconnectKind.LoginPasscodeIncorrect or DisconnectKind.RegistrationInvalid or DisconnectKind.Rejected
-             or DisconnectKind.ConsoleRemotePlayCrashed or DisconnectKind.ConsoleClosed);
+             or DisconnectKind.ConsoleRemotePlayCrashed or DisconnectKind.ConsoleClosed
+             or DisconnectKind.ConsoleClosedRepeatedly);
         ps5TroubleSince = ps5Trouble ? ps5TroubleSince ?? now : null;
         // Altyazı TV'ye gitmiyorsa ya da TV yoksa TV beklenmez.
         tvWaitingSince = isRunning && ShowsOnTv && HasTv && tvClients == 0 ? tvWaitingSince ?? now : null;
@@ -4058,33 +4644,68 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         UpdateVersion == version && services.Updater is { } updater ? updater.ReleaseNotesAsync(version)
             : Task.FromResult<IReadOnlyList<ReleaseNoteRun>>([]);
 
+    /// <summary>
+    /// Önceki "Şimdi güncelle" uygulanamadı: uygulama yeniden açıldı ama sürüm değişmedi (çoğunlukla güvenlik yazılımı
+    /// kurulum klasörünü kilitler). Aynı şerit yine gösterilmez; kurulum dosyasını indirmesi istenir.
+    /// </summary>
+    public bool UpdateFailed { get; private set; }
+
+    /// <summary>Güncelleme şeridinin başlığı.</summary>
+    public string UpdateTitle => UpdateFailed
+        ? text.Format("CouchSubs couldn't be updated to %@", UpdateVersion ?? "")
+        : text.Format("A new version of CouchSubs is available: %@", UpdateVersion ?? "");
+
+    /// <summary>Şeridin düğmesi: kendini güncelleyebiliyorsa "Şimdi güncelle", değilse kurulum dosyasını indirme.</summary>
+    public string UpdateButtonText => CanUpdateItself && !UpdateFailed ? text["Update now"] : text["Download Setup File"];
+
+    /// <summary>Şeridin açıklaması: uygulanamayan güncelleme ya da kendini güncelleyemeyen (zip'ten açılmış) kopya.</summary>
+    public string? UpdateHint => UpdateFailed
+        ? text["The update couldn't be applied. Security software may have blocked it; download the setup file from our website and install it."]
+        : services.Updater is { CanUpdateItself: false }
+            ? text["This copy can't update itself. Reinstall it with the setup file."]
+            : null;
+
     /// <summary>Açılışta bir kez; ağ yoksa sessizce geçer.</summary>
     public async Task CheckForUpdateAsync()
     {
         if (services.Updater is not { } updater) return;
-        try { UpdateVersion = await updater.CheckAsync(); }
+        var failed = updater.Attempts?.FailedAttempt();
+        if (failed is not null)
+        {
+            UpdateFailed = true;
+            SubtitleLog.Write($"Güncelleme uygulanamadı: {failed.FromVersion} → {failed.TargetVersion} ({failed.At:yyyy-MM-dd HH:mm}); " +
+                              $"uygulama hâlâ {updater.Attempts!.CurrentVersion}. Velopack günlüğü: {updater.UpdateLogPath ?? "bilinmiyor"}");
+        }
+        string? version = null;
+        try { version = await updater.CheckAsync(); }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException) { }
+        // Ağ yoksa da uygulanamayan güncelleme söylenir.
+        UpdateVersion = version ?? failed?.TargetVersion;
     }
 
     public async Task InstallUpdateAsync()
     {
         if (services.Updater is not { } updater || updating) return;
-        if (!updater.CanUpdateItself)
+        if (!updater.CanUpdateItself || UpdateFailed)
         {
             OpenInBrowser(updater.DownloadPage);
             return;
         }
         Updating = true;
         UpdateError = null;
+        var target = UpdateVersion;
         try
         {
             // Çeviri sürüyorsa önce durur; uygulama güncellenip yeniden açılır.
             Stop();
-            await updater.InstallAsync(new ImmediateProgress(value => post(() => UpdateProgress = value)));
+            await updater.InstallAsync(new ImmediateProgress(value => post(() => UpdateProgress = value)),
+                () => { if (target is not null) updater.Attempts?.Record(target); });
         }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or InvalidOperationException
                                           or UnauthorizedAccessException)
         {
+            // Uygulama kapanmadı; deneme sayılmaz.
+            updater.Attempts?.Clear();
             UpdateError = error.Message;
         }
         finally

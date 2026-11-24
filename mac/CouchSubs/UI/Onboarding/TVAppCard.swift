@@ -91,7 +91,7 @@ struct TVAppCard: View {
                 }
             case .failed(let error, let reason):
                 Card(title: "CouchSubs TV app") {
-                    ErrorText(error: Self.message(for: error, brand: brand, reason: reason))
+                    ErrorText(error: Self.message(for: error, brand: brand, reason: reason, address: model.computerAddress))
                     // TV bu Mac'i kabul etmediyse Host PC IP'ye yazılacak adres de görünür (#343).
                     if brand == .samsung, error == .unreachable {
                         HintText(text: "This computer's address (Host PC IP): \(model.computerAddress ?? "?")")
@@ -136,7 +136,14 @@ struct TVAppCard: View {
         // silinmez; kartta aynı metin ve "Yeniden dene" kalır (Windows, iPhone ve Android ile aynı).
         .onAppear { askForeign(model.tvApp) }
         .onChange(of: model.tvApp) { state in askForeign(state) }
-        .alert("Another App Is Installed", isPresented: $foreignPrompt) {
+        // Yeni arayüzde açılır kart: "Kaldırıp Kur" amber ana eylem, "Vazgeç" ikincil (design/yeni-arayuz/METINLER.md).
+        .sheet(isPresented: Binding(get: { foreignPrompt && newLook }, set: { foreignPrompt = $0 })) {
+            ForeignTVAppPrompt { replace in
+                foreignPrompt = false
+                if replace { Task { await model.replaceForeignTVApp() } }
+            }
+        }
+        .alert("Another App Is Installed", isPresented: Binding(get: { foreignPrompt && !newLook }, set: { foreignPrompt = $0 })) {
             Button("Remove And Install", role: .destructive) { Task { await model.replaceForeignTVApp() } }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -145,6 +152,7 @@ struct TVAppCard: View {
     }
 
     @State private var foreignPrompt = false
+    @Environment(\.csNewLook) private var newLook
 
     private func askForeign(_ state: TVAppState) {
         if case .failed(.foreignApp, _) = state { foreignPrompt = true }
@@ -253,11 +261,15 @@ struct TVAppCard: View {
     /// `reason`: TV'nin verdiği sebep; varsa mesajın altına eklenir. Samsung'da ayrıntı (TV'nin kurulum çıktısı,
     /// Samsung'un yanıtı) da yazılır: hiçbir hata genel mesajda kalmasın. Gönderilecek günlük dosyası üç markada da
     /// yazılır (önceden yalnız Samsung'da).
-    static func message(for error: DevModeError, brand: TVBrand, reason: String?) -> String {
+    /// `address`: TV'nin göreceği bu Mac'in adresi; Samsung "TV kabul etmedi" hatasındaki adım satırına yazılır.
+    static func message(for error: DevModeError, brand: TVBrand, reason: String?, address: String? = nil) -> String {
         // Soru penceresinin metni; "Vazgeç"ten sonra kartta da bu kalır ("Yeniden dene" yine sorar).
         if error == .foreignApp { return message(for: error, brand: brand) }
         var text = message(for: error, brand: brand, hasReason: reason != nil)
         let samsung = brand == .samsung
+        // Kurulum bağlantısı reddedildi ("IP hatası", #1158): menü, iki ayar ve bu cihazın adresi tek satırda (iPhone,
+        // Windows ve Android ile aynı).
+        if samsung, error == .unreachable { text += "\n\n" + hostPcSteps(address) }
         if let reason {
             let label = samsung ? String(localized: "Details:") : String(localized: "TV says:")
             text += "\n\n" + label + " " + reason
@@ -287,6 +299,12 @@ struct TVAppCard: View {
         return text + "\n\n" + send
     }
 
+    /// Samsung'da Host PC IP'nin nerede ve neye ayarlanacağı; adres bilinmiyorsa "?".
+    static func hostPcSteps(_ address: String?) -> String {
+        String(format: String(localized: "On the TV: Apps › press 1 2 3 4 5 › Developer mode On, Host PC IP = this device's IP (%@), then restart the TV."),
+               address ?? "?")
+    }
+
     static func message(for error: DevModeError, brand: TVBrand, hasReason: Bool = false) -> String {
         switch error {
         case .keyServerOff: String(localized: "Key Server is off. Turn it on in the Developer Mode app and keep the app on screen.")
@@ -295,6 +313,11 @@ struct TVAppCard: View {
         case .unreachable where brand == .samsung:
             String(localized: "The TV did not accept this computer. In the TV's Developer Mode window, check that Host PC IP is this computer's address, then restart the TV.")
         case .unreachable: String(localized: "The TV did not respond. Make sure it is on and on the same network.")
+        // Kayıtlı adres sessiz, TV ağda da bulunamadı: "geliştirici modu / Key Server kapalı" denmez (beta.89).
+        case .tvNotResponding: String(localized: "The TV isn't responding at this address (is it on and on the same network?)")
+        // #200, #1116: Key Server yanıt veriyor ama 9922 reddediyor (iPhone/Android'deki lgErrRestartNeeded ile aynı metin).
+        case .devConnectionClosed:
+            String(localized: "Developer mode looks on (the TV's Key Server answers), but the TV refuses the install connection. Unplug the TV for 30 seconds and plug it back in (or press RESTART in the Developer Mode app), then open the Developer Mode app, check that Dev Mode Status is on, turn on Key Server and try again. On some TVs that use webOS Hub this connection may be closed in the TV's software; the TV app then cannot be installed this way.")
         // Eskiden her hatada boş alan suçlanıyordu; oysa çoğu zaman sorun başkaydı (ares-install aynı TV'ye kurabiliyordu).
         case .installFailed where hasReason:
             String(localized: "The TV app could not be installed. Try again; if it fails again, send us the reason below.")

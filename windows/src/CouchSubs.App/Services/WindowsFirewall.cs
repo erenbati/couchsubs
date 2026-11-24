@@ -3,6 +3,7 @@
 using System.Collections;
 using System.ComponentModel;
 using System.Diagnostics;
+using CouchSubs.Core;
 using CouchSubs.Shell;
 
 namespace CouchSubs.App.Services;
@@ -38,7 +39,7 @@ internal sealed class WindowsFirewall : IFirewall
                 WindowStyle = ProcessWindowStyle.Hidden,
             };
             start.ArgumentList.Add(ConfigureArgument);
-            using var process = Process.Start(start);
+            using var process = ChildProcessGuard.StartUncontained(start);
             if (process is null) return false;
             await process.WaitForExitAsync();
             if (process.ExitCode != 0) return false;

@@ -1,0 +1,1 @@
+0.9.97: Koyu zeminde bütün altyazı kutuları (önceki satırlar dahil) tam opak saf siyah; OLED TV'de karanlık sahnede gri görünmüyor.

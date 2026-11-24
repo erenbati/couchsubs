@@ -203,3 +203,45 @@ test('Yanda Panel: sohbet telefonun yanında, kim ne dedi belli, son mesaj gör�
   assert.ok(full.rows[full.rows.length - 1].text.endsWith(' 29'), 'son mesaj görünmüyor');
   assert.ok(full.rows[full.rows.length - 1].box.bottom <= full.list.bottom + 1, 'son mesaj panelden taşıyor');
 });
+
+// X (22 Kas, GTA 6 telefonu: "yazılar sürekli oynuyor"): TV uygulaması 0.9.78 telefonun gönderisini yerinde günceller. Aynı
+// gönderi hiçbir şeyi yeniden çizmez; yeni mesaj gelince panel ve mevcut balonlar aynı DOM düğümleri olarak kalır, yeni
+// mesaj alta eklenir; balonların üstündeki çeviride de aynı yazının kutusu korunur, yalnız yeri güncellenir.
+const inPlaceUpdate = `
+  var blocks = ${JSON.stringify(panelBlocks(3))};
+  var region = { id: 'game-phone', text: 'x', box: { left: 0.31, top: 0.26, right: 0.79, bottom: 0.81 }, blocks: blocks };
+  showRegion(region);
+  var panel = document.querySelector('.phone-panel');
+  var rows = Array.prototype.slice.call(panel.querySelectorAll('.panel-row'));
+  rows.forEach(function (row, i) { row.couchsubsMark = i; });
+  showRegion(JSON.parse(JSON.stringify(region)));
+  var same = document.querySelector('.phone-panel') === panel && panel.querySelectorAll('.panel-row').length === 3 &&
+    Array.prototype.every.call(panel.querySelectorAll('.panel-row'), function (row, i) { return row.couchsubsMark === i; });
+  var more = JSON.parse(JSON.stringify(blocks));
+  more.push({ text: 'Yeni mesaj', box: { left: 0.32, top: 0.40, right: 0.5, bottom: 0.41 }, line: 0.022,
+    surface: { flat: true, background: '#F3EEE4', foreground: '#17181B' }, panel: 'theirs' });
+  // Akışla çizilen mesajların kutusu biraz oynasa da satırlar yeniden yaratılmaz.
+  more[2].box.top += 0.003; more[2].box.bottom += 0.003;
+  showRegion({ id: 'game-phone', text: 'x', box: region.box, blocks: more });
+  var after = Array.prototype.slice.call(document.querySelectorAll('.phone-panel .panel-row'));
+  var appended = document.querySelector('.phone-panel') === panel && after.length === 4 &&
+    after.slice(0, 3).every(function (row, i) { return row.couchsubsMark === i; }) && after[3].couchsubsMark === undefined &&
+    after[3].textContent === 'Yeni mesaj';
+  hideRegions();
+  var bubble = { text: 'Yarın buluşalım.', box: { left: 0.62, top: 0.40, right: 0.75, bottom: 0.44 }, line: 0.03,
+    surface: { background: '#F6EFE8', foreground: '#2A2A2A' } };
+  showRegion({ id: 'game-phone', text: 'x', box: bubble.box, blocks: [bubble] });
+  var first = document.querySelector('#regions .item');
+  var moved = JSON.parse(JSON.stringify(bubble));
+  moved.box.top = 0.30; moved.box.bottom = 0.34;
+  showRegion({ id: 'game-phone', text: 'x', box: moved.box, blocks: [moved] });
+  var kept = document.querySelectorAll('#regions .item').length === 1 && document.querySelector('#regions .item') === first &&
+    Math.abs(parseFloat(first.style.top) - 30) < 0.5;
+  $('result').textContent = JSON.stringify({ same: same, appended: appended, kept: kept });`;
+
+test('telefonun gönderisi yerinde güncellenir: aynı gönderi yeniden çizilmez, yeni mesaj alta eklenir', { skip: !browser && 'Chromium/Chrome bulunamadı' }, () => {
+  const r = measure(inPlaceUpdate);
+  assert.equal(r.same, true, 'aynı gönderi paneli yeniden yarattı');
+  assert.equal(r.appended, true, 'yeni mesajda mevcut balonlar yeniden yaratıldı ya da yeni mesaj alta eklenmedi');
+  assert.equal(r.kept, true, 'balonun kutusu yeniden yaratıldı ya da yeri güncellenmedi');
+});

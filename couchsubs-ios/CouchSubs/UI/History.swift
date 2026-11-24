@@ -176,7 +176,7 @@ struct GameProfilesTile: View {
 
     private func row(_ profile: AreaProfile) -> some View {
         HStack(spacing: Mobile.Space.inline) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: Mobile.Space.micro) {
                 Text(verbatim: profile.game).font(Mobile.TypeScale.body).lineLimit(1)
                 if model.settings.activeAreaProfile == profile.key {
                     Text("In use").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
@@ -186,7 +186,7 @@ struct GameProfilesTile: View {
             if model.settings.activeAreaProfile != profile.key {
                 Button("Use") { areas.use(profile.key) }
                     .font(Mobile.TypeScale.caption.weight(.semibold))
-                    .foregroundStyle(Mobile.Palette.accent)
+                    .foregroundStyle(Mobile.Palette.accentText)
             }
             Menu {
                 Button("Rename") { begin(.rename(profile.key), name: profile.game) }
@@ -256,6 +256,7 @@ struct GameProfilesTile: View {
 /// Ayarlar › Altyazı alanı: hazır seçimler, son kareyle canlı önizleme (çerçeve sürüklenir), Özel'de kaydırıcılar.
 struct AreaTile: View {
     @EnvironmentObject private var model: PhoneModel
+    var resetTitle: LocalizedStringKey?
 
     var body: some View {
         Tile {
@@ -285,31 +286,30 @@ struct AreaTile: View {
                 }
             }
             .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+            // Mac'teki Alanları Sıfırla: altyazı alanı Alt hazır seçimine döner (başlık Ayarlar › Altyazı Alanı'ndan gelir).
+            if let resetTitle {
+                Button(resetTitle) { model.settings.selectAreaPreset(.bottom) }
+                    .buttonStyle(DSButtonStyle(kind: .secondary, fullWidth: true))
+            }
         }
     }
 
     private func sliderRow(_ title: LocalizedStringKey, value: Double, range: ClosedRange<Double>,
                            set: @escaping (Double) -> Void) -> some View {
-        VStack(alignment: .leading, spacing: Mobile.Space.hair) {
-            HStack {
-                Text(title).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
-                Spacer()
-                Text(verbatim: percentText(value)).font(Mobile.TypeScale.caption.monospacedDigit()).foregroundStyle(Mobile.Palette.secondary)
-            }
-            Slider(value: Binding(get: { value }, set: set), in: range).tint(Mobile.Palette.accent)
-        }
+        DSSliderRow(title: title, valueText: percentText(value), value: Binding(get: { value }, set: set), range: range)
     }
 }
 
-/// Ayarlar › Ek alanlar: altyazının yanında sürekli okunan en çok üç küçük alan (görev, bildirim, telefon mesajı). Her biri
-/// adlandırılır, açılıp kapatılır; çerçevesi canlı önizlemede sürüklenir (Mac'teki ExtraAreasCard ile aynı).
+/// Ayarlar › Ek alanlar: altyazının yanında sürekli okunan küçük alanlar (görev, bildirim, telefon mesajı; en çok
+/// `ExtraArea.maxCount`, Mac ile aynı sınır). Her biri adlandırılır, açılıp kapatılır; çerçevesi canlı önizlemede sürüklenir
+/// (Mac'teki ExtraAreasCard ile aynı).
 struct ExtraAreasTile: View {
     @EnvironmentObject private var model: PhoneModel
 
     var body: some View {
         Tile {
             Text("Extra areas").font(Mobile.TypeScale.headline)
-            Text("Besides the subtitle, CouchSubs can keep reading up to three small areas, like a quest, a phone message or a notification. Each area is read about once a second and translated again only when its text changes. The translation shows on the TV next to the original text.")
+            Text("Also reads small text next to the subtitle, such as objectives, phone messages or notifications. Each area is read once a second and translated again when the text changes; the translation appears on the TV next to that text.")
                 .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             // Tam ekranda ek alanlar okunmaz (bkz. activeExtraAreas); ayarları korunur, düzenlenebilir.
@@ -328,7 +328,7 @@ struct ExtraAreasTile: View {
                         Button(preset.title) { model.settings.addExtraArea(preset, name: preset.defaultName) }
                     }
                 } label: {
-                    Label("Add extra area", systemImage: "plus")
+                    Label("Add Extra Area", systemImage: "plus")
                 }
                 .buttonStyle(.mobileSecondary)
             }
@@ -347,11 +347,14 @@ private struct ExtraAreaEditor: View {
             VStack(alignment: .leading, spacing: Mobile.Space.inline) {
                 HStack(spacing: Mobile.Space.inline) {
                     TextField("Area name", text: Binding(get: { area.name }, set: { name in settings.updateExtraArea(id: id) { $0.name = name } }))
-                        .font(Mobile.TypeScale.headline.weight(.regular))
-                    Toggle("Read this area", isOn: Binding(get: { area.enabled },
-                                                           set: { on in settings.updateExtraArea(id: id) { $0.enabled = on } }))
-                        .labelsHidden()
-                        .tint(Mobile.Palette.accent)
+                        .textFieldStyle(DSTextFieldStyle())
+                    // Yalnız anahtar (adı yanındaki alan); yeni dildeki anahtar, kendi düğmesiyle.
+                    Button { settings.updateExtraArea(id: id) { $0.enabled.toggle() } } label: {
+                        DSSwitch(isOn: .constant(area.enabled)).frame(minWidth: Mobile.Control.icon, minHeight: Mobile.Control.icon)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text("Read this area"))
+                    .accessibilityValue(Text(area.enabled ? "On" : "Off"))
                     Button { settings.removeExtraArea(id: id) } label: {
                         Image(systemName: "trash")
                             .frame(width: Mobile.Control.icon, height: Mobile.Control.icon)
@@ -369,7 +372,8 @@ private struct ExtraAreaEditor: View {
                 .opacity(area.enabled ? 1 : 0.5)
             }
             .padding(Mobile.Space.gap)
-            .background(Mobile.Palette.surface2, in: RoundedRectangle(cornerRadius: Mobile.Radius.control))
+            .background(Mobile.Palette.bg, in: RoundedRectangle(cornerRadius: DS.radius("tile"), style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: DS.radius("tile"), style: .continuous).strokeBorder(Mobile.Palette.border))
         }
     }
 }

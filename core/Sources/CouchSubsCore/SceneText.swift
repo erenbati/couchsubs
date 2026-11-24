@@ -11,7 +11,9 @@ import Foundation
 ///   satır kutusu sözcük boyunun `tiltedLineHeight` katından yüksek),
 /// - düşük güvenli kısa blok (en çok `lowConfidenceWords` sözcük, ortalama güven `lowConfidence`'tan az),
 /// - karenin ortasındaki kısa, noktalamasız tek satır (en çok üç sözcük; altyazı ve görev satırı karenin alt ya da üst
-///   kenarına yakındır, `edgeBand`).
+///   kenarına yakındır, `edgeBand`),
+/// - plaka/tabela: alt alta kısa, büyük harfli satırlar (`isSign`) ve harfsiz sayı (`isNumber`); altyazının yerinde de,
+/// - açık zemin üzerinde koyu yazı (kâğıt ilan, `InkTone`; görüntü verilince, `darkInk`); altyazının yerinde de.
 ///
 /// Gerçek altyazı asla atılmaz (GitHub #822, beta.75 → beta.76: "çoğu zaman altyazı çevrilmiyor"): altyazısı karenin
 /// alttan %22'lik şeridinin biraz üstünde duran oyunlarda (karenin %72–78'i) "Let's go", "Over here", "Yeah" gibi kısa
@@ -40,13 +42,20 @@ public enum SceneText {
         reason(block, in: area, band: band) != nil
     }
 
-    /// Blok sahne yazısıysa atılma nedeni (altyazı günlüğü için), değilse nil.
-    public static func reason(_ block: Reading, in area: TextBox, band: SubtitleBand = SubtitleBand()) -> String? {
+    /// Blok sahne yazısıysa atılma nedeni (altyazı günlüğü için), değilse nil. `darkInk`: satır kutusu (okunan alanın
+    /// görüntüsüne oranla) açık zeminde koyu yazı mı (`InkTone.sampler`); verilmezse renge bakılmaz.
+    public static func reason(_ block: Reading, in area: TextBox, band: SubtitleBand = SubtitleBand(),
+                              darkInk: ((TextBox) -> Bool)? = nil) -> String? {
         guard let first = block.lines.first, SpeakerPrefix.split(first.text) == nil else { return nil }
         let placed = block.lines.compactMap { $0.box?.placed(in: area) }
         guard placed.count == block.lines.count, let box = block.box?.placed(in: area) else { return nil }
+        // Kâğıt ilan altyazının yerinde de atılır (GitHub #1124).
+        if let darkInk, InkTone.isDarkBlock(block, dark: darkInk) { return InkTone.reason }
         let words = wordCount(block.text)
         let middle = (box.top + box.bottom) / 2
+        // Plaka ve tabela altyazının yerinde de atılır (GitHub #1052).
+        if isSign(block) { return "plaka/tabela (kısa büyük harfli satırlar)" }
+        if isNumber(block.text) { return "harfsiz sayı" }
         // Bu oturumda altyazının okunduğu yükseklik: yalnız eğik tabela atılır.
         let learned = band.contains(box)
         // Altyazı biçimi: ortalanmış, karenin alt şeridinde, en az iki sözcük.
@@ -75,6 +84,37 @@ public enum SceneText {
         // Tek yöne kayma: aradaki sözcükler geri dönmez (yazı tanımanın kutu oynaması sözcük boyunun %15'i kadar).
         let direction: Double = shift > 0 ? 1 : -1
         return zip(middles, middles.dropFirst()).allSatisfy { ($1 - $0) * direction >= -0.15 * median }
+    }
+
+    /// Plaka ya da tabela: en az iki satır ve her satır `isSignLine`; noktalama yalnız son satırın sonunda ve o satır tek
+    /// sözcükse olabilir (yazı tanıma plakanın kenarını "." ya da "!" okuyor: "AKB / GLORIANA.", "AK8 / FLORIA!").
+    /// Kullanıcı bildirimi (GitHub #1052, GTA 6, beta.84): plaka iki-üç satır okunduğu için tek satır kuralına
+    /// takılmıyor, altyazının yerinde durduğu için de (`SubtitleBand`) çevriliyordu ("AKB / FLORIANA", "DISCOVER 28 /
+    /// AKB / GLORIANA."). Altyazı satırı en çok üç sözcükken sarılmaz; kısa bağırma replikleri ("NO! / GET DOWN!")
+    /// ilk satırda noktalama taşıdığı için kalır, konuşan adlı blok hep altyazıdır.
+    static func isSign(_ block: Reading) -> Bool {
+        guard block.lines.count >= 2, block.lines.allSatisfy({ isSignLine($0.text) }),
+              block.lines.dropLast().allSatisfy({ !looksSpoken($0.text) }), let last = block.lines.last else { return false }
+        return !looksSpoken(last.text) || wordCount(last.text) <= 1
+    }
+
+    /// Plaka/tabela satırı: kısa (en çok `signLineLength` harf ve en çok `shortWords` sözcük), küçük harfsiz, en az bir
+    /// büyük harf; soru işareti, tire ile başlayan karşılıklı konuşma ve konuşan adı yok. Büyük/küçük harfi olmayan yazıya
+    /// (Japonca) dokunulmaz.
+    static func isSignLine(_ text: String) -> Bool {
+        let line = text.trimmingCharacters(in: .whitespaces)
+        guard line.count <= signLineLength, line.contains(where: \.isUppercase), !line.contains(where: \.isLowercase),
+              !line.contains("?"), let first = line.first, !"-–—".contains(first), SpeakerPrefix.split(line) == nil
+        else { return false }
+        return wordCount(line) <= shortWords
+    }
+
+    /// Plaka/tabela satırının en çok karakteri ("C118 DISCOVER 76").
+    static let signLineLength = 20
+
+    /// Harfsiz sayı ("82403610."): plaka numarası, sayaç; altyazı değildir.
+    static func isNumber(_ text: String) -> Bool {
+        !text.contains(where: \.isLetter) && text.contains(where: \.isNumber)
     }
 
     static func isCentered(_ box: TextBox) -> Bool { abs((box.left + box.right) / 2 - 0.5) <= centerTolerance }

@@ -16,6 +16,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import common as c
+from atomic_json import dump_atomic
 
 ROOT = HERE.parents[1]
 PACKS = ROOT / "core/Sources/CouchSubsCore/Resources/packs"
@@ -169,8 +170,7 @@ def estimate(rows, system_chars):
 
 
 def system_prompt(glossary):
-    base = (HERE / "translate.py").read_text(encoding="utf-8")
-    rules = base[base.index("Rules:"):base.index('- Output only the requested JSON.')] + "- Output only the requested JSON."
+    from translate_rules import RULES
     head = "You translate video game subtitles from English into Turkish for CouchSubs, an app that shows Turkish\n" \
            "subtitles on the TV while people play."
     if glossary:
@@ -178,7 +178,7 @@ def system_prompt(glossary):
         head += "\n" + gta6glossary.prompt_block(glossary)
     head += ("\nThese lines were read from the TV screen with OCR by players; if a line is clearly damaged, translate the "
              "most likely original.")
-    return head + "\n\n" + rules
+    return head + "\n\n" + RULES
 
 
 def translate(rows, system, tag, out):
@@ -197,7 +197,11 @@ def translate(rows, system, tag, out):
             parts.append(f"[{l['speaker'] or 'text'}]")
             parts += [f"  {start + i}.{j}\t{s}" for j, s in enumerate(l["sents"])]
         res = llm.call(system, "\n".join(parts), schema, tag, max_tokens=32000)
-        return {it["id"]: it["tr"].strip() for it in (res or {}).get("items", [])}
+        # Ignore hallucinated IDs outside this prompt's chunk, or parallel
+        # responses can silently overwrite an unrelated reviewed subtitle.
+        valid = {f"{start + i}.{j}" for i, l in enumerate(chunk) for j in range(len(l["sents"]))}
+        return {it["id"]: it["tr"].strip() for it in (res or {}).get("items", [])
+                if it["id"] in valid and it["tr"].strip()}
 
     got = {}
     for attempt in range(2):
@@ -211,7 +215,7 @@ def translate(rows, system, tag, out):
         print("deneme", attempt, "parça", len(todo), "toplam harcama $%.4f" % llm.spent())
     for i, l in enumerate(lines):
         l["tr"] = [got.get(f"{i}.{j}") for j in range(len(l["sents"]))]
-    Path(out).write_text(json.dumps(lines, ensure_ascii=False, indent=0), encoding="utf-8")
+    dump_atomic(lines, out, ensure_ascii=False, indent=0)
     print("çeviri:", out, "eksik cümle", sum(1 for l in lines for t in l["tr"] if not t))
 
 
@@ -269,10 +273,22 @@ def main(argv=None):
     if not a.translate:
         print("KURU ÇALIŞTIRMA: çeviri yapılmadı. Çevirmek için: --translate --limit N")
         return
-    translate(chosen, system, f"{a.id}-poolpack", out_dir / f"{a.id}.tr.json")
-    # Havuzda "çeviriye alındı" işareti için (POST /v1/exported); yalnız dosya yazılır, istek atılmaz.
+    translated_file = out_dir / f"{a.id}.tr.json"
+    translate(chosen, system, f"{a.id}-poolpack", translated_file)
+    # The exported-key list is later sent to /v1/exported. Never mark a pool
+    # line when the model omitted one or more sentences: those lines must stay
+    # available for the next translation attempt.
+    translated_rows = json.loads(translated_file.read_text(encoding="utf-8"))
+    completed = {
+        row.get("key") for row in translated_rows if isinstance(row, dict)
+        and isinstance(row.get("sents"), list) and row["sents"]
+        and isinstance(row.get("tr"), list) and len(row["tr"]) == len(row["sents"])
+        and all(isinstance(value, str) and value.strip() for value in row["tr"])
+    }
     keys_file = out_dir / f"{a.id}.pool-keys.json"
-    keys_file.write_text(json.dumps({"keys": [k for r in chosen for k in r["pool_keys"]]}), encoding="utf-8")
+    keys_file.write_text(json.dumps({"keys": [
+        key for row in chosen if row["key"] in completed for key in row["pool_keys"]
+    ]}), encoding="utf-8")
     print("havuz anahtarları:", keys_file)
 
 

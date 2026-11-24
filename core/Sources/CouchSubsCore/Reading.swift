@@ -140,12 +140,22 @@ public struct Reading: Equatable, Sendable {
     /// tanıma cümleden ayrı okuyor; parçalar yalnız üst kenarlarına göre dizilince ad cümlenin sonuna düşüyor ya da ayrı
     /// blok sayılıp atılıyordu. Yatayda aralarında en çok `rowGap` (alan genişliğine oranla) olan parçalar birleşir;
     /// uzaktaki köşe yazısı ayrı kalır (Android: Reading.joiningRows, Windows: Reading.JoiningRows).
+    ///
+    /// Tek başına okunan konuşan adı ("Lucia:", `SpeakerPrefix.nameOnly`) cümlesine katılır: aynı satırdaysa daha gevşek
+    /// ölçüyle (renkli adın kutusu cümleninkinden kaymış ya da biraz uzak okunabiliyor; `nameRowOverlap`, `nameRowGap`),
+    /// cümlenin hemen üstündeyse (`nameAboveGap`) altındaki satırın başına. Kullanıcı bildirimi (X): konuşan adı
+    /// diyalogların yalnız ~%20'sinde görünüyordu. Ayrı satır kalan ad, aynı kişi konuşmayı sürdürdükçe değişmeden durduğu
+    /// için görev/HUD satırı sayılıp (`StickyRows`) atılıyor, ad yalnız konuşan değişince görünüyordu; aynı satırda ama
+    /// ayrı okunan ad ise ayrı blok sayılıp hiç gösterilmiyordu. Yerleri bilinmeyen satırlarda ad alttaki satıra katılır.
     public func joiningRows() -> Reading {
-        guard lines.count > 1, lines.allSatisfy({ $0.box != nil }) else { return self }
+        guard lines.count > 1 else { return self }
+        guard lines.allSatisfy({ $0.box != nil }) else { return joiningSpeakerNames() }
         var rows: [TextLine] = []
         for line in lines.sorted(by: { $0.box!.left < $1.box!.left }) {
             let box = line.box!
-            if let index = rows.firstIndex(where: { Self.sameRow(box, $0.box!) }) {
+            if let index = rows.firstIndex(where: {
+                Self.sameRow(box, $0.box!) || (SpeakerPrefix.nameOnly($0.text) != nil && Self.nameRow(box, $0.box!))
+            }) {
                 let row = rows[index]
                 let confidence = [row.confidence, line.confidence].compactMap { $0 }.min()
                 rows[index] = TextLine(row.text + " " + line.text, box: row.box!.union(box), confidence: confidence)
@@ -153,10 +163,16 @@ public struct Reading: Equatable, Sendable {
                 rows.append(line)
             }
         }
-        return Reading(lines: rows.sorted { $0.box!.top < $1.box!.top })
+        return Reading(lines: rows.sorted { $0.box!.top < $1.box!.top }).joiningSpeakerNames()
     }
 
     static let rowGap = 0.05
+    /// Tek başına okunan adın sağındaki cümle aynı satırda sayılır: dikeyde küçük yüksekliğin en az bu kadarı örtüşür,
+    static let nameRowOverlap = 0.3
+    /// ve aralarındaki boşluk en çok bu kadar (alan genişliğine oranla).
+    static let nameRowGap = 0.12
+    /// Tek başına okunan adın altındaki cümle ona aittir: aradaki boşluk en çok satır yüksekliğinin bu katı.
+    static let nameAboveGap = 1.5
 
     /// `next` (solda başlayan `row`'un sağında) aynı satırda mı: dikeyde küçük yüksekliğin en az %60'ı örtüşür.
     private static func sameRow(_ next: TextBox, _ row: TextBox) -> Bool {
@@ -164,6 +180,57 @@ public struct Reading: Equatable, Sendable {
         let smaller = min(next.bottom - next.top, row.bottom - row.top)
         guard smaller > 0, overlap >= smaller * 0.6 else { return false }
         return next.left - row.right <= rowGap
+    }
+
+    /// `next`, solundaki tek başına ad (`name`) ile aynı satırda mı (`nameRowOverlap`, `nameRowGap`).
+    private static func nameRow(_ next: TextBox, _ name: TextBox) -> Bool {
+        let overlap = min(next.bottom, name.bottom) - max(next.top, name.top)
+        let smaller = min(next.bottom - next.top, name.bottom - name.top)
+        guard smaller > 0, overlap >= smaller * nameRowOverlap else { return false }
+        return next.left - name.right <= nameRowGap
+    }
+
+    /// Tek başına okunan ad, altındaki cümle satırının başına katılır (bkz. `joiningRows`). Satırın kutusu cümleninkidir,
+    /// yatayda adı da kapsar: yükseklik cümle satırınınki kalır, blok ayırma ve yazı boyu karşılaştırması bozulmaz.
+    private func joiningSpeakerNames() -> Reading {
+        var result = lines
+        var index = 0
+        while index < result.count {
+            guard let name = SpeakerPrefix.nameOnly(result[index].text),
+                  let partner = Self.sentenceBelow(index, in: result) else {
+                index += 1
+                continue
+            }
+            let line = result[partner], label = result[index]
+            var box = line.box
+            if let own = line.box, let named = label.box {
+                box = TextBox(left: min(own.left, named.left), top: own.top, right: max(own.right, named.right), bottom: own.bottom)
+            }
+            let confidence = [label.confidence, line.confidence].compactMap { $0 }.min()
+            result[partner] = TextLine(name + ": " + line.text.trimmingCharacters(in: .whitespaces), box: box, confidence: confidence)
+            result.remove(at: index)
+        }
+        return result.count == lines.count ? self : Reading(lines: result)
+    }
+
+    /// `index`teki tek başına adın cümlesi: altındaki (üst kenarı adın ortasının altında), aradaki boşluğu satır
+    /// yüksekliğinin en çok `nameAboveGap` katı olan, yatayda adla örtüşen en yakın satır. Satır kendisi adla başlamaz,
+    /// harf taşır. Yerler bilinmiyorsa hemen sonraki satır.
+    private static func sentenceBelow(_ index: Int, in lines: [TextLine]) -> Int? {
+        func sentence(_ text: String) -> Bool {
+            text.contains(where: \.isLetter) && SpeakerPrefix.nameOnly(text) == nil && SpeakerPrefix.split(text) == nil
+        }
+        guard let name = lines[index].box else {
+            let next = index + 1
+            return next < lines.count && lines[next].box == nil && sentence(lines[next].text) ? next : nil
+        }
+        let height = name.bottom - name.top
+        return lines.indices.filter { other in
+            guard other > index, let box = lines[other].box, sentence(lines[other].text) else { return false }
+            let gap = box.top - name.bottom
+            return box.top >= name.top + height / 2 && gap <= nameAboveGap * max(height, box.bottom - box.top)
+                && min(box.right, name.right) - max(box.left, name.left) > 0
+        }.min { lines[$0].box!.top < lines[$1].box!.top }
     }
 
     /// Alandaki altyazı bloğu. Seçilen alanda altyazının yanında menü ("MAP / HELP / SETTINGS" alt alta), köşedeki
@@ -178,8 +245,10 @@ public struct Reading: Equatable, Sendable {
     /// ile bildirilir (satır kutuları alana oranlı); kendi yerinde çevrilir. Önceden ortalanmış blok yokken altyazı seçilip
     /// ekranın ortasında çiziliyordu. `age`: satırın ne kadar süredir değişmeden okunduğu (`StickyRows.unchangedMs`);
     /// verilirse `staleMs`'dir değişmeyen ortalı blok, yanında yeni beliren ortalı blok varken seçilmez (`withoutStale`),
-    /// atlanan blok `stale` ile bildirilir.
+    /// atlanan blok `stale` ile bildirilir. `darkInk`: satır kutusu açık zeminde koyu yazı mı (`InkTone.sampler`; kâğıt ilan
+    /// sahne yazısıdır, GitHub #1124); verilmezse renge bakılmaz.
     public func subtitleBlock(in area: TextBox, band: SubtitleBand = SubtitleBand(),
+                              darkInk: ((TextBox) -> Bool)? = nil,
                               dropped: ((Reading, String) -> Void)? = nil,
                               notices: ((Reading) -> Void)? = nil,
                               age: ((String) -> Int?)? = nil,
@@ -195,9 +264,9 @@ public struct Reading: Equatable, Sendable {
             }
         }
         // Tabela, tişört, plaka gibi sahne yazısı (`SceneText`) altyazı alanına düşse de altyazı değildir.
-        let candidates = blocks.map { Reading(lines: $0) }.filter { block in
+        let candidates = blocks.flatMap(Self.withoutSignLines).map { Reading(lines: $0) }.filter { block in
             guard !block.isMenu, !block.isActionLabel else { return false }
-            guard let reason = SceneText.reason(block, in: area, band: band) else { return true }
+            guard let reason = SceneText.reason(block, in: area, band: band, darkInk: darkInk) else { return true }
             dropped?(block, reason)
             return false
         }.filter { block in
@@ -240,6 +309,28 @@ public struct Reading: Equatable, Sendable {
     }
 
     private static func letters(_ text: String) -> Int { text.filter(\.isLetter).count }
+
+    /// Konuşmayla aynı bloğa düşen plaka/tabela satırları ayrı blok olur (sonra `SceneText` ya da `isActionLabel` ile
+    /// atılır). Kullanıcı bildirimi (GitHub #1052, GTA 6, beta.84): plaka konuşmanın hemen üstünde durunca aynı bloğa
+    /// katılıyor, "FLORIANA / Dunk: Yo. How you know that was me?" diye çevriliyor, plaka okundukça aynı replik yeniden
+    /// işleniyordu. Ayrılan: konuşan adlı satırın üstündeki kısa büyük harfli satırlar (`SceneText.isSignLine`; konuşan
+    /// adı yeni konuşmanın ilk satırıdır) ve küçük harfli konuşmanın altında, cümlenin devamı olmayan, rakam taşıyan kısa
+    /// büyük harfli satır ("AKB 51"). Tümü büyük harfli altyazının devamı ("LUCIA: GET / DOWN!", "I'm with the / FBI.")
+    /// ayrılmaz (Windows: Reading.WithoutSignLines, Android: Reading.withoutSignLines).
+    static func withoutSignLines(_ block: [TextLine]) -> [[TextLine]] {
+        if let speaker = block.indices.dropFirst().first(where: { SpeakerPrefix.split(block[$0].text) != nil }),
+           block[..<speaker].allSatisfy({ SceneText.isSignLine($0.text) }) {
+            return [Array(block[..<speaker])] + withoutSignLines(Array(block[speaker...]))
+        }
+        guard block.count >= 2, let first = block.first, SpeakerPrefix.split(first.text) != nil,
+              first.text.contains(where: \.isLowercase),
+              let cut = block.indices.dropFirst().first(where: { index in
+                  let text = block[index].text
+                  return SceneText.isSignLine(text) && text.contains(where: \.isNumber)
+                      && !continues(block[index - 1].text, with: text)
+              }) else { return [block] }
+        return [Array(block[..<cut]), Array(block[cut...])]
+    }
 
     /// Ortalı blok bu kadar süredir hiç değişmediyse ve yanında ondan en az `StickyRows.youngerByMs` daha yeni (kırıntı
     /// olmayan) ortalı blok varsa altyazı sayılmaz. Kullanıcı bildirimi (GitHub #933, GTA 6): karakter TV izlerken haber

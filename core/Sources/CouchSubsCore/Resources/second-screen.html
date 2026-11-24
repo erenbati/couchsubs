@@ -98,7 +98,10 @@
     return map;
   }
 
-  // Satır başındaki "Ad:" konuşanın renginde; renk o satırın sonuna kadar sürer.
+  // Yalnız satır başındaki "Ad:" konuşanın renginde; cümle seçilen yazı renginde kalır (TV ile aynı). Karakter Adı ›
+  // Tüm Satır (style.wholeLine): ad ve cümle, devam satırlarıyla birlikte sonraki konuşanın adına dek o renkte.
+  var wholeLine = false;
+
   function paint(el, text, map) {
     el.textContent = '';
     var lines = text.split('\n');
@@ -106,19 +109,31 @@
     for (var i = 0; i < lines.length; i++) {
       if (i > 0) el.appendChild(document.createTextNode('\n'));
       var found = null;
+      var length = 0;
       if (map) {
         for (var name in map) {
           if (!Object.prototype.hasOwnProperty.call(map, name)) continue;
-          var rest = lines[i].substr(name.length);
-          if (lines[i].substr(0, name.length) === name && /^ ?[:：]/.test(rest) && (!found || name.length > found.length)) found = name;
+          var mark = /^ ?[:：]/.exec(lines[i].substr(name.length));
+          if (lines[i].substr(0, name.length) === name && mark && (!found || name.length > found.length)) {
+            found = name;
+            length = name.length + mark[0].length;
+          }
         }
       }
-      if (found) running = map[found];
-      if (!running) { el.appendChild(document.createTextNode(lines[i])); continue; }
+      if (wholeLine && found) running = map[found];
+      if (wholeLine && running) {
+        var whole = document.createElement('span');
+        whole.style.color = running;
+        whole.textContent = lines[i];
+        el.appendChild(whole);
+        continue;
+      }
+      if (!found) { el.appendChild(document.createTextNode(lines[i])); continue; }
       var span = document.createElement('span');
-      span.style.color = running;
-      span.textContent = lines[i];
+      span.style.color = map[found];
+      span.textContent = lines[i].slice(0, length);
       el.appendChild(span);
+      el.appendChild(document.createTextNode(lines[i].slice(length)));
     }
   }
 
@@ -166,8 +181,11 @@
   var bold = false;
   function applyStyle(style) {
     if (!style) return;
-    color = style.textColor === 'yellow' ? '#ffe135' : '#ffffff';
+    // Yeni arayüzün yazı rengi (style.textHex) varsa o; yoksa eski beyaz/sarı.
+    color = typeof style.textHex === 'string' && /^#[0-9A-Fa-f]{6}$/.test(style.textHex) ? style.textHex
+      : style.textColor === 'yellow' ? '#ffe135' : '#ffffff';
     bold = !!style.bold;
+    wholeLine = style.wholeLine === true;
     if (current) { line.style.color = color; line.className = 'on' + (bold ? ' bold' : ''); fit(line, 2); }
   }
 
@@ -209,7 +227,7 @@
   events.onerror = function () { setStatus('lost'); };
   events.addEventListener('style', function (e) { try { applyStyle(JSON.parse(e.data)); } catch (err) {} });
   events.addEventListener('subtitle', function (e) {
-    try { var d = JSON.parse(e.data); show(d.text, d.duration, d.speakers); } catch (err) {}
+    try { var d = JSON.parse(e.data); show(d.text, d.duration, d.speakerNames || d.speakers); } catch (err) {}
   });
   events.addEventListener('clear', hide);
   // "Ekranı çevir" sonuçları da yazı olarak gösterilir (yerleri telefonda anlamsız).

@@ -60,7 +60,13 @@ object PromoController {
             try {
                 val now = System.currentTimeMillis()
                 if (fetchedAtMs == 0L || now - fetchedAtMs >= PromoPolicy.REFETCH_MS) {
-                    popup = PromoPolicy.parse(String(download(URL_CONFIG, PromoPolicy.MAX_CONFIG_BYTES), Charsets.UTF_8))
+                    // promo.json indirilemezse ya da bozuksa uygulamayla gelen reklam (Mac, Windows ve iPhone ile aynı).
+                    popup = try {
+                        PromoPolicy.parse(String(download(URL_CONFIG, PromoPolicy.MAX_CONFIG_BYTES), Charsets.UTF_8))
+                    } catch (error: IOException) {
+                        Log.i(TAG, "promo alınamadı, uygulamadaki reklam: ${error.message}")
+                        null
+                    } ?: bundled(app)
                     fetchedAtMs = now
                 }
                 val current = popup
@@ -70,7 +76,8 @@ object PromoController {
                 }
                 // Görsel zaten hazırsa yeniden inmez; yalnız yeni girişin 10 sn'si beklenir.
                 val image = state.value?.takeIf { it.popup == current }?.image
-                    ?: decode(download(current.image, PromoPolicy.MAX_IMAGE_BYTES)) ?: return@launch
+                    ?: decode(if (current.bundled) asset(app, "reklam/" + current.image) else download(current.image, PromoPolicy.MAX_IMAGE_BYTES))
+                    ?: return@launch
                 state.value = null
                 // Girişten 10 sn dolmadan yayımlanmaz (beklerken yeniden ön plana gelindiyse yeni girişten sayılır); ekran
                 // o an boştaysa popup hemen açılır.
@@ -95,6 +102,17 @@ object PromoController {
         prefs(context).edit().putString("shownId", popup.id).putLong("shownAt", System.currentTimeMillis()).apply()
         state.value = null
     }
+
+    /** Uygulamayla gelen reklam (assets/reklamlar.json); yoksa ya da bozuksa null. */
+    private fun bundled(context: Context): PromoPopup? = try {
+        PromoPolicy.parseBundled(String(asset(context, "reklamlar.json"), Charsets.UTF_8))
+    } catch (error: IOException) {
+        null
+    }
+
+    /** Paketteki dosya (görsel yüklenemezse reklam açılmaz). */
+    private fun asset(context: Context, name: String): ByteArray =
+        context.assets.open(name).use { read(it, PromoPolicy.MAX_IMAGE_BYTES) }
 
     private fun download(url: String, limit: Int): ByteArray {
         val connection = URL(url).openConnection() as HttpURLConnection

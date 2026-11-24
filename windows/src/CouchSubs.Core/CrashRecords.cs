@@ -46,7 +46,7 @@ public static class CrashRecords
     private const string TimeFormat = "yyyy-MM-dd HH:mm:ss";
 
     public static string DefaultDirectory =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CouchSubs", "cokme");
+        Path.Combine(AppDataPaths.Root, "cokme");
 
     /// <summary>Kullanıcıya gösterilen yol (Dosya Gezgini'nin adres çubuğuna yazılabilir).</summary>
     public const string DisplayPath = @"%LOCALAPPDATA%\CouchSubs\cokme";
@@ -327,14 +327,44 @@ public static class CrashRecords
         if (AccessAddress(summary) is not { } address) return null;
         if (TruncatedPointer(Registers(summary), address) is not { } hit) return null;
         var sum = hit.Index is null ? $"{hit.Base} + 0x{hit.Offset:X}" : $"{hit.Base} + {hit.Index} + 0x{hit.Offset:X}";
+        var instruction = AddressSizeOverride(summary) switch
+        {
+            false => "Hatalı komutta 32 bit adres öneki (0x67) yok; komut 64 bit adres istiyor. ",
+            true => "Hatalı komut 32 bit adres önekiyle (0x67) yazılmış; adresi komutun kendisi kısaltıyor. ",
+            null => "",
+        };
         return $"erişilen adres 0x{address:X16}, {sum} toplamının (0x{hit.Intended:X16}) yalnız alt 32 biti. " +
-               "Yazmaçlar doğru, adresin üst 32 biti düşmüş; bu, programın hesabıyla açıklanamaz. Çoğunlukla işlemci ya da " +
-               "bellek kararsızlığı belirtisidir (hız aşırtma, XMP/EXPO bellek ayarı, düşük voltaj; Intel 13./14. nesilde " +
-               "güncellenmemiş BIOS mikrokodu).";
+               "Yazmaçlar doğru, adresin üst 32 biti düşmüş; bu, programın hesabıyla açıklanamaz. " + instruction +
+               "Çoğunlukla işlemci ya da bellek kararsızlığı belirtisidir (hız aşırtma, PBO/Curve Optimizer, XMP/EXPO bellek " +
+               "ayarı, düşük voltaj; Intel 13./14. nesilde güncellenmemiş BIOS mikrokodu).";
+    }
+
+    /// <summary>
+    /// "Komut baytları" satırında RIP'teki komutun önekleri arasında adres boyu öneki (0x67) var mı; baytlar yoksa null.
+    /// 64 bit kipte 0x67 komutun adresi 32 bitle hesaplamasını ister. Önek yoksa adresin üst 32 bitinin düşmesi kodla
+    /// açıklanamaz (GitHub #903, beta.86 kaydı: <c>41 0F B6 44 04 10</c> = <c>movzx eax, byte [r12+rax+0x10]</c>).
+    /// </summary>
+    public static bool? AddressSizeOverride(string summary)
+    {
+        var match = InstructionPattern.Match(summary);
+        if (!match.Success) return null;
+        var bytes = match.Groups[1].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (bytes.Length == 0) return null;
+        foreach (var text in bytes)
+        {
+            if (!byte.TryParse(text, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var b)) return null;
+            if (b == 0x67) return true;
+            // Eski önekler (kilit, yineleme, kesim, işlenen boyu) ve REX geçilir; ilk başka bayt işlem kodudur.
+            if (b is 0xF0 or 0xF2 or 0xF3 or 0x2E or 0x36 or 0x3E or 0x26 or 0x64 or 0x65 or 0x66 || b is >= 0x40 and <= 0x4F) continue;
+            return false;
+        }
+        return null;
     }
 
     private static readonly Regex RegisterPattern = new(@"\b(R[A-Z0-9]{1,2})=0x([0-9A-Fa-f]{16})\b", RegexOptions.Compiled);
-    private static readonly Regex AccessPattern = new(@"^Erişim: (?:okuma|yazma|yürütme) 0x([0-9A-Fa-f]{16})\r?$", RegexOptions.Compiled | RegexOptions.Multiline);
+    // "Komut baytları (RIP-16 | RIP+32):" satırının altındaki satır; "|" sonrası RIP'ten başlayan baytlar.
+    private static readonly Regex InstructionPattern = new(@"^Komut baytları[^\n]*\n  [0-9A-Fa-f ]*\|((?: [0-9A-Fa-f]{2})+)", RegexOptions.Compiled | RegexOptions.Multiline);
+    private static readonly Regex AccessPattern =new(@"^Erişim: (?:okuma|yazma|yürütme) 0x([0-9A-Fa-f]{16})\r?$", RegexOptions.Compiled | RegexOptions.Multiline);
 
     /// <summary>Kullanıcı klasörünün yolu ve kullanıcı adı özetten çıkarılır (modül yolları C:\Users\ad\… ile başlar).</summary>
     public static string Sanitize(string text, string? userProfile, string? userName)

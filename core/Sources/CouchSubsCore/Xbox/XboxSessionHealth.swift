@@ -28,6 +28,15 @@ public struct XboxKeepalive {
         let text = message ?? ""
         return text.contains("HTTP 404") || text.contains("HTTP 410")
     }
+
+    /// Başarısız canlı tutma isteğinden sonra yayın bitirilmeli mi. Görüntü akarken (`pictureFlowing`) hayır: Xbox
+    /// yayını sürdürüyor, canlı tutma yanıtı (404 dahil) yanıltıcı olabiliyor. Android beta.85'te 404 ya da üç hata
+    /// görüntü akarken de yayını kapatıyordu; ilk istek bağlantıdan 30 sn sonra gittiği için Xbox'ta "uzaktan yürütme
+    /// başlatıldı / durduruldu" döngüsü oluyordu. Görüntü durmuşsa eskisi gibi: oturum Xbox hizmetinde yoksa (`gone`)
+    /// ya da hatalar `maxFailures`'a vardıysa (`exhausted`) biter (Android ve Windows'taki XboxKeepalive ile aynı).
+    public static func shouldEnd(gone: Bool, exhausted: Bool, pictureFlowing: Bool) -> Bool {
+        !pictureFlowing && (gone || exhausted)
+    }
 }
 
 /// Bir bağlantının neden bittiği: günlükte açıkça yazılır, yeniden bağlanırken ekrandaki kısa metni seçer. Windows'taki
@@ -237,19 +246,25 @@ public enum XboxPictureVerdict: Equatable, Sendable {
 /// kalınca bitiyordu: ICE `disconnected`da takılı kalan ya da kare göndermeyi bırakan yayında ana ekran "bağlı"
 /// diyor, altyazı donuyor ve bir daha gelmiyordu (X'te kullanıcı bildirimi, iPhone + Xbox Series S). Kare
 /// `warnAfterMs` gelmezse (ICE `disconnected` iken 1 sn) uyarı gösterilir; `stallAfterMs` gelmezse ya da ICE
-/// `failed` olursa oturum kapatılıp `XboxSessionMachine`in aralıklarıyla (5, 15, 45 sn) yeniden kurulur. Windows'taki
+/// `failed` olursa oturum kapatılıp `XboxSessionMachine`le (bir kez, 5 sn sonra) yeniden kurulur. İlk kareden sonraki
+/// `startupGraceMs` içinde yalnız ICE `failed` oturumu kapatır: yayının başında Xbox görüntüyü birkaç saniye
+/// bekletebiliyor (yükleme, "uzaktan yürütme başlatıldı" bildirimi); eskiden bu boşlukta oturum kapatılıp yeniden
+/// açılıyor, Xbox'ta başladı/durdu döngüsü oluyordu (Play, Android beta.85). Windows'taki
 /// CouchSubs.Shell/XboxPictureWatch ve Android'deki XboxPictureWatch ile birebir.
 public struct XboxPictureWatch {
     public static let warnAfterMs = 5000
     public static let stallAfterMs = 12_000
     /// ICE `disconnected` iken uyarı için yeterli boşluk (bağlantı takılınca kareler hemen kesilir).
     public static let iceWarnAfterMs = 1000
+    /// İlk kareden sonra bu süre içinde kare boşluğu oturumu kapatmaz (yalnız uyarı); ICE `failed` yine kapatır.
+    public static let startupGraceMs = 30_000
 
     /// RTCIceConnectionState'in bekçiyi ilgilendiren kısmı.
     public enum Ice: Sendable {
         case connected, disconnected, failed, other
     }
 
+    private var firstFrameMs: Int?
     private var lastFrameMs: Int?
     private var iceLostSinceMs: Int?
     private var iceFailed = false
@@ -258,7 +273,17 @@ public struct XboxPictureWatch {
 
     public init() {}
 
-    public mutating func frameArrived(atMs now: Int) { lastFrameMs = now }
+    public mutating func frameArrived(atMs now: Int) {
+        if firstFrameMs == nil { firstFrameMs = now }
+        lastFrameMs = now
+    }
+
+    /// Görüntü akıyor mu: son kare `warnAfterMs`'den yeni. Akan yayın canlı tutma hatasıyla kapatılmaz
+    /// (bkz. `XboxKeepalive.shouldEnd`).
+    public func isFlowing(atMs now: Int) -> Bool {
+        guard let last = lastFrameMs else { return false }
+        return now - last < Self.warnAfterMs
+    }
 
     public mutating func iceChanged(_ state: Ice, atMs now: Int) {
         switch state {
@@ -275,7 +300,8 @@ public struct XboxPictureWatch {
         let iceLost = iceLostSinceMs != nil
         if iceFailed { return .stalled("Xbox ICE bağlantısı koptu (failed)") }
         let gap = now - last
-        if gap >= Self.stallAfterMs {
+        let starting = firstFrameMs.map { now - $0 < Self.startupGraceMs } ?? false
+        if gap >= Self.stallAfterMs && !starting {
             return .stalled("Xbox'tan \(gap / 1000) sn'dir görüntü gelmiyor (\(iceLost ? "ICE disconnected" : "bağlantı açık görünüyor"))")
         }
         let trouble = gap >= Self.warnAfterMs || (iceLost && gap >= Self.iceWarnAfterMs)

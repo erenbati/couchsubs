@@ -63,18 +63,19 @@ final class GamePhoneTrackerTests: XCTestCase {
         XCTAssertNil(tracker.sample(image, now: 0).pose)
         XCTAssertFalse(tracker.sample(image, now: 250).sampled)
         XCTAssertNotNil(tracker.sample(image, now: 330).pose)
-        // Açık telefon tek karede bulunamayınca kapanmaz (çeviriler gidip gelmesin); art arda üçüncü ıskada kapanır.
+        // Açık telefon kısa süre bulunamayınca kapanmaz (panel kaybolup gelmesin); art arda dördüncü ıskada (~1,3 sn) kapanır.
         let missing = GamePhoneTestFrame.phone(camera: false)
         XCTAssertNotNil(tracker.sample(missing, now: 660).pose)
         XCTAssertNotNil(tracker.sample(image, now: 990).pose)
         XCTAssertNotNil(tracker.sample(missing, now: 1320).pose)
         XCTAssertNotNil(tracker.sample(missing, now: 1650).pose)
-        XCTAssertNil(tracker.sample(missing, now: 1980).pose)
+        XCTAssertNotNil(tracker.sample(missing, now: 1980).pose)
+        XCTAssertNil(tracker.sample(missing, now: 2310).pose)
         // Kapandıktan sonra yeniden açılış yine iki gözlem ister.
-        XCTAssertNil(tracker.sample(image, now: 2310).pose)
-        XCTAssertNotNil(tracker.sample(image, now: 2640).pose)
+        XCTAssertNil(tracker.sample(image, now: 2640).pose)
+        XCTAssertNotNil(tracker.sample(image, now: 2970).pose)
         tracker.reset()
-        XCTAssertNil(tracker.sample(image, now: 2641).pose)
+        XCTAssertNil(tracker.sample(image, now: 2971).pose)
     }
 
     func testMovingHandsetRequiresNewConfirmationAndSubtitleBarAloneIsIgnored() {

@@ -64,6 +64,27 @@ test("build-known still emits actual manual keys", () => {
   }
 });
 
+test("build-known rejects invalid manual translations rather than suppressing automatic replacements", () => {
+  for (const [label, entries, segments] of [
+    ["numeric entry", { "0000000000000001": 42 }, {}],
+    ["blank entry", { "0000000000000001": "  " }, {}],
+    ["null segment", { "0000000000000001": "Valid" }, { "0000000000000002": null }],
+    ["format-2 fragments without a full line", {}, { "0000000000000002": "Orphan fragment" }],
+  ]) {
+    const dir = mkdtempSync(join(tmpdir(), "couchsubs-known-bad-value-"));
+    try {
+      writeFileSync(join(dir, "manual.json.gz"), gzipSync(JSON.stringify({
+        format: 2, id: "manual", entries, segments,
+      })));
+      assert.throws(() => execFileSync(process.execPath, [script, dir], {
+        stdio: ["ignore", "pipe", "pipe"],
+      }), undefined, label + " should not suppress automatic translations");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
 test("build-known rejects non-64-bit manual keys rather than silently truncating them", () => {
   for (const invalid of ["10000000000000001", "1", "ghijklmnopqrstuv"]) {
     const dir = mkdtempSync(join(tmpdir(), "couchsubs-known-invalid-"));

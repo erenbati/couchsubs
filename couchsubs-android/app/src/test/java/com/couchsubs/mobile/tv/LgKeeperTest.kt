@@ -101,6 +101,45 @@ class LgKeeperTest {
         assertEquals(1, second.launches)
     }
 
+    /**
+     * #1055 (LG OLED C4, beta.86): her yeni bağlantı ve alındı kesintisi ("Otomatik açmayı dene" yolu) açık ve bağlı
+     * uygulamaya da açma komutu gönderiyordu; webOS HDMI görüntüsünü yeniden kuruyor, ekran kararıyordu. 30 dk boyunca
+     * bağlantı 20 sn'de bir kopup her dakika yeniden açma istense de açık ve bağlı uygulamaya tek açma komutu gitmez.
+     */
+    @Test fun openConnectedAppGetsNoLaunchFor30MinutesEvenWhenSsapKeepsReconnecting() {
+        var clock = 0L
+        var launches = 0
+        var second = 0
+        var retry = false
+        fun control() = object : LgControl {
+            override fun foregroundAppId(): String {
+                if (second % 20 == 0) throw java.io.IOException("koptu")
+                return LgKeeperRule.APP_ID
+            }
+            override fun launch() { launches++ }
+            override fun close() {}
+        }
+        LgKeeper.keep(open = { control() }, active = { second < 30 * 60 }, consolePort = { 2 }, rule = LgKeeperRule { clock },
+            sleep = { clock += it; second = (clock / 1000).toInt(); if (second % 60 == 30) retry = true },
+            retry = { retry.also { retry = false } }, connected = { true })
+        assertEquals(0, launches)
+    }
+
+    /** Uygulama bağlı değil (yanıtsız): yeniden kurulan bağlantıda geri çekilerek açılır (30 sn, 1, 2, 5 dk), her kopuşta değil. */
+    @Test fun unresponsiveAppIsReopenedWithBackoff() {
+        var clock = 0L
+        var launches = 0
+        fun control() = object : LgControl {
+            override fun foregroundAppId(): String = throw java.io.IOException("koptu")
+            override fun launch() { launches++ }
+            override fun close() {}
+        }
+        LgKeeper.keep(open = { control() }, active = { clock < 10 * 60_000 }, consolePort = { null }, rule = LgKeeperRule { clock },
+            sleep = { clock += it }, connected = { false })
+        // İlk bağlantı açmaz (uygulama launch() ile açıldı); 10 dk'da: hemen, +30 sn, +60 sn, +120 sn, sonra 5 dk'da bir.
+        assertTrue("açma sayısı $launches", launches in 4..6)
+    }
+
     @Test fun serverParsesTheReportedHdmiInput() {
         assertEquals(4, SubtitleServer.hdmiPort("4"))
         assertNull(SubtitleServer.hdmiPort("9"))

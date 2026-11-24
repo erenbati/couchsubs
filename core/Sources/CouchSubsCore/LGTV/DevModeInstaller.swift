@@ -44,6 +44,13 @@ public enum DevModeError: Error, Equatable {
     /// TV'de CouchSubs'ın kimliğiyle (Android paket adı, LG uygulama kimliği, Samsung paket kimliği) başka bir uygulama
     /// kurulu; kaldırıp CouchSubs'ı kurmak için kullanıcı onayı gerekir.
     case foreignApp
+    /// LG: SSH (9922) bağlanmıyor ama Key Server (9991) yanıt veriyor; geliştirici modu açık görünüyor, TV kurulum
+    /// bağlantısını reddediyor (Dev Mode Status açıldıktan sonra TV yeniden başlamamış ya da webOS Hub'lı TV'nin yazılımında
+    /// bu kapı kapalı; #200, #1116). iPhone/Android'deki LGUnreachableReason.restartNeeded ile aynı durum ve metin.
+    case devConnectionClosed
+    /// Kayıtlı adreste TV hiç yanıt vermiyor (kapılar zaman aşımında, adreste cihaz yok) ve TV ağda yeniden aranınca da
+    /// bulunamadı (`TVReach`). "Geliştirici modu kapalı" ya da "Key Server kapalı" denmez: TV'de ikisi açık olabilir.
+    case tvNotResponding
 }
 
 /// Kurulum hatası ve TV'nin verdiği sebep (luna yanıtındaki errorText/reason ya da komut çıktısı).
@@ -76,12 +83,18 @@ public struct DevModeInstaller: Sendable {
     private let pollInterval: Duration
     private let installTimeout: Duration
     private let verifyTimeout: Duration?
+    /// SSH bağlanmayınca Key Server'ın (9991) yanıt verip vermediğine bakar (denemelerde ağa çıkılmaz).
+    private let keyServerOpen: @Sendable (String) async -> Bool
 
     /// - Parameters:
     ///   - installTimeout: TV'nin kurulum sonucunu (installed ya da hata) bekleme süresi.
     ///   - verifyTimeout: Sonuçtan sonra sürümün appinfo.json'da görünmesini bekleme süresi (nil: 30 sn, sonuç yoksa 60 sn).
     public init(host: String, keyFile: URL, runner: CommandRunning,
-                pollInterval: Duration = .seconds(2), installTimeout: Duration = .seconds(180), verifyTimeout: Duration? = nil) {
+                pollInterval: Duration = .seconds(2), installTimeout: Duration = .seconds(180), verifyTimeout: Duration? = nil,
+                keyServerOpen: @escaping @Sendable (String) async -> Bool = { host in
+                    await DevModeInstaller.isPortOpen(host: host, port: DevModeInstaller.keyServerPort, timeout: .milliseconds(1500))
+                }) {
+        self.keyServerOpen = keyServerOpen
         self.host = host
         self.keyFile = keyFile
         self.runner = runner
@@ -213,6 +226,20 @@ public struct DevModeInstaller: Sendable {
         "/usr/bin/luna-send-pub -n 1 'luna://com.webos.appInstallService/dev/remove' '{\"id\":\"com.couchsubs.tv\",\"subscribe\":false}'; " +
         "i=0; while [ -f \(appInfoPath) ] && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done"
 
+    /// TV'de açık com.couchsubs.tv'yi kapatır (ares-launch --close'un luna çağrısı) ve webOS'un süreci bırakması için kısa
+    /// bekler. beta.89 (LG, Mac): 0.9.81'den 0.9.84'e güncellenen TV'de appinfo.json 0.9.84 diyordu, açık uygulama ise
+    /// 0.9.81'in kodunu çalıştırmayı sürdürüyordu: kurulumdan sonra uygulama kapatılmıyordu, açma komutu açık uygulamayı
+    /// yalnız öne getiriyor (webOSRelaunch), sayfa diskten yeniden okunmuyordu. Kurulumdan sonra ve çalışan sürüm kurulu
+    /// sürümden eskiyse uygulama önce kapatılır, sonra açılır. iPhone, Android ve Windows'taki komutla aynı.
+    public static let closeCommand =
+        "/usr/bin/luna-send-pub -n 1 'luna://com.webos.applicationManager/closeByAppId' '{\"id\":\"com.couchsubs.tv\"}'; sleep 2"
+
+    /// Uygulamayı kapatır; açık değilse ya da TV reddederse kurulum yine başarılıdır. TV'nin yanıtını döner (günlük için).
+    @discardableResult
+    public func closeApp() async -> String {
+        ((try? await ssh(Self.closeCommand).output) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// - Returns: TV'nin yanıtı (günlük için).
     @discardableResult
     public func removeApp() async throws -> String {
@@ -247,6 +274,8 @@ public struct DevModeInstaller: Sendable {
         while true {
             if try await installedVersion() == version {
                 _ = try? await ssh("rm -f '\(remote)'")
+                // Açık (eski) uygulama kapatılır; sonra açılan uygulama yeni sürümü diskten yükler (bkz. closeCommand).
+                await closeApp()
                 return
             }
             if ContinuousClock.now >= end { break }
@@ -339,6 +368,13 @@ public struct DevModeInstaller: Sendable {
         }
     }
 
+    /// SSH (9922) bağlanmadığında atılan hata: Key Server (9991) yanıt veriyorsa `.devConnectionClosed` (TV'nin sebebiyle).
+    static func unreachableFailure(keyServerOpen: Bool, output: String) -> Error {
+        guard keyServerOpen else { return DevModeError.unreachable }
+        let detail = short(output)
+        return detail.isEmpty ? DevModeError.devConnectionClosed : DevModeFailure(.devConnectionClosed, detail: detail)
+    }
+
     private static func short(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.count <= 500 ? trimmed : String(trimmed.prefix(500)) + "…"
@@ -411,14 +447,16 @@ public struct DevModeInstaller: Sendable {
         if result.status == 255 {
             if result.output.contains("Permission denied") { throw DevModeError.keyRefused }
             if Self.isNegotiationProblem(result.output) { throw DevModeFailure(.unreachable, detail: Self.short(result.output)) }
-            throw DevModeError.unreachable
+            // SSH kapalı ama Key Server açıksa sorun ağ değil: "TV yanıt vermedi" yerine ne yapılacağı söylenir.
+            let keyServer = await keyServerOpen(host)
+            throw Self.unreachableFailure(keyServerOpen: keyServer, output: result.output)
         }
         return result
     }
 }
 
 /// Bir sonucu yalnız bir kez bildirir.
-private final class Once: @unchecked Sendable {
+final class Once: @unchecked Sendable {
     private let lock = NSLock()
     private var action: ((Bool) -> Void)?
     init(_ action: @escaping (Bool) -> Void) { self.action = action }

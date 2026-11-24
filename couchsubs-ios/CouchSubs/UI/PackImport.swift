@@ -51,7 +51,7 @@ struct ImportedPacksSection: View {
             }
         }
         if let error { MobileNote(text: error) }
-        Button("Import pack…") {
+        Button("Import Pack…") {
             error = nil
             choosing = true
         }
@@ -83,7 +83,7 @@ struct ImportedPacksSection: View {
                     defer { if access { url.stopAccessingSecurityScopedResource() } }
                     let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                     guard size <= GamePackImporter.maxFileBytes else { throw GamePackImporter.ImportError.fileTooLarge }
-                    let data = try Data(contentsOf: url)
+                    let data = try GamePackImporter.read(fileAt: url)
                     let preview = try GamePackImporter.parse(data, fileName: url.lastPathComponent)
                     return PackImportSelection(fileName: url.lastPathComponent, preview: preview)
                 }.value
@@ -137,6 +137,8 @@ private struct PackImportSheet: View {
     @State private var installing = false
     @State private var confirmReplacement = false
     @State private var installError: String?
+    /// Perde başarı anı: paket kuruldu (ışın + yaylı tik + başarı titreşimi), kısa süre sonra sayfa kendiliğinden kapanır.
+    @State private var installed = false
 
     init(selection: PackImportSelection) {
         self.selection = selection
@@ -149,6 +151,51 @@ private struct PackImportSheet: View {
     }
 
     var body: some View {
+        Group {
+            if installed { success } else { form }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Mobile.Space.screen)
+        .fittedSheet()
+        .sheetBackground(Mobile.Palette.surface)
+        .interactiveDismissDisabled(installing)
+        .alert("Replace game pack?", isPresented: $confirmReplacement) {
+            Button("Cancel", role: .cancel) {}
+            Button("Replace pack", role: .destructive) { install(replacing: true) }
+        } message: {
+            Text("A game pack with this ID already exists. Replacing it will overwrite the installed pack.")
+        }
+    }
+
+    /// Paket kuruldu: eğik kapak + başarı anı, oyunun adı, "Kurulu" ve satır sayısı; tek düğme.
+    private var success: some View {
+        VStack(spacing: Mobile.Space.gap) {
+            ZStack(alignment: .bottomTrailing) {
+                DSCelebration(size: 56)
+                DSCoverArt(seed: title)
+                    .frame(width: 54, height: 72)
+                    .clipShape(RoundedRectangle(cornerRadius: DS.radius("chip"), style: .continuous))
+                    .rotationEffect(.degrees(-8))
+                    .offset(x: -44, y: -6)
+                    .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+                    .accessibilityHidden(true)
+            }
+            Text(verbatim: title).font(Font.dsH3).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: Mobile.Space.inline) {
+                DSStatusChip("Installed", tone: .ok, icon: "checkmark")
+                DSStatusChip(LocalizedStringKey(PacksScreen.linesText(selection.preview.entries.count)), tone: .amber, dot: false)
+            }
+            Button("Done") { dismiss() }.buttonStyle(.mobilePrimary)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .contain)
+        .task {
+            try? await Task.sleep(nanoseconds: 2_400_000_000)
+            dismiss()
+        }
+    }
+
+    private var form: some View {
         VStack(alignment: .leading, spacing: Mobile.Space.gap) {
             Text("Import game pack").font(Mobile.TypeScale.title)
             VStack(alignment: .leading, spacing: Mobile.Space.hair) {
@@ -171,7 +218,7 @@ private struct PackImportSheet: View {
                 install(replacing: false)
             } label: {
                 HStack(spacing: Mobile.Space.inline) {
-                    if installing { ProgressView() }
+                    if installing { DSBarsLoader(color: .dsOnAmber) }
                     Text("Install pack")
                 }
             }
@@ -180,17 +227,6 @@ private struct PackImportSheet: View {
             Button("Cancel") { dismiss() }
                 .buttonStyle(.mobileGhost)
                 .disabled(installing)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Mobile.Space.screen)
-        .fittedSheet()
-        .sheetBackground(Mobile.Palette.surface)
-        .interactiveDismissDisabled(installing)
-        .alert("Replace game pack?", isPresented: $confirmReplacement) {
-            Button("Cancel", role: .cancel) {}
-            Button("Replace pack", role: .destructive) { install(replacing: true) }
-        } message: {
-            Text("A game pack with this ID already exists. Replacing it will overwrite the installed pack.")
         }
     }
 
@@ -218,10 +254,11 @@ private struct PackImportSheet: View {
                     packs.reload()
                 }.value
                 model.reloadPackList()
-                dismiss()
+                withAnimation(.easeOut(duration: 0.2)) { installed = true }
             } catch GamePackImporter.ImportError.destinationExists {
                 confirmReplacement = true
             } catch {
+                Haptics.error()
                 installError = String(localized: "The game pack could not be installed.")
             }
         }

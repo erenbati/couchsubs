@@ -130,7 +130,8 @@ public sealed partial class AndroidTvInstaller(string host, string keyDirectory,
             installed = null;
             dumpsys = "";
         }
-        if (installed is not null && !Versions.IsNewer(version, installed))
+        // Unknown signature must not make another app with this package name appear up to date.
+        if (installed is not null && IsOurs(dumpsys) && !Versions.IsNewer(version, installed))
         {
             // Bu izni vermeyen eski bir CouchSubs'ın kurduğu güncel uygulama da izni alsın.
             await GrantOverlayAsync(adb, cancellationToken);

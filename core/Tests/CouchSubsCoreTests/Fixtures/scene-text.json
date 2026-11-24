@@ -860,6 +860,590 @@
     }
    ],
    "subtitle": "Follow the plane"
+  },
+  {
+   "name": "GTA 6 iki satır okunan plaka altyazının yerinde çevrilmez (GitHub #1052)",
+   "before": [
+    {
+     "text": "We need to get out of here before they come back.",
+     "box": [
+      0.2222,
+      0.6857,
+      0.7778,
+      0.7714
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "lines": [
+    {
+     "text": "AKB",
+     "box": [
+      0.45,
+      0.62,
+      0.55,
+      0.7
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "FLORIANA",
+     "box": [
+      0.4,
+      0.72,
+      0.6,
+      0.8
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": ""
+  },
+  {
+   "name": "GTA 6 üç satır okunan plaka çevrilmez (GitHub #1052)",
+   "lines": [
+    {
+     "text": "DISCOVER 28",
+     "box": [
+      0.37,
+      0.6,
+      0.63,
+      0.68
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "AKB",
+     "box": [
+      0.45,
+      0.7,
+      0.55,
+      0.78
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "GLORIANA.",
+     "box": [
+      0.39,
+      0.8,
+      0.61,
+      0.88
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": ""
+  },
+  {
+   "name": "GTA 6 dört satır okunan plaka çevrilmez (GitHub #1052)",
+   "before": [
+    {
+     "text": "We need to get out of here before they come back.",
+     "box": [
+      0.2222,
+      0.6857,
+      0.7778,
+      0.7714
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "lines": [
+    {
+     "text": "C118 DISCOVER 76",
+     "box": [
+      0.32,
+      0.5,
+      0.68,
+      0.58
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "AKB",
+     "box": [
+      0.45,
+      0.6,
+      0.55,
+      0.68
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "GLORIANA",
+     "box": [
+      0.4,
+      0.7,
+      0.6,
+      0.78
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "DISCOVER 28",
+     "box": [
+      0.37,
+      0.8,
+      0.63,
+      0.88
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": ""
+  },
+  {
+   "name": "GTA 6 plaka, son satırında yazı tanıma ünlemi: çevrilmez (GitHub #1052)",
+   "before": [
+    {
+     "text": "We need to get out of here before they come back.",
+     "box": [
+      0.2222,
+      0.6857,
+      0.7778,
+      0.7714
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "lines": [
+    {
+     "text": "AK8",
+     "box": [
+      0.45,
+      0.62,
+      0.55,
+      0.7
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "FLORIA!",
+     "box": [
+      0.41,
+      0.72,
+      0.59,
+      0.8
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": ""
+  },
+  {
+   "name": "GTA 6 harfsiz plaka numarası altyazının yerinde çevrilmez (GitHub #1052)",
+   "before": [
+    {
+     "text": "We need to get out of here before they come back.",
+     "box": [
+      0.2222,
+      0.6857,
+      0.7778,
+      0.7714
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "lines": [
+    {
+     "text": "82403610.",
+     "box": [
+      0.39,
+      0.68,
+      0.61,
+      0.76
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": ""
+  },
+  {
+   "name": "GTA 6 yol tabelası çevrilmez (GitHub #1052)",
+   "lines": [
+    {
+     "text": "ROAD",
+     "box": [
+      0.46,
+      0.55,
+      0.54,
+      0.63
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "AHEAD",
+     "box": [
+      0.45,
+      0.65,
+      0.55,
+      0.73
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "CLOSED",
+     "box": [
+      0.445,
+      0.75,
+      0.555,
+      0.83
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": ""
+  },
+  {
+   "name": "GTA 6 konuşmanın üstündeki plaka satırı ayrılır (GitHub #1052)",
+   "before": [
+    {
+     "text": "We need to get out of here before they come back.",
+     "box": [
+      0.2222,
+      0.6857,
+      0.7778,
+      0.7714
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "lines": [
+    {
+     "text": "FLORIANA",
+     "box": [
+      0.4,
+      0.6,
+      0.6,
+      0.68
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "Dunk: Yo. How you know that was me?",
+     "box": [
+      0.2,
+      0.7,
+      0.8,
+      0.78
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": "Dunk: Yo. How you know that was me?"
+  },
+  {
+   "name": "GTA 6 konuşmanın üstündeki rakamlı plaka ayrılır (GitHub #1052)",
+   "before": [
+    {
+     "text": "We need to get out of here before they come back.",
+     "box": [
+      0.2222,
+      0.6857,
+      0.7778,
+      0.7714
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "lines": [
+    {
+     "text": "AKB 51",
+     "box": [
+      0.42,
+      0.6,
+      0.58,
+      0.68
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "Dunk: Yo. How you know that was me?",
+     "box": [
+      0.2,
+      0.7,
+      0.8,
+      0.78
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": "Dunk: Yo. How you know that was me?"
+  },
+  {
+   "name": "GTA 6 konuşmanın üstündeki kısa plaka ayrılır (GitHub #1052)",
+   "lines": [
+    {
+     "text": "AK8",
+     "box": [
+      0.45,
+      0.6,
+      0.55,
+      0.68
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "Driver: Holy fuck!",
+     "box": [
+      0.3,
+      0.7,
+      0.7,
+      0.78
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": "Driver: Holy fuck!"
+  },
+  {
+   "name": "GTA 6 konuşmanın üstündeki plaka ünlemli konuşmadan ayrılır (GitHub #1019)",
+   "before": [
+    {
+     "text": "We need to get out of here before they come back.",
+     "box": [
+      0.2222,
+      0.6857,
+      0.7778,
+      0.7714
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "lines": [
+    {
+     "text": "DISCOVER 78",
+     "box": [
+      0.37,
+      0.6,
+      0.63,
+      0.68
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "Local: Woo! C'mon! C'mon!",
+     "box": [
+      0.23,
+      0.7,
+      0.77,
+      0.78
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": "Local: Woo! C'mon! C'mon!"
+  },
+  {
+   "name": "GTA 6 konuşmanın altındaki rakamlı plaka ayrılır (GitHub #1052)",
+   "before": [
+    {
+     "text": "We need to get out of here before they come back.",
+     "box": [
+      0.2222,
+      0.6857,
+      0.7778,
+      0.7714
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "lines": [
+    {
+     "text": "Dunk: Yo. How you know that was me?",
+     "box": [
+      0.2,
+      0.6,
+      0.8,
+      0.68
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "AKB 51",
+     "box": [
+      0.42,
+      0.7,
+      0.58,
+      0.78
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": "Dunk: Yo. How you know that was me?"
+  },
+  {
+   "name": "büyük harfli kısa bağırma altyazısı iki satırda kalır",
+   "lines": [
+    {
+     "text": "NO!",
+     "box": [
+      0.45,
+      0.66,
+      0.55,
+      0.74
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "GET DOWN!",
+     "box": [
+      0.39,
+      0.76,
+      0.61,
+      0.84
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": "NO!\nGET DOWN!"
+  },
+  {
+   "name": "büyük harfli kısa bağırma altyazısı altyazının yerinde kalır",
+   "before": [
+    {
+     "text": "We need to get out of here before they come back.",
+     "box": [
+      0.2222,
+      0.6857,
+      0.7778,
+      0.7714
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "lines": [
+    {
+     "text": "NO!",
+     "box": [
+      0.45,
+      0.68,
+      0.55,
+      0.76
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": "NO!"
+  },
+  {
+   "name": "büyük harfli konuşan adlı altyazı kalır",
+   "lines": [
+    {
+     "text": "LUCIA: GET DOWN!",
+     "box": [
+      0.32,
+      0.68,
+      0.68,
+      0.76
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": "LUCIA: GET DOWN!"
+  },
+  {
+   "name": "büyük harfli konuşan adlı iki satırlık altyazı bölünmez",
+   "before": [
+    {
+     "text": "We need to get out of here before they come back.",
+     "box": [
+      0.2222,
+      0.6857,
+      0.7778,
+      0.7714
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "lines": [
+    {
+     "text": "LUCIA: GET",
+     "box": [
+      0.38,
+      0.62,
+      0.62,
+      0.7
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "DOWN!",
+     "box": [
+      0.43,
+      0.72,
+      0.57,
+      0.8
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": "LUCIA: GET\nDOWN!"
+  },
+  {
+   "name": "tümü büyük harfli iki satırlık altyazı kalır",
+   "lines": [
+    {
+     "text": "I TOLD YOU",
+     "box": [
+      0.38,
+      0.62,
+      0.62,
+      0.7
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "NOT TO GO THERE.",
+     "box": [
+      0.32,
+      0.72,
+      0.68,
+      0.8
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": "I TOLD YOU\nNOT TO GO THERE."
+  },
+  {
+   "name": "konuşmanın büyük harfli devamı bölünmez",
+   "before": [
+    {
+     "text": "We need to get out of here before they come back.",
+     "box": [
+      0.2222,
+      0.6857,
+      0.7778,
+      0.7714
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "lines": [
+    {
+     "text": "Jason: I'm with the",
+     "box": [
+      0.29,
+      0.62,
+      0.71,
+      0.7
+     ],
+     "confidence": 1.0
+    },
+    {
+     "text": "FBI.",
+     "box": [
+      0.44,
+      0.72,
+      0.56,
+      0.8
+     ],
+     "confidence": 1.0
+    }
+   ],
+   "subtitle": "Jason: I'm with the\nFBI."
   }
  ]
 }

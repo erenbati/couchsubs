@@ -216,6 +216,10 @@ public final class SamsungAppKnowledge: @unchecked Sendable {
     private let defaults: UserDefaults?
     private var hosts: Set<String>
     private var probed = false
+    /// Listeye bakılmadan DEEP_LINK gönderilen ama TV uygulaması o günden beri bağlanmayan TV'ler (yalnız bellekte).
+    private var unconfirmed: Set<String> = []
+    /// Bayat bilgi günlüğe yazıldı (bekçi her 30 sn'de denediği için bir kez).
+    private var staleReported: Set<String> = []
 
     /// `defaults` nil ise bilgi yalnız bellekte tutulur (testler).
     init(defaults: UserDefaults? = .standard) {
@@ -228,15 +232,23 @@ public final class SamsungAppKnowledge: @unchecked Sendable {
         return text
     }
 
+    /// İki adres aynı TV mi (boşluk ve büyük/küçük harf gözetmeden; bilgi bu biçimde saklanır).
+    public static func sameHost(_ a: String?, _ b: String?) -> Bool {
+        guard let a = normalized(a), let b = normalized(b) else { return false }
+        return a == b
+    }
+
     public func isKnown(host: String?) -> Bool {
         guard let host = Self.normalized(host) else { return false }
         return lock.withLock { hosts.contains(host) }
     }
 
-    /// TV uygulaması bu TV'de kurulu: bağlandı ya da kuruldu.
+    /// TV uygulaması bu TV'de kurulu: bağlandı ya da kuruldu. Listesiz açma hakkı da yenilenir (`allowsDirect`).
     public func mark(host: String?) {
         guard let host = Self.normalized(host) else { return }
         lock.withLock {
+            unconfirmed.remove(host)
+            staleReported.remove(host)
             guard hosts.insert(host).inserted else { return }
             defaults?.set(hosts.sorted(), forKey: Self.storeKey)
         }
@@ -254,9 +266,62 @@ public final class SamsungAppKnowledge: @unchecked Sendable {
     public func forget(host: String?) {
         guard let host = Self.normalized(host) else { return }
         lock.withLock {
+            unconfirmed.remove(host)
+            staleReported.remove(host)
             guard hosts.remove(host) != nil else { return }
             defaults?.set(hosts.sorted(), forKey: Self.storeKey)
         }
+    }
+
+    /// TV, CouchSubs'ın artık kurulu olmadığını söyledi; uygulama katmanı kendi "kurulu" kaydını siler (Mac'te
+    /// tvAppVersion, iPhone'da installedTVApp). Bağlanmazsa yalnız bu bilgi silinir.
+    public static var onMissing: (@Sendable (String) -> Void)?
+
+    /// Kurulu olduğu bilinen TV'de son listesiz açmadan sonra uygulama bağlanmadı ve TV'nin kurulu uygulama listesi de
+    /// CouchSubs yok diyor: uygulama TV'den silinmiş (güncelleme sırasında ya da elle, #1158). "Kurulu" bilgisi kalınca
+    /// telefon/bilgisayar uygulamayı kurulu gösteriyor, kurulum adımı hiç önerilmiyordu. Bilgi silinir, `onMissing`
+    /// çağrılır; true: bilgi silindi. Windows ve Android ile aynı.
+    @discardableResult
+    public func appMissing(host: String?) -> Bool {
+        guard let key = Self.normalized(host), isKnown(host: key) else { return false }
+        forget(host: key)
+        let line = Self.missingLine(host: key)
+        SubtitleLog.write(line)
+        Self.installLog?(line)
+        Self.onMissing?(key)
+        return true
+    }
+
+    /// Listede "CouchSubs yok" kurulu bilgisini siler mi: yalnız liste okunduysa ve kesin "yok" dediyse (yanıtsız liste,
+    /// zaman aşımı silmez). Windows ve Android ile aynı.
+    static func forgetsOnList(_ presence: SamsungAppPresence?) -> Bool { presence == .missing }
+
+    static func missingLine(host: String) -> String {
+        "Samsung \(host): TV'nin kurulu uygulama listesinde CouchSubs yok; TV uygulaması silinmiş, \"kurulu\" bilgisi silindi (kurulum adımı önerilecek)."
+    }
+
+    /// Bilinen TV'de listeye bakmadan DEEP_LINK gönderilebilir mi. Hak, TV uygulaması her bağlandığında (`mark`) bir kez
+    /// verilir: bir önceki listesiz DEEP_LINK'ten sonra uygulama bağlanmadıysa bilgi bayat sayılır ve TV'nin kurulu
+    /// uygulama listesine bakılır. Uygulama TV'den silinince (Smart Hub sıfırlaması, kaldırılıp yeniden kurulamayan
+    /// güncelleme, TV yazılım güncellemesi) "kurulu" bilgisi kalıyordu; bekçi her 30 sn'de DEEP_LINK gönderiyor, Smart Hub
+    /// uygulamayı mağazada arıyor, TV her seferinde "Sunucu bakım altında (1544007)" diyordu (22 Kas). Windows ve Android ile aynı.
+    func allowsDirect(host: String?) -> Bool {
+        guard let host = Self.normalized(host) else { return false }
+        let (allowed, firstStale) = lock.withLock { () -> (Bool, Bool) in
+            guard hosts.contains(host) else { return (false, false) }
+            if unconfirmed.insert(host).inserted { return (true, false) }
+            return (false, staleReported.insert(host).inserted)
+        }
+        if firstStale {
+            let line = Self.unconfirmedLine(host: host)
+            SubtitleLog.write(line)
+            Self.installLog?(line)
+        }
+        return allowed
+    }
+
+    static func unconfirmedLine(host: String) -> String {
+        "Samsung \(host): son doğrudan açma komutundan sonra TV uygulaması bağlanmadı; kurulu uygulama listesine bakılıyor (kurulu olmayan uygulamaya DEEP_LINK \"Sunucu bakım altında\" uyarısı çıkarır)."
     }
 
     /// Sahadan öğrenmek için yapılan liste sorgusu çalışma boyunca bir kez yapılır.
@@ -387,7 +452,8 @@ public final class SamsungClient: NSObject, TVControlling, URLSessionDelegate, @
         // listenin geliştirici moduyla kurulan uygulamayı içerdiği gerçek TV'de doğrulanmadı (beta.63'te içermeyen TV'de
         // bekçi uygulamayı hiç açmıyordu).
         let host = url?.host
-        let known = knownInstalled ?? SamsungAppKnowledge.shared.isKnown(host: host)
+        // Bilinen TV'de listesiz açma, uygulama her bağlandığında bir kez: bayat bilgi "Sunucu bakım altında" çıkarmasın.
+        let known = knownInstalled ?? SamsungAppKnowledge.shared.allowsDirect(host: host)
         if !SamsungAppKnowledge.checksList(knownInstalled: known) {
             let direct = SamsungMessages.launch(appId: appId, params: params, actionType: "DEEP_LINK")
             try await socket.send(.string(String(decoding: direct, as: UTF8.self)))
@@ -395,6 +461,8 @@ public final class SamsungClient: NSObject, TVControlling, URLSessionDelegate, @
             return
         }
         let presence = await installedApp(appId: appId, socket: socket)
+        // Bilinen TV'de bayat bilgi yüzünden listeye bakıldıysa ve liste "yok" diyorsa uygulama silinmiş (#1158).
+        if knownInstalled == nil, SamsungAppKnowledge.forgetsOnList(presence) { SamsungAppKnowledge.shared.appMissing(host: host) }
         guard let action = SamsungAppKnowledge.action(knownInstalled: false, presence: presence) else {
             SamsungAppKnowledge.shared.reportNotSent(host: host, presence: presence)
             throw SamsungError.notInstalled

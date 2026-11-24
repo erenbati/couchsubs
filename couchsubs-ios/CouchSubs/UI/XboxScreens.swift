@@ -74,30 +74,50 @@ struct XboxLoginScreen: View {
         } content: {
             ScreenTitle(caption: "Setup · Step 1/3", title: "Sign in with Microsoft",
                         message: "Sign in with the Microsoft account you use on your Xbox. The phone watches your Xbox home stream; your game keeps running.")
-            MobilePill(text: "Beta", kind: .accent)
-            if model.xboxSignedIn && code == nil {
-                MobilePill(text: String(localized: "Signed in"), kind: .ok, dot: true)
-            }
-            if code == nil && !working {
-                Text("Tap the button to get a code. The Microsoft sign-in page doesn't open inside the app: you enter the code at microsoft.com/link in your browser.")
-                    .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+            // Kompakt hesap kartı: yuvarlak Xbox simgesi, hesap ve durum noktası (PlayStation kartıyla aynı düzen).
+            Tile(spacing: Mobile.Space.gap) {
+                HStack(spacing: Mobile.Space.gap) {
+                    Image(systemName: "xbox.logo")
+                        .font(.system(.body, weight: .medium))
+                        .frame(width: 40, height: 40)
+                        .background(Mobile.Palette.surface2, in: Circle())
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: Mobile.Space.micro) {
+                        Text(verbatim: "Microsoft").font(Mobile.TypeScale.headline)
+                        HStack(spacing: Mobile.Space.titleToBody) {
+                            Circle().fill(model.xboxSignedIn ? Mobile.Palette.success : Mobile.Palette.tertiary).frame(width: 8, height: 8)
+                            Text(model.xboxSignedIn ? "Signed In" : "Not Signed In").font(Mobile.TypeScale.caption)
+                                .foregroundStyle(model.xboxSignedIn ? Mobile.Palette.successText : Mobile.Palette.secondary)
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                    Spacer(minLength: Mobile.Space.inline)
+                    MobilePill(text: "Beta", kind: .accent)
+                }
+                if code == nil && !working {
+                    RowDivider()
+                    Text("Tap the button to get a code. The Microsoft sign-in page doesn't open inside the app: you enter the code at microsoft.com/link in your browser.")
+                        .dsMuted()
+                }
             }
             if let code {
                 Tile {
                     Text("Your code (tap to copy):").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
                     Button { copy(code) } label: {
-                        Text(verbatim: code.userCode).font(Mobile.TypeScale.display).foregroundStyle(Mobile.Palette.accent)
+                        Text(verbatim: code.userCode).font(Mobile.TypeScale.display).foregroundStyle(Mobile.Palette.accentText)
                     }
                     .buttonStyle(.plain)
                     .accessibilityHint(Text("Copy the code"))
                     Button { open(code) } label: {
                         Text(verbatim: code.verificationURI.replacingOccurrences(of: "https://", with: ""))
-                            .font(Mobile.TypeScale.headline).foregroundStyle(Mobile.Palette.accent).underline()
+                            .font(Mobile.TypeScale.headline).foregroundStyle(Mobile.Palette.accentText).underline()
                     }
                     .buttonStyle(.plain)
                     .accessibilityHint(Text("Open the Microsoft page"))
-                    Text("1. The code is copied and microsoft.com/link is open in your browser. If it didn't open, tap the link above.\n2. Paste the code, sign in with the Microsoft account you use on your Xbox and allow access.\n3. Come back to CouchSubs; sign-in finishes on its own.")
-                        .font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                    ForEach(Array(String(localized: "1. The code is copied and microsoft.com/link is open in your browser. If it didn't open, tap the link above.\n2. Paste the code, sign in with the Microsoft account you use on your Xbox and allow access.\n3. Come back to CouchSubs; sign-in finishes on its own.")
+                        .components(separatedBy: "\n").enumerated()), id: \.offset) { index, line in
+                        NumberedStep(text: line, fallback: index + 1)
+                    }
                     if copied { Text("Code copied").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.success) }
                 }
                 if working {
@@ -110,7 +130,7 @@ struct XboxLoginScreen: View {
             if let error { MobileNote(text: String(format: String(localized: "Couldn't sign in: %@"), error)) }
         } bottom: {
             if let code {
-                Button("Open the Microsoft page") { open(code) }.buttonStyle(.mobileGhost)
+                Button("Open the Microsoft Page") { open(code) }.buttonStyle(.mobileGhost)
             }
             Button("Sign in with Microsoft") { begin() }
                 .buttonStyle(.mobilePrimary)
@@ -199,11 +219,11 @@ struct XboxConsoleScreen: View {
             }
             if let error { MobileNote(text: error) }
         } bottom: {
-            Button("Search again") { Task { await load() } }.buttonStyle(.mobileGhost)
+            Button("Search Again") { Task { await load() } }.buttonStyle(.mobileGhost)
             if needsSignIn {
                 Button("Sign in with Microsoft", action: onSignIn).buttonStyle(.mobilePrimary)
             } else {
-                Button("Use this Xbox") {
+                Button("Use This Xbox") {
                     if let choice { model.chooseXbox(choice) }
                     onDone()
                 }

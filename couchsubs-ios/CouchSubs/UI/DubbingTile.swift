@@ -26,6 +26,12 @@ struct DubbingTile: View {
                 }
                 Text("Play the voice on").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
                 SegmentedTabs(options: [DubbingOutput.tv: "TV", .computer: "This phone"], selection: $model.settings.dubbing.output)
+                // Adından kadın mı erkek mi olduğu anlaşılmayan karakterin sesi (Android, Mac, Windows'ta aynı seçim).
+                Text("Voice for unknown characters").font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+                SegmentedTabs(options: [DubbingVoice.Gender.male: "Man", .female: "Woman"],
+                              selection: Binding(get: { model.settings.dubbing.cast.unknownGender },
+                                                 set: { model.settings.dubbing.cast.setUnknownGender($0) }))
+                caption("Used when the name doesn't show whether the character is a man or a woman. You can change each character's voice below.")
                 voiceRow(Text("Narrator and unnamed lines"), voice: $model.settings.dubbing.cast.narrator)
                 voiceRow(Text("Second speaker in dialogue"), voice: $model.settings.dubbing.cast.partner)
                 let names = model.settings.dubbing.cast.assignments.keys.sorted()
@@ -42,20 +48,18 @@ struct DubbingTile: View {
     }
 
     private func caption(_ text: LocalizedStringKey) -> some View {
-        Text(text).font(Mobile.TypeScale.caption).foregroundStyle(Mobile.Palette.secondary)
+        Text(text).dsMuted()
     }
 
     private func voiceRow(_ title: Text, voice: Binding<DubbingVoice>) -> some View {
-        HStack {
-            Picker(selection: voice) {
-                ForEach(DubbingVoice.allCases, id: \.self) { Text($0.label).tag($0) }
-            } label: {
-                title
+        // Başlık üstte, altında açılır seçim ve yanında Dinle (tasarım kuralı: başlık üstte, denetim altta).
+        VStack(alignment: .leading, spacing: Mobile.Space.inline) {
+            title.font(Mobile.TypeScale.headline).foregroundStyle(Mobile.Palette.text)
+            HStack(spacing: Mobile.Space.gap) {
+                DSSelect(selection: voice, options: DubbingVoice.allCases.map { ($0, $0.text) })
+                Button("Listen") { model.previewVoice(voice.wrappedValue) }
+                    .buttonStyle(DSButtonStyle(kind: .secondary, fullWidth: false))
             }
-            .tint(Mobile.Palette.accent)
-            Spacer()
-            Button("Listen") { model.previewVoice(voice.wrappedValue) }
-                .buttonStyle(MobileButtonStyle(kind: .secondary, compact: true))
         }
     }
 

@@ -67,6 +67,9 @@ Tuvalde küçük düzeltme olursa önce tuval dosyası okunur, sonra bu belge g�
 
 - **Reklam bandı** (`DSAdBand`): Ana Ekran, Geçmiş, Ayarlar ve diğer uygulama sayfalarının altında sabit (kenarlardan 24,
   alttan 16). Kurulum, açılış, oyun görüntüsü/yayın pencerelerinde **yok**. İçerik şimdilik yerel örnek; uzaktan liste sonra.
+  **Çeviri sürerken ve deneme modunda gizli**, çeviri durunca geri gelir (dört platformda aynı: Windows `AdBandPolicy`,
+  Mac `AdCatalog.bandVisible`, iPhone/Android `PromoPolicy.adBandVisible`). Masaüstünde şerit yumuşakça söner, cam alt çubuk
+  ve yeri kalır (düzen zıplamaz); telefonda çeviri ekranı ayrı sayfa olduğundan şerit yeri hiç ayrılmaz.
 - **Açılır reklam**: yalnız görsel (yazı/düğme yok); görselin oranına göre yatay ya da dikey açılır; tıklanınca bağlantı;
   köşede × ve küçük REKLAM etiketi. Günde en fazla 1; yalnız uygulama açılışında ya da çeviri durunca; çeviri sürerken,
   kurulumda ve görüntü penceresinde asla. Üçüncü taraf reklam ağı, izleme yok.
@@ -122,7 +125,7 @@ Kurulumda reklam yok.
 | EN | TR |
 |---|---|
 | I'll Set Up Later | Sonra Ayarlarım |
-| STEP %lld / %lld | ADIM %lld / %lld |
+| Step %lld / %lld | Adım %lld / %lld |
 | Back | Geri |
 | Continue | Devam |
 | Skip for Now | Şimdilik Geç |
@@ -137,7 +140,7 @@ Kurulumda reklam yok.
 | With Remote Play | Uzaktan Oynatma ile |
 | Xbox Series | Xbox Series |
 | With Remote Features | Uzak Özellikler ile |
-| WINDOW | PENCERE |
+| Window | Pencere |
 | Game Window | Oyun Penceresi |
 | Remote Play, OBS, Capture Card | Remote Play, OBS, Capture Kartı |
 | You can change the console later in Settings. | Konsolu sonra Ayarlar'dan değiştirebilirsiniz. |
@@ -148,10 +151,10 @@ QR kodu yerel üretilir (Sony'nin resmi hesap açma sayfası). Dört madde tıkl
 
 | EN | TR |
 |---|---|
-| SETUP · ACCOUNT | KURULUM · HESAP |
+| Setup · Account | Kurulum · Hesap |
 | Second PlayStation Account | İkinci PlayStation Hesabı |
 | CouchSubs connects to the PS5 by itself with a second account. You keep playing with your main account. | CouchSubs PS5'e ikinci hesapla kendisi bağlanır. Siz ana hesabınızla oynamaya devam edersiniz. |
-| DONE ONCE | BİR KEZ YAPILIR |
+| Done once | Bir kez yapılır |
 | Create a free account on playstation.com with a different email address. | playstation.com'da farklı bir e-posta adresiyle ücretsiz bir hesap açın. |
 | On the PS5, choose Add User and sign in once with the new account. | PS5'te Kullanıcı Ekle'yi seçin ve yeni hesapla bir kez oturum açın. |
 | While still on the new user, go to Settings › System › Remote Play and turn on Enable Remote Play. | Hâlâ yeni kullanıcıdayken Ayarlar › Sistem › Uzaktan Oynama'ya gidip Uzaktan Oynama'yı Etkinleştir'i açın. |
@@ -188,7 +191,7 @@ Bulunan cihazlar kart kart belirir; 10 sn'de bulunamazsa ipucu kartı açılır,
 | The PS5 and this Mac must be on the same Wi-Fi network. On the PS5, Stay Connected to the Internet must be on in Settings › System › Power Saving. Turn off any VPN. A 5 GHz network works better. | PS5 ile bu Mac aynı Wi-Fi ağında olmalı. PS5'te Ayarlar › Sistem › Güç Tasarrufu'nda "İnternete Bağlı Kal" açık olmalı. VPN açıksa kapatın. 5 GHz ağ daha iyi çalışır. |
 | Check What's Missing | Neyin Eksik Olduğunu Denetle |
 | Manual IP Address | Elle IP Adresi |
-| CONNECTION | BAĞLANTI |
+| Connection | Bağlantı yolu |
 | PlayStation Account | PlayStation Hesabı |
 | Signed in with the second account. | İkinci hesapla giriş yapıldı. |
 | %@ selected. | %@ seçildi. |
@@ -204,7 +207,7 @@ Denetimler kendiliğinden yapılır; okunamayan madde "Bilinmiyor" (uydurma yok)
 
 | EN | TR |
 |---|---|
-| COULDN'T CONNECT TO THE PS5 | PS5'E BAĞLANILAMADI |
+| Couldn't connect to the PS5 | PS5'e bağlanılamadı |
 | Here's What We Checked | Neyin Eksik Olduğuna Baktık |
 | Fix the item with a problem and press Try Again. Things we couldn't read are shown as "Unknown". | Sorunlu maddeyi düzeltip Yeniden Dene'ye basın. Okuyamadığımız şeyleri "Bilinmiyor" olarak gösteriyoruz. |
 | Same Network | Aynı Ağ |
@@ -252,7 +255,7 @@ Kod iki ekranda: TV'de görünen 4 haneli kod burada da gösterilir; kullanıcı
 | Installing the App | Uygulama Kuruluyor |
 | Installation Complete | Kurulum Tamam |
 | Approve the code on the TV, then let's try it. | TV'de kodu onaylayın, sonra deneyelim. |
-| CODE SHOWN ON THE TV | TV'DE GÖRÜNEN KOD |
+| Code shown on the TV | TV'de görünen kod |
 | Do You See This Code on Your TV Too? | Bu Kod TV'nizde de Görünüyor mu? |
 | If you see the same code, you're on the right TV. Approving completes the pairing. | Aynı kodu görüyorsanız doğru TV'desiniz. Onaylayınca eşleşme tamamlanır. |
 | I See This Code on the TV | TV'de Bu Kodu Görüyorum |
@@ -268,7 +271,7 @@ Seçim TV uygulamasına gider (`hdmiInput` alanı, aşağıda). "Bilmiyorum, Sı
 
 | EN | TR |
 |---|---|
-| TV INPUT | TV GİRİŞİ |
+| TV input | TV girişi |
 | Which TV Input Is the PS5 Plugged Into? | PS5 TV'nin Hangi Girişine Takılı? |
 | CouchSubs opens this input on the TV to show subtitles over the game. If the wrong input is chosen, the screen stays black. | CouchSubs, altyazıyı oyunun üstünde göstermek için TV'de bu girişi açar. Yanlış giriş seçilirse ekran siyah kalır. |
 | I Don't Know, Try Them in Turn | Bilmiyorum, Sırayla Dene |
@@ -289,7 +292,7 @@ Seçim TV uygulamasına gider (`hdmiInput` alanı, aşağıda). "Bilmiyorum, Sı
 
 | EN | TR |
 |---|---|
-| SETUP · TRANSLATION | KURULUM · ÇEVİRİ |
+| Setup · Translation | Kurulum · Çeviri |
 | Better Translation (Free) | Daha İyi Çeviri (Ücretsiz) |
 | If you like, add a free Gemini key. Without it the free translation is used; you can also add it later in Settings. | İsterseniz ücretsiz bir Gemini anahtarı ekleyin. Eklemezseniz ücretsiz çeviri kullanılır, sonra Ayarlar'dan da ekleyebilirsiniz. |
 | HOW TO GET A KEY | ANAHTAR NASIL ALINIR |
@@ -355,14 +358,14 @@ kartı: "%lld SN SESSİZ", neden başlığı, açıklama, çözüm düğmeleri v
 | Try on TV | TV'de Dene |
 | Try on Screen | Ekranda Dene |
 | Opening the App on the TV… | TV'de Uygulama Açılıyor… |
-| STATUS | DURUM |
+| Status | Durum |
 | Subtitles Flowing | Altyazı Akıyor |
 | Translation Stopped | Çeviri Durdu |
 | Waiting for Subtitles | Altyazı Bekleniyor |
 | Lines · %lld/min | Satır · %lld/dk |
 | From Pack · %lld%% | Paketten · %%%lld |
 | Average Delay | Ortalama Gecikme |
-| LIVE FEED | CANLI AKIŞ |
+| Live feed | Canlı akış |
 | History → | Geçmiş → |
 | Subtitles will appear here while you play. | Siz oynarken altyazılar burada görünecek. |
 | %lld S SILENT | %lld SN SESSİZ |
@@ -398,7 +401,7 @@ kartı: "%lld SN SESSİZ", neden başlığı, açıklama, çözüm düğmeleri v
 
 | EN | TR |
 |---|---|
-| GAME BEING PLAYED | OYNANAN OYUN |
+| Game being played | Oynanan oyun |
 | Which Game Are You Playing? | Hangi Oyunu Oynuyorsunuz? |
 | Search Games | Oyun Ara |
 | Pack Available | Paket Var |
@@ -431,11 +434,11 @@ kartı: "%lld SN SESSİZ", neden başlığı, açıklama, çözüm düğmeleri v
 
 | EN | TR |
 |---|---|
-| OBS PROJECTOR OR GAME WINDOW | OBS PROJEKTÖRÜ VEYA OYUN PENCERESİ |
+| OBS projector or game window | OBS projektörü veya oyun penceresi |
 | Refresh Windows | Pencereleri Yenile |
 | If the window isn't listed, open OBS or the game first, then refresh. If screen recording permission is needed, | Pencere görünmüyorsa önce OBS'i ya da oyunu açın, sonra yenileyin. Ekran kaydı izni gerekirse |
 | Open macOS Settings | Sistem Ayarlarını Aç |
-| SELECTED WINDOW | SEÇİLEN PENCERE |
+| Selected window | Seçilen pencere |
 | Use This Window | Bu Pencereyi Kullan |
 | Set the Subtitle Area | Altyazı Alanını Ayarla |
 | No window selected. | Pencere seçilmedi. |
@@ -444,7 +447,7 @@ kartı: "%lld SN SESSİZ", neden başlığı, açıklama, çözüm düğmeleri v
 
 | EN | TR |
 |---|---|
-| XBOX · MICROSOFT ACCOUNT | XBOX · MICROSOFT HESABI |
+| Xbox · Microsoft account | Xbox · Microsoft hesabı |
 | Sign In with Your Microsoft Account | Microsoft Hesabınızla Giriş Yapın |
 | Link your Xbox account with a Microsoft device code. The sign-in page opens in your default browser. | Xbox hesabınızı Microsoft cihaz koduyla bağlayın. Giriş sayfası varsayılan tarayıcınızda açılır. |
 | Sign In with Microsoft | Microsoft ile Giriş Yap |
@@ -460,7 +463,7 @@ kartı: "%lld SN SESSİZ", neden başlığı, açıklama, çözüm düğmeleri v
 | Use This Xbox | Bu Xbox'ı Kullan |
 | Remote Features Off | Uzak Özellikler Kapalı |
 | Start Over | Baştan |
-| SOUND | SES |
+| Sound | Ses |
 | Play Xbox Sound on This Computer | Xbox Sesini Bu Bilgisayarda Çal |
 | When off, sound comes only from the TV. | Kapalıyken ses yalnız TV'den gelir. |
 | Playing with the Xbox App or play.xbox.com on This Computer? | Bu Bilgisayarda Xbox Uygulaması ya da play.xbox.com ile mi Oynuyorsunuz? |
@@ -474,10 +477,10 @@ kartı: "%lld SN SESSİZ", neden başlığı, açıklama, çözüm düğmeleri v
 |---|---|
 | All | Tümü |
 | Search Subtitles | Altyazılarda Ara |
-| TIME | SAAT |
-| TURKISH | TÜRKÇE |
-| ENGLISH | İNGİLİZCE |
-| SOURCE | KAYNAK |
+| Time | Saat |
+| Turkish | Türkçe |
+| English | İngilizce |
+| Source | Kaynak |
 | No lines match this search. | Bu aramaya uyan satır yok. |
 | No subtitles yet. Lines translated while you play appear here. | Henüz altyazı yok. Oynarken çevrilen satırlar burada görünür. |
 | %@ · Today · %lld Lines | %@ · Bugün · %lld Satır |
@@ -485,6 +488,7 @@ kartı: "%lld SN SESSİZ", neden başlığı, açıklama, çözüm düğmeleri v
 | Export | Dışa Aktar |
 | Report a Wrong Translation | Hatalı Çeviriyi Bildir |
 | Clear History | Geçmişi Temizle |
+| Copy All | Tümünü Kopyala |
 | Free | Ücretsiz |
 | Apple | Apple |
 | AI | Yapay Zekâ |
@@ -497,7 +501,7 @@ kartı: "%lld SN SESSİZ", neden başlığı, açıklama, çözüm düğmeleri v
 | Subtitles don't block clicks. | Altyazı tıklamaları engellemez. |
 | Position the Subtitles | Altyazıları Konumlandır |
 | Show CouchSubs | CouchSubs'ı Aç |
-| ABOUT | HAKKINDA |
+| About | Hakkında |
 | Free and open source under the GNU AGPL-3.0 license. | GNU AGPL-3.0 lisansıyla ücretsiz ve açık kaynak. |
 | Remote Play connection by chiaki-ng (AGPL-3.0). Thanks to its developers. | Uzaktan Oynatma bağlantısı chiaki-ng (AGPL-3.0) ile. Geliştiricilerine teşekkürler. |
 | The Xbox home console picture uses the open source approach of Greenlight (MIT). | Xbox ev konsolu görüntüsü Greenlight'ın açık kaynak yaklaşımını kullanır (MIT). |
@@ -506,7 +510,7 @@ kartı: "%lld SN SESSİZ", neden başlığı, açıklama, çözüm düğmeleri v
 | Source | Kaynak |
 | Check for Updates… | Güncellemeleri Denetle… |
 | Copyright © 2026 Enmera | Telif Hakkı © 2026 Enmera |
-| RELEASE NOTES | SÜRÜM NOTLARI |
+| Release notes | Neler değişti? |
 | This Version | Bu Sürüm |
 | Previous | Önceki |
 | About CouchSubs | CouchSubs Hakkında |
@@ -544,7 +548,7 @@ Gelişmiş › Deneysel kartında "GTA 6 Telefonunu Otomatik Çevir" satırını
 | All settings in one place. The Profile page is gone. | Ayarlar tek yerde. Profil sayfası kaldırıldı. |
 | SETTINGS | AYARLAR |
 | Basics and Advanced | Temel ve Gelişmiş |
-| TRANSLATION | ÇEVİRİ |
+| Translation | Çeviri |
 | Fast | Hızlı |
 | Balanced | Dengeli |
 | Accurate | Doğru |
@@ -558,10 +562,10 @@ Gelişmiş › Deneysel kartında "GTA 6 Telefonunu Otomatik Çevir" satırını
 | Plays only on the first launch. | Yalnız ilk açılışta çalar. |
 | Transition Animations | Geçiş Animasyonları |
 | When off, only a short fade is used. | Kapalıyken yalnız kısa solma kullanılır. |
-| SUBTITLE APPEARANCE | ALTYAZI GÖRÜNÜMÜ |
+| Subtitle appearance | Altyazı görünümü |
 | Text size, background, text and character name colors. The settings apply the same on the TV, phone and computer screen. | Yazı boyutu, zemin, yazı ve karakter adı renkleri. Ayarlar TV, telefon ve bilgisayar ekranında aynı uygulanır. |
 | Edit Subtitle Appearance | Altyazı Görünümünü Düzenle |
-| SUBTITLES ON THE TV | TV'DEKİ ALTYAZI |
+| Subtitles on the TV | TV'deki altyazılar |
 | The text color is too close to the background; it may be hard to read on the TV. | Yazı rengi zemine çok yakın, TV'de okunması zor olabilir. |
 | The settings apply the same on the TV, phone and computer screen. | Ayarlar TV, telefon ve bilgisayar ekranında aynı uygulanır. |
 | Text Size | Yazı Boyutu |
@@ -596,7 +600,7 @@ Gelişmiş › Deneysel kartında "GTA 6 Telefonunu Otomatik Çevir" satırını
 | Orange | Turuncu |
 | Red | Kırmızı |
 | Blue | Mavi |
-| TRANSLATION ENGINE | ÇEVİRİ MOTORU |
+| Translation engine | Çeviri motoru |
 | Free Translation | Ücretsiz Çeviri |
 | No key needed. | Anahtar gerekmez. |
 | On This Mac (Apple) | Bu Mac'te (Apple) |
@@ -609,7 +613,7 @@ Gelişmiş › Deneysel kartında "GTA 6 Telefonunu Otomatik Çevir" satırını
 | OpenAI or Claude with your own key. | Kendi anahtarınızla OpenAI ya da Claude. |
 | API Key | API Anahtarı |
 | Stored only on this device. | Yalnız bu cihazda saklanır. |
-| EXPERIMENTAL | DENEYSEL |
+| Experimental | Deneysel |
 | These settings may slow down or interrupt translation. If there's a problem, go back to the defaults. | Bu ayarlar çeviriyi yavaşlatabilir ya da kesebilir. Sorun olursa varsayılana dönün. |
 | Translate On-Screen Text Automatically | Ekran Yazılarını Otomatik Çevir |
 | Objectives, menus and other text on the screen. | Görev, menü ve ekrandaki diğer yazılar. |
@@ -630,7 +634,7 @@ Ek alan sınırı yok (eskiden 3). İlk 3 ek alanın kısayolu var (Num 1–3 / 
 
 | EN | TR |
 |---|---|
-| SUBTITLE AREA | ALTYAZI ALANI |
+| Subtitle area | Altyazı alanı |
 | Refresh Picture | Görüntüyü Yenile |
 | Bottom | Alt |
 | Top | Üst |
@@ -639,7 +643,7 @@ Ek alan sınırı yok (eskiden 3). İlk 3 ek alanın kısayolu var (Num 1–3 / 
 | Drag the frame to move it, or grab an edge or corner to resize it. The subtitle frame should cover where the game shows its subtitles. | Çerçeveyi sürükleyerek taşıyın, kenarından ya da köşesinden tutup boyutlandırın. Altyazı çerçevesi oyunun altyazıyı gösterdiği yeri kapsamalı. |
 | While Full Screen is selected the whole screen is read, so extra areas aren't read; choosing another area reads them again. | Tam Ekran seçiliyken ekranın tamamı okunduğu için ek alanlar okunmaz; başka bir alan seçince yeniden okunur. |
 | Reset Areas | Alanları Sıfırla |
-| EXTRA AREAS | EK ALANLAR |
+| Extra areas | Ek alanlar |
 | Add Extra Area | Ek Alan Ekle |
 | Also reads small text next to the subtitle, such as objectives, phone messages or notifications. Each area is read once a second and translated again when the text changes; the translation appears on the TV next to that text. | Altyazının yanında görev, telefon mesajı ya da bildirim gibi küçük yazıları da okur. Her alan saniyede bir okunur, yazı değişince yeniden çevrilir; çeviri TV'de o yazının yanında görünür. |
 | No extra areas yet. | Henüz ek alan yok. |
@@ -670,6 +674,7 @@ Ek alan sınırı yok (eskiden 3). İlk 3 ek alanın kısayolu var (Num 1–3 / 
 | Send the English Subtitles Read to the Shared Pool | Okunan İngilizce Altyazıları Ortak Havuza Gönder |
 | Only the game's English text is sent, anonymously. It helps make better Turkish translations for everyone. | Yalnız oyunun İngilizce metni, adsız gönderilir. Herkes için daha iyi Türkçe çeviri yapmaya yarar. |
 | INSTALLED PACKS | KURULU PAKETLER |
+| INSTALLED PACKS · %lld | KURULU PAKETLER · %lld |
 | Update Packs Now | Paketleri Şimdi Güncelle |
 | Updating Packs… | Paketler Güncelleniyor… |
 | Packs Up to Date | Paketler Güncel |
@@ -714,7 +719,7 @@ Ek alan sınırı yok (eskiden 3). İlk 3 ek alanın kısayolu var (Num 1–3 / 
 
 | EN | TR |
 |---|---|
-| SHOW SUBTITLES ON | ALTYAZIYI GÖSTER |
+| Show subtitles on | Altyazıyı göster |
 | Computer Screen | Bilgisayar Ekranı |
 | Both | İkisi de |
 | OBS Only (Streaming) | Yalnız OBS (Yayın) |
@@ -725,7 +730,7 @@ Ek alan sınırı yok (eskiden 3). İlk 3 ek alanın kısayolu var (Num 1–3 / 
 | Sent | Gönderildi |
 | Pair the TV | TV'yi Eşleştir |
 | In fixed position you can also move subtitles with the ▲ and ▼ buttons on the TV remote. | Sabit yerdeyken altyazıyı TV kumandasının ▲ ve ▼ tuşlarıyla da taşıyabilirsiniz. |
-| COMPUTER SCREEN | BİLGİSAYAR EKRANI |
+| Computer screen | Bilgisayar ekranı |
 | Subtitles appear on this computer in a window over the game or PS Remote Play. | Altyazılar bu bilgisayarda, oyunun ya da PS Remote Play'in üstündeki bir pencerede görünür. |
 | Place the Subtitles | Altyazıları Yerleştir |
 | Clicks Pass Through | Tıklamalar Geçsin |
@@ -767,47 +772,145 @@ Her işin iki tuşu: sayı tuş takımı rakamı ve ⌃⇧rakam. Tuşa tıklayı
 
 | EN | TR |
 |---|---|
-| CONSOLE | KONSOL |
+| Console | Konsol |
 | Second account: %@ | İkinci hesap: %@ |
 | Connected | Bağlı |
 | Renew the Access Key | Erişim Anahtarını Yenile |
 | Set Up Again… | Yeniden Kur… |
 | Link Xbox Account | Xbox Hesabını Bağla |
-| PS5 LOGIN PASSCODE | PS5 GİRİŞ ŞİFRESİ |
+| PS5 login passcode | PS5 giriş şifresi |
 | If your PS5 has a login passcode, enter the 4-digit passcode. | PS5'inizde giriş şifresi varsa 4 haneli şifreyi girin. |
 | Passcode Saved | Şifre Kaydedildi |
-| READ THE PICTURE FROM | GÖRÜNTÜYÜ ŞURADAN OKU |
+| Read the picture from | Görüntüyü al |
 | PS5 (Second Account) | PS5 (İkinci Hesap) |
 | Remote Play Window on This Mac | Bu Mac'teki Remote Play Penceresi |
 | OBS Projector or Game Window | OBS Projektörü veya Oyun Penceresi |
-| LANGUAGE | DİL |
+| Language | Dil |
 | Game Language | Oyun Dili |
 | English | İngilizce |
 | App Language | Uygulama Dili |
 | Same as System | Sistemle Aynı |
 | Online engines only translate English games. Other game languages use the free translation. | Çevrimiçi motorlar yalnız İngilizce oyunları çevirir. Başka oyun dillerinde ücretsiz çeviri kullanılır. |
-| TV INPUT (HDMI) | TV GİRİŞİ (HDMI) |
+| TV input (HDMI) | TV girişi (HDMI) |
 | Demo Mode | Deneme Modu |
+
+## TV kurulumu: başka uygulama (#976)
+
+TV'de CouchSubs'ın kimliğini kullanan başka uygulama bulununca açılır kart (TV adımı ve Çıkış Ekranları › TV kartı):
+mono "TV", başlık, açıklama; sağda amber ana eylem "Kaldırıp Kur", ikincil "Vazgeç" (kırmızı tehlikeli eylem değil).
+Mevcut anahtarlar: "Another App Is Installed", "Another app on this TV is using the CouchSubs identity. Remove it and
+install CouchSubs?", "Remove And Install", "Cancel".
+
+## Ek metinler (kodda geçen)
+
+| EN | TR |
+|---|---|
+| PROBLEM | SORUN |
+| The TV app isn't connected. | TV uygulaması bağlı değil. |
+| The language pack isn't downloaded. | Dil paketi indirilmemiş. |
+| Translation isn't available on this Mac. | Bu Mac'te çeviri yok. |
+| Search History | Geçmişte Ara |
+| With your own key. | Kendi anahtarınızla. |
+| Characters you meet while playing appear here. | Oynarken karşılaştığınız karakterler burada görünür. |
+| Check Unchanged Subtitle Areas More Often | Değişmeyen Altyazı Alanını Daha Sık Oku |
+| Set On-Screen Text Apart from Subtitles | Ekran Yazılarını Altyazıdan Ayır |
+| Choose Dark under Subtitle Appearance to fully hide the English subtitle in the game. A full-width band also covers the sides. | Oyundaki İngilizce altyazıyı tamamen gizlemek için Altyazı Görünümü'nde Koyu'yu seçin. Tam genişlik bant yanları da örter. |
+| Xbox · Beta | Xbox · Beta |
+| Beta | Beta |
+| Live Preview | Canlı Önizleme |
+| Pack Installed | Paket Kuruldu |
+| Playing | Oynanıyor |
+| Suggestions | Öneriler |
+| Signing In… | Giriş Yapılıyor… |
+
+## Kaydırıcı, seçici ve ek alan düzeni (22 Kas, Sinan Bey geri bildirimi)
+
+Kart başlıkları cümle düzeninde, sistem yazısıyla (mono büyük harf yok). Kaydırıcı: başlık solda, değer sağda, altında tam genişlik iz, altında tek cümle. Seçiciler tek bileşen (DSTabs). Açılır seçimler tek bileşen (DSSelect).
+
+| EN | TR |
+|---|---|
+| Wait for a Misread Line | Bozuk Okunan Satır İçin Bekleme |
+| Wait for a Half-Read Line | Yarım Okunan Satır İçin Bekleme |
+| If the text is misread, a better reading is awaited for at most this long. Recommended: 0.8 s. | Yazı bozuk okunursa daha iyi bir okuma için en çok bu kadar beklenir. Önerilen: 0,8 sn. |
+| If a line shows only in part, the whole line is awaited for at most this long. Recommended: 0.3 s. | Satır yarım görünürse tamamı için en çok bu kadar beklenir. Önerilen: 0,3 sn. |
+| Show the Result | Sonucu Göster |
+| On the TV | TV'de |
+| On This Mac | Bu Mac'te |
+| On Both | İkisinde De |
+| Vertical Position | Dikey Konum |
+| Height | Yükseklik |
+| Position on Screen | Ekrandaki Yeri |
+| The left end is the bottom of the screen. You can also move subtitles with the ▲ and ▼ buttons on the TV remote. | Sol uç ekranın en altıdır. Altyazıyı TV kumandasındaki ▲ ve ▼ tuşlarıyla da taşıyabilirsiniz. |
+| Add Extra Area | Ek Alan Ekle |
+| No extra areas yet. | Henüz ek alan yok. |
+| Keep Reading This Area | Bu Alanı Sürekli Oku |
+| Read about once a second while translating. | Çeviri sürerken saniyede bir okunur. |
+| Quest | Görev |
+| Notification | Bildirim |
+| Phone | Telefon |
+| Custom | Özel |
+| Top right of the screen. | Ekranın sağ üstü. |
+| Bottom left of the screen. | Ekranın sol altı. |
+| Bottom right of the screen. | Ekranın sağ altı. |
+| Drag the frame on the picture to place it. | Çerçeveyi resmin üzerinde sürükleyerek yerleştirin. |
+| Press its shortcut while playing to translate this area once, even with CouchSubs in the background. | Oynarken kısayoluna basınca bu alan bir kez çevrilir; CouchSubs arka plandayken de çalışır. |
+| Area Name | Alan Adı |
+| Remove | Kaldır |
+| No Shortcut | Kısayol Yok |
+| Play the Voice On | Sesin Çalacağı Yer |
+| Voice the Translation in Turkish | Çeviriyi Türkçe Seslendir |
+| Download Voices | Sesleri İndir |
+| Coming Soon | Yakında |
+| Issue | Sorun |
+| %lld s silent | %lld sn sessiz |
+| Installed packs | Kurulu paketler |
+| Installed packs · %lld | Kurulu paketler · %lld |
 
 ## Ayar alanları ve TV protokolü (geriye uyumlu)
 
 Yeni ayarlar `UserSettings`'e (core `Pipeline/AppSettings.swift`, Windows `CouchSubs.Shell/Contracts.cs`) **aynı adla**
-eklenir; eski kayıtta yoksa varsayılan kullanılır.
+eklendi; eski kayıtta yoksa varsayılan kullanılır.
 
 | Alan | Tür / varsayılan | Anlamı |
 |---|---|---|
 | `startupSound` | Bool, `true` | Ayarlar › Temel › Açılış Sesi (yalnız ilk kurulumun açılış adımında çalar). |
 | `transitionAnimations` | Bool, `true` | Ayarlar › Temel › Geçiş Animasyonları; kapalıyken yalnız 100 ms solma. |
-| `translationPace` | `"fast"` / `"balanced"` / `"accurate"`, `"balanced"` | Ayarlar › Temel › Çeviri (Hızlı/Dengeli/Doğru). |
+
+- **Hızlı / Dengeli / Doğru** yeni alan değildir: mevcut iki beklemenin hazır değerleridir (`misreadWaitMs`/`partialWaitMs`):
+  Hızlı 400/0, Dengeli 800/300 (varsayılan), Doğru 1000/800. Değerler başka bir şeyse hiçbir sekme seçili görünmez
+  (Gelişmiş'teki kaydırıcılar).
+- **Yazı Boyutu 16–50 kaydırıcısı** TV'nin yazı boyuna (`fontSize`, 1920'de 16–90 piksel) doğrusal eşlenir:
+  `fontSize = round(16 + (d − 16) · 74 / 34)`, gösterilen `d = round(16 + (fontSize − 16) · 34 / 74)`. Eski büyük boylar kaybolmaz.
+- **Koyuluk** Açık/Orta/Koyu = `background` 45/75/100 (Koyu tam örter); "Zeminsiz" = `background` 0.
+- **Karakter Adı**: "Yazıyla Aynı" `speakerColors` kapalı; "Tek Renk" ve "Karaktere Göre" açık.
+- Ek alan sınırı 3'ten 50'ye çıktı (`ExtraArea.maxCount`); ilk üçünün kısayolu var, sonrakiler "Kısayol Yok".
+- Yeni arayüz ilk açılışta bir kez: kayıtlı görünüm Koyu ise Açık yapılır (onaylı tasarım açık), `style.nameOnly` true olur.
 
 TV'ye giden `style` olayına (`SubtitleStyle`) eklenen alanlar; eski TV uygulaması tanımaz, eskisi gibi davranır:
 
 | Alan | Değer | Anlamı |
 |---|---|---|
-| `backgroundColor` | `"#RRGGBB"`, varsayılan `"#101014"` | Altyazı zemininin rengi; koyuluk `background` (0–100) ile. Zeminsiz: `background` 0. Koyuluk Açık/Orta/Koyu = 45/75/95. |
-| `textHex` | `"#RRGGBB"` ya da yok | Yazı rengi; varsa `textColor`'ın yerine geçer (`textColor` eski TV için en yakın white/yellow olarak da gönderilir). |
-| `nameColorMode` | `"text"` / `"single"` / `"speaker"` | Karakter adı rengi: yazıyla aynı / tek renk / karaktere göre (`speakerColors` ile aynı anlam). |
-| `nameHex` | `"#RRGGBB"` | `single` modunda karakter adının rengi. |
-| `hdmiInput` | 1–4 ya da yok | Kurulumda seçilen TV girişi; TV uygulaması bu girişi açar. |
+| `backgroundColor` | `"#RRGGBB"`, varsayılan `"#101014"` | Altyazı zemininin rengi; koyuluğu `background` (0–100). |
+| `textHex` | `"#RRGGBB"` ya da yok | Yazı rengi; varsa `textColor`'ın yerine geçer (`textColor` eski TV için white/yellow olarak da gönderilir). |
+| `nameOnly` | Bool | true: konuşan rengi yalnız adı boyar (yeni arayüz); false/yok: eski davranış (ad ve satır). |
+| `hdmiInput` | 1–4 ya da yok | Kurulumun TV Girişi adımında seçilen giriş; TV uygulaması (0.9.77+) değer değişince o girişi açar, aynı değer yeniden gelince TV'de elle seçilen girişi ezmez. |
 
-Eşleşme kodu (TV'de görünen 4–6 haneli kod) mevcut `SubtitlePairing` biletinde zaten var; yeni arayüz onu iki ekranda gösterir.
+Kayıtta (`SubtitleStyle`) tutulan, TV'ye ayrıca gitmeyen alanlar: `nameColorMode` (`text`/`single`/`speaker`), `nameHex`
+(Tek Renk), `characterColors` (küçük harfli ad → renk). Sunucu bunları `SpeakerColorBook.configure` ile uygular;
+renkler satırın mevcut `speakers` alanıyla TV'ye gider.
+
+Eşleşme kodu (TV'de görünen kod) mevcut `SubtitlePairing` biletinde zaten var; yeni arayüz onu iki ekranda gösterir.
+
+## Kurulum sırası ve kaynaklar
+
+- Adım sırası (Mac `AppModel.Step`): Açılış → Konsol (`welcome`) → PlayStation Hesabı (`secondAccount`, `psnLogin`) →
+  PS5'e Bağlan (`console`; bulunamazsa denetim ekranı) → TV (`tv`) → TV Girişi (`hdmi`; yalnız TV eşleştiyse ve Android TV
+  değilse) → Daha İyi Çeviri (`betterTranslation`) → Deneyelim (`test`) → Ana Ekran. Eskiden deneme çeviriden önceydi.
+- Üstte dört ilerleme noktası: 1 Konsol, 2 Hesap + PS5, 3 TV + Giriş, 4 Çeviri + Deneme.
+- PlayStation hesabı QR kodu yerelde üretilir; adres Sony'nin resmi hesap açma bağlantısı
+  `https://www.playstation.com/acct/create-account` (playstation.com "How to create an account" sayfasındaki bağlantı).
+- "Oyun Penceresi" seçilirse görüntü seçilen pencereden okunur ve kurulum biter (pencere Ayarlar › Konsol ve Kaynak'ta).
+- Açılış animasyonu yalnız ilk kurulumda (`introPlayed`); ses tuvaldeki Web Audio tarifinin aynısı uygulamada üretilir
+  (dosya yok). TV eşleşme kodu sihirbazda kartta gösterilir ("TV'de Bu Kodu Görüyorum"), ana pencerede onay penceresi.
+- TV uygulaması 0.9.77 (main'deki 0.9.76 = TV alındısı ve yeniden bağlanma, #1017; yeni-arayuz ikisini birlikte taşır, Windows da bu numarayı kullanır): `backgroundColor`, `textHex`, `nameOnly`, `hdmiInput` alanlarını uygular (OBS katmanı ve ikinci
+  ekran sayfası da renkleri).

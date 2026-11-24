@@ -41,6 +41,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.min
 import com.couchsubs.mobile.R
 import com.couchsubs.mobile.promo.PromoController
@@ -77,8 +78,8 @@ fun PromoOverlay(ready: PromoController.Ready, onDismiss: () -> Unit) {
             val height = width / ratio
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(Modifier.height(PROMO_BADGE), contentAlignment = Alignment.Center) {
-                    Text(stringResource(R.string.promo_label), style = Tokens.Type.caption, color = Tokens.Color.text, maxLines = 1,
-                        modifier = Modifier.background(Tokens.Color.surface2, CircleShape).padding(horizontal = 14.dp, vertical = 6.dp))
+                    Text(stringResource(R.string.promo_label), style = Tokens.Type.mono.copy(fontSize = 9.sp, letterSpacing = 1.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = Color.White.copy(alpha = 0.85f), maxLines = 1,
+                        modifier = Modifier.glass(CircleShape).padding(horizontal = 14.dp, vertical = 4.dp))
                 }
                 // Kapat düğmesi görselin dışına taşar; Compose dokunuşu kabın dışına iletmediği için kap, görselin çevresinde
                 // yarım düğme payı bırakır (dokunma alanı eksiksiz kalır).
@@ -108,8 +109,8 @@ fun PromoOverlay(ready: PromoController.Ready, onDismiss: () -> Unit) {
                             .semantics { contentDescription = closeLabel },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Box(Modifier.size(PROMO_CLOSE_DOT).background(Tokens.Color.text, CircleShape), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Filled.Close, contentDescription = null, tint = Tokens.Color.onAccent, modifier = Modifier.size(20.dp))
+                        Box(Modifier.size(PROMO_CLOSE_DOT).glass(CircleShape), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Close, contentDescription = null, tint = Tokens.Color.text, modifier = Modifier.size(20.dp))
                         }
                     }
                 }

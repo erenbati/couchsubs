@@ -7,46 +7,8 @@ import SwiftUI
 // aynı dosyayı okur. Ekranlar sabit renk ya da ölçü yazmaz, buradaki adları kullanır. Metinler: design/yeni-arayuz/METINLER.md.
 // Eski ekranların Theme/Components'i iPhone'la ortaktır ve değişmez.
 
-struct DSTokens: Decodable {
-    struct ColorPair: Decodable {
-        let light: String
-        let dark: String
-    }
-
-    struct FontToken: Decodable {
-        let size: Double
-        let weight: String
-        let tracking: Double?
-        let design: String?
-    }
-
-    struct Motion: Decodable {
-        let short: Double
-        let medium: Double
-        let page: Double
-        let reduced: Double
-        let enter: [Double]
-        let exit: [Double]
-        let adRotate: Double
-    }
-
-    let color: [String: ColorPair]
-    let font: [String: FontToken]
-    let mutedTracking: Double
-    let space: [String: Double]
-    let radius: [String: Double]
-    let size: [String: Double]
-    let motion: Motion
-
-    /// "#RRGGBB" ya da "#RRGGBBAA" → 0–1 aralığında kırmızı, yeşil, mavi, saydamlık.
-    static func rgba(_ hex: String) -> (Double, Double, Double, Double)? {
-        guard hex.first == "#", hex.count == 7 || hex.count == 9, let value = UInt64(hex.dropFirst(), radix: 16) else { return nil }
-        if hex.count == 7 {
-            return (Double(value >> 16 & 0xFF) / 255, Double(value >> 8 & 0xFF) / 255, Double(value & 0xFF) / 255, 1)
-        }
-        return (Double(value >> 24 & 0xFF) / 255, Double(value >> 16 & 0xFF) / 255, Double(value >> 8 & 0xFF) / 255, Double(value & 0xFF) / 255)
-    }
-}
+// DSTokens (dosyanın okunuşu) iPhone'la ortak: DSTokens.swift. Perde belirteçleri, hareket kapısı ve yeni bileşenler:
+// Perde.swift (o da ortak).
 
 enum DS {
     static let tokens: DSTokens = {
@@ -82,6 +44,10 @@ enum DS {
     static func space(_ name: String) -> CGFloat { CGFloat(tokens.space[name] ?? 0) }
     static func radius(_ name: String) -> CGFloat { CGFloat(tokens.radius[name] ?? 0) }
     static func size(_ name: String) -> CGFloat { CGFloat(tokens.size[name] ?? 0) }
+    /// Dikey ritim (tasarim.json › space): ayar biriminde başlık → denetim 8, denetim → açıklama 6; birimler arası 24.
+    static var unitTitleGap: CGFloat { space("unitTitle") }
+    static var unitHintGap: CGFloat { space("unitHint") }
+    static var unitGap: CGFloat { space("unitGap") }
     static var mutedTracking: CGFloat { CGFloat(tokens.mutedTracking) }
 
     // MARK: Hareket
@@ -140,8 +106,16 @@ extension Color {
     static let dsLiveSoft = DS.color("liveSoft")
     static let dsLiveRing = DS.color("liveRing")
     static let dsLiveDot = DS.color("liveDot")
+    /// Çeviriyi durduran dolu düğme (Durdur): canlı turuncu-kırmızı zemin, beyaz yazı (iki temada ≥ 3:1, kalın yazı).
+    static let dsStopFill = DS.color("stopFill")
+    static let dsOnStop = DS.color("onStop")
     static let dsScreenFrame = DS.color("screenFrame")
     static let dsScrim = DS.color("scrim")
+    static let dsPeach = DS.color("peach")
+    static let dsOlive = DS.color("olive")
+    static let dsTeal = DS.color("teal")
+    static let dsPlum = DS.color("plum")
+    static let dsSky = DS.color("sky")
 }
 
 extension Font {
@@ -149,6 +123,8 @@ extension Font {
     static let dsH2 = DS.font("h2")
     static let dsH3 = DS.font("h3")
     static let dsSubtitle = DS.font("subtitle")
+    static let dsCardTitle = DS.font("cardTitle")
+    static let dsLabel = DS.font("label")
     static let dsBody = DS.font("body")
     static let dsBodyStrong = DS.font("bodyStrong")
     static let dsButton = DS.font("button")
@@ -216,7 +192,8 @@ extension View {
     }
 }
 
-/// Kart içi bölüm etiketi: mono, büyük harf, 12 pt, +0.08em; altındaki içerikle arası en az 24 (kart boşluğu + 8).
+/// Küçük bölüm etiketi (tablo sütunu, kart üstü küçük ad): sistem yazısı 13 orta kalın, cümle düzeni, gri. Adı eski;
+/// mono büyük harf artık kullanılmaz (mono yalnız kısayol rozeti ve teknik değerde).
 struct DSMonoLabel: View {
     let text: LocalizedStringKey
     var color: Color = .dsMuted
@@ -228,8 +205,7 @@ struct DSMonoLabel: View {
 
     var body: some View {
         Text(text)
-            .font(.dsMono)
-            .tracking(DS.tracking("mono"))
+            .font(.dsLabel)
             .foregroundStyle(color)
             .lineLimit(1)
             .accessibilityAddTraits(.isHeader)
@@ -261,8 +237,7 @@ struct DSPageTitle: View {
         VStack(alignment: .leading, spacing: DS.space("xxs")) {
             if let eyebrow {
                 Text(verbatim: eyebrow)
-                    .font(.dsMono)
-                    .tracking(DS.tracking("mono"))
+                    .font(.dsLabel)
                     .foregroundStyle(Color.dsMuted)
                     .padding(.bottom, DS.space("xxs"))
             }

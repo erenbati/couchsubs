@@ -5,6 +5,7 @@ using Xunit;
 
 namespace CouchSubs.Core.Tests;
 
+[Collection(ChildProcessGuardTests.Group)]
 public class DevModeInstallerTests
 {
     private sealed class FakeShell : IRemoteShell
@@ -145,8 +146,39 @@ public class DevModeInstallerTests
         Assert.Contains($"wc -c < '{remote}'", shell.Calls[1].Command);
         Assert.Contains("luna://com.webos.appInstallService/dev/install", shell.Calls[2].Command);
         Assert.Contains($"\"ipkUrl\":\"{remote}\"", shell.Calls[2].Command);
-        Assert.Contains($"rm -f '{remote}'", shell.Calls[^1].Command);
+        Assert.Contains($"rm -f '{remote}'", shell.Calls[^2].Command);
+        // Kurulum doğrulandıktan sonra açık (eski) uygulama kapatılır (beta.89: webOS eski süreci tutuyordu).
+        Assert.Equal(DevModeInstaller.CloseCommand, shell.Calls[^1].Command);
         Assert.All(shell.Calls.Skip(1), call => Assert.Null(call.Input));
+    }
+
+    [Fact]
+    public void CloseCommandIsTheSameAsOnMacAndPhones()
+    {
+        // Mac/iPhone ortak çekirdeği (DevModeInstaller.swift), iPhone (LGPhoneInstall.swift) ve Android (LgInstaller.kt) aynı.
+        Assert.Equal("/usr/bin/luna-send-pub -n 1 'luna://com.webos.applicationManager/closeByAppId' '{\"id\":\"com.couchsubs.tv\"}'; sleep 2",
+            DevModeInstaller.CloseCommand);
+    }
+
+    [Fact]
+    public async Task CloseFailureDoesNotThrow()
+    {
+        var shell = new FakeShell { Failure = _ => new DevModeException(DevModeError.Unreachable) };
+        Assert.NotNull(await Installer(shell).CloseAppAsync());
+    }
+
+    [Fact]
+    public void RunningCheckRestartsOnceThenReportsAStaleApp()
+    {
+        var check = new TvAppRunningCheck("0.9.86");
+        Assert.Equal(TvAppRunningVerdict.RestartAgain, check.Report("0.9.81"));
+        Assert.Equal(TvAppRunningVerdict.Stale, check.Report("0.9.81"));
+        Assert.Equal(TvAppRunningVerdict.Running, new TvAppRunningCheck("0.9.86").Report("0.9.86"));
+        Assert.Equal(TvAppRunningVerdict.Running, new TvAppRunningCheck("0.9.9").Report("0.9.10"));
+        Assert.Equal(TvAppRunningVerdict.RestartAgain, new TvAppRunningCheck("0.9.86").Report(""));
+        Assert.True(TvAppRunningCheck.IsStale("0.9.81", "0.9.84"));
+        Assert.False(TvAppRunningCheck.IsStale("0.9.84", "0.9.84"));
+        Assert.False(TvAppRunningCheck.IsStale("0.9.81", ""));
     }
 
     [Fact]
@@ -225,7 +257,8 @@ public class DevModeInstallerTests
                 : line.Contains("appinfo.json") ? new CommandResult(0, "\"version\": \"0.6.1\"") : null,
         };
         await Installer(shell).InstallAsync(Package(), "0.6.1");
-        Assert.Contains("rm -f '/media/developer/temp/couchsubs-test-", shell.Calls[^1].Command);
+        Assert.Contains("rm -f '/media/developer/temp/couchsubs-test-", shell.Calls[^2].Command);
+        Assert.Equal(DevModeInstaller.CloseCommand, shell.Calls[^1].Command);
     }
 
     [Fact]

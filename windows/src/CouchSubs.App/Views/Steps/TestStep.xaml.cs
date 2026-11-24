@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 using System.Windows;
+using CouchSubs.App.Controls;
 using System.Windows.Controls;
 using CouchSubs.Core;
 using CouchSubs.Shell;
@@ -9,10 +10,59 @@ namespace CouchSubs.App.Views.Steps;
 
 public partial class TestStep : UserControl
 {
+    private bool sent;
+    /// <summary>Abone olunan denetleyici: sayfadan çıkınca DataContext boşalsa da aboneliği bununla kaldırırız.</summary>
+    private AppController? subscribed;
+
     public TestStep()
     {
         InitializeComponent();
-        Loaded += (_, _) => ShowTarget();
+        // Perde önizlemesi: örnek Türkçe altyazı plakası (Mac DSPerdePreview).
+        Preview.SetLine("Lucia:", "Hazır olduğunda haber ver, gidiyoruz.", 15);
+        Loaded += (_, _) =>
+        {
+            if (DataContext is not AppController controller) return;
+            ShowTarget();
+            ShowTimeline();
+            if (subscribed is not null) subscribed.PropertyChanged -= OnChanged;
+            subscribed = controller;
+            controller.PropertyChanged += OnChanged;
+        };
+        Unloaded += (_, _) =>
+        {
+            if (subscribed is not null) subscribed.PropertyChanged -= OnChanged;
+            subscribed = null;
+        };
+    }
+
+    private void OnChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(AppController.TvClients) or nameof(AppController.TranslatorStatus) or nameof(AppController.Console))
+            Dispatcher.BeginInvoke(ShowTimeline);
+    }
+
+    /// <summary>
+    /// Adım çizelgesi (Mac TryItStep): PS5 bağlantısı (ya da pencere / Xbox), çeviri çalışıyor, TV'de (ya da bu ekranda) altyazı;
+    /// biten amber + tik, şimdiki amber halka.
+    /// </summary>
+    private void ShowTimeline()
+    {
+        // Sayfadan çıkıldıktan sonra kuyruktan gelen çağrı: DataContext boş olabilir (#1189).
+        if (DataContext is not AppController) return;
+        var text = Localizer.Current;
+        var onComputer = Controller.Settings.Output == SubtitleOutput.Computer;
+        var picture = Controller.Console is not null || Controller.IsXbox || Controller.CanStart;
+        var translation = Controller.TranslatorStatus == TranslatorStatus.Ready;
+        var shown = sent && (onComputer || Controller.TvClients > 0);
+        var console = Controller.Console is { } registered ? (string.IsNullOrEmpty(registered.Name) ? "PS5" : registered.Name) : Controller.ConsoleTitle;
+        var engine = Controller.Settings.Engine == TranslationEngine.Free ? text["Free Translation"] : Controller.Settings.Engine.DisplayName();
+        var screen = Controller.Tv?.Name ?? text["This PC"];
+        Timeline.Steps =
+        [
+            new(text[Controller.IsXbox ? "Xbox · Beta" : "PS5 Connection"], console, StepTimeline.Phase(picture, true)),
+            new(text["Translation Working"], engine, StepTimeline.Phase(translation, picture)),
+            new(text[onComputer ? "Subtitle on This Screen" : "TV Shows the Subtitle"], screen, StepTimeline.Phase(shown, picture && translation)),
+        ];
     }
 
     private AppController Controller => (AppController)DataContext;
@@ -32,8 +82,10 @@ public partial class TestStep : UserControl
     private void OnSend(object sender, RoutedEventArgs e)
     {
         Controller.SendTestSubtitle();
+        sent = true;
         Send.Style = (Style)FindResource("SecondaryButton");
         Question.Visibility = Visibility.Visible;
+        ShowTimeline();
     }
 
     private void OnAdjust(object sender, RoutedEventArgs e) => Controller.OverlayAdjusting = true;

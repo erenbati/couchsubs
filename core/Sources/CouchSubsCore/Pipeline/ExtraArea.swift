@@ -23,7 +23,9 @@ public enum ResultTarget: String, Codable, CaseIterable, Sendable {
 /// Masaüstünde sıradaki alan kısayolla da bir kez okunur (1. alan "1. alanı çevir" …).
 public struct ExtraArea: Codable, Equatable, Identifiable, Sendable {
     /// En çok bu kadar ek alan tanımlanır (her biri saniyede bir okunur; masaüstünde kısayolları Num 1-3).
-    public static let maxCount = 3
+    /// Eskiden 3 idi; yeni arayüzde sınır kaldırıldı (yalnız kayıt şişmesin diye üst sınır). İlk üçünün kısayolu var
+    /// (Num 1–3), sonrakiler kısayolsuz.
+    public static let maxCount = 50
 
     /// TV'deki kutunun kimliği; değişmez.
     public var id: String

@@ -23,8 +23,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -282,7 +280,7 @@ fun AreaTile() {
             SliderRow(stringResource(R.string.area_position), position, 0f..maxOf(1.0, 100 - height).toFloat()) { custom(region.withVertical(it, height)) }
             SliderRow(stringResource(R.string.area_height), height, (MINIMUM_REGION_SIZE * 100).toFloat()..100f) { custom(region.withVertical(position, it)) }
         }
-        RowItem(stringResource(R.string.area_keep_centered)) { Switch(centered, { centered = it; settings.keepAreaCentered = it }) }
+        SwitchRow(stringResource(R.string.area_keep_centered), checked = centered) { centered = it; settings.keepAreaCentered = it }
         // "Ortalı kalır" yalnız Ortada tut açıkken yazılır.
         Text(stringResource(if (centered) R.string.area_drag_note else R.string.area_drag_note_free), style = Tokens.Type.caption,
             color = Tokens.Color.secondary)
@@ -291,10 +289,7 @@ fun AreaTile() {
 
 @Composable
 private fun SliderRow(title: String, value: Double, range: ClosedFloatingPointRange<Float>, onChange: (Double) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.hair)) {
-        SliderHeader(title, "%${value.toInt()}")
-        Slider(value.toFloat(), { onChange(it.toDouble()) }, valueRange = range, colors = couchSliderColors())
-    }
+    com.couchsubs.mobile.ui.SliderRow(title, "%${value.toInt()}", value.toFloat(), { onChange(it.toDouble()) }, range)
 }
 
 /** Ayarlar › Ek alanlar: altyazının yanında sürekli okunan en çok üç küçük alan (görev, bildirim, telefon). */
@@ -330,7 +325,7 @@ fun ExtraAreasTile() {
                     Box(Modifier.weight(1f)) {
                         Field(area.name, { name -> update(area.id) { it.copy(name = name) } }, stringResource(R.string.extra_name))
                     }
-                    Switch(area.enabled, { on -> update(area.id) { it.copy(enabled = on) } })
+                    PerdeSwitch(area.enabled, { on -> update(area.id) { it.copy(enabled = on) } })
                     IconAction(Icons.Filled.Delete, stringResource(R.string.extra_remove)) { save(areas.filter { it.id != area.id }) }
                 }
                 val presets = ExtraAreaPreset.entries

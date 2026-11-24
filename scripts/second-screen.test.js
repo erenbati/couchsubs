@@ -68,7 +68,7 @@ test('ikinci ekran SSE akışındaki altyazıyı konuşan rengiyle büyük yazı
   const { server, seen, port } = await serve([
     ['style', { fontSize: 46, textColor: 'yellow', bold: false }],
     ['subtitle', { text: 'İlk satır', duration: 15000 }],
-    ['subtitle', { text: 'ARTHUR: Gitmeliyiz,\nhemen.', duration: 15000, speakers: [{ name: 'ARTHUR', color: '#4FC3F7' }] }],
+    ['subtitle', { text: 'ARTHUR: Gitmeliyiz,\nhemen.', duration: 15000, speakerNames: [{ name: 'ARTHUR', color: '#4FC3F7' }] }],
   ]);
   try {
     const html = await dump(`http://127.0.0.1:${port}/view?k=${KEY}`);
@@ -77,8 +77,8 @@ test('ikinci ekran SSE akışındaki altyazıyı konuşan rengiyle büyük yazı
     const line = element(html, 'line');
     assert.ok(line, 'altyazı satırı yok');
     assert.match(line.attributes, /class="on"/);
-    // Uygulamanın satır bölmesi birleşir, konuşanın adı rengini alır, yazı sarı.
-    assert.match(line.inner, /<span style="color: rgb\(79, 195, 247\);">ARTHUR: Gitmeliyiz, hemen\.<\/span>/);
+    // Uygulamanın satır bölmesi birleşir, yalnız konuşanın adı rengini alır, cümle seçilen yazı renginde (sarı).
+    assert.match(line.inner, /<span style="color: rgb\(79, 195, 247\);">ARTHUR:<\/span> Gitmeliyiz, hemen\./);
     assert.match(line.attributes, /color: rgb\(255, 225, 53\)/);
     const size = Number((line.attributes.match(/font-size: ([\d.]+)px/) || [])[1]);
     assert.ok(size >= 30, `yazı telefonda büyük olmalı (${size}px)`);

@@ -40,8 +40,8 @@ public class StatusPill : Control
     public PillTone Tone { get => (PillTone)GetValue(ToneProperty); set => SetValue(ToneProperty, value); }
 }
 
-/// <summary>Durum hapının ve rozetin tonu: boşta (gri), başarı (yeşil), canlı/uyarı (kırmızı), dikkat (amber).</summary>
-public enum PillTone { Idle, Success, Live, Attention }
+/// <summary>Durum hapının ve rozetin tonu: boşta (gri), başarı (yeşil), canlı/uyarı (kırmızı), dikkat (amber), açık (çeviri akıyor: canlı noktası nabız atar).</summary>
+public enum PillTone { Idle, Success, Live, Attention, On }
 
 /// <summary>Küçük rozet (24 yüksek, tam yuvarlak): Açık / Kapalı / Bilinmiyor gibi denetim sonuçları.</summary>
 public class Badge : ContentControl
@@ -84,10 +84,16 @@ public class OptionCard : RadioButton
 public class NavItem : RadioButton
 {
     public static readonly DependencyProperty HintProperty = DependencyProperty.Register(nameof(Hint), typeof(string), typeof(NavItem));
+    /// <summary>Segoe Fluent Icons simgesi (Mac'teki SF Symbol karşılığı).</summary>
+    public static readonly DependencyProperty IconProperty = DependencyProperty.Register(nameof(Icon), typeof(string), typeof(NavItem));
+    /// <summary>Simge karesinin tonu (tasarim.json: amber, peach, olive, teal, plum, sky, live).</summary>
+    public static readonly DependencyProperty TintProperty = DependencyProperty.Register(nameof(Tint), typeof(Brush), typeof(NavItem));
 
     static NavItem() => DefaultStyleKeyProperty.OverrideMetadata(typeof(NavItem), new FrameworkPropertyMetadata(typeof(NavItem)));
 
     public string? Hint { get => (string?)GetValue(HintProperty); set => SetValue(HintProperty, value); }
+    public string? Icon { get => (string?)GetValue(IconProperty); set => SetValue(IconProperty, value); }
+    public Brush? Tint { get => (Brush?)GetValue(TintProperty); set => SetValue(TintProperty, value); }
 }
 
 /// <summary>Renk seçimi noktası (32 ya da 24 px daire); seçiliyken amber halka.</summary>
@@ -113,7 +119,12 @@ public sealed class UpperCase : IValueConverter
 }
 
 /// <summary>Reklam bandının bir reklamı (kendi uygulamalarımız; üçüncü taraf ağı ve izleme yok).</summary>
-public sealed record BannerAd(string Title, string Text, string Url, Brush Art);
+public sealed record BannerAd(string Id, string Title, string Text, ImageSource? Icon, string? AppStore, string? GooglePlay)
+{
+    /// <summary>Bağlantı yoksa mağaza düğmesi pasif ve "Yakında" yazar (Cebbin Google Play).</summary>
+    public bool HasAppStore => AppStore is not null;
+    public bool HasGooglePlay => GooglePlay is not null;
+}
 
 /// <summary>
 /// Uygulama ve ayar sayfalarının altındaki 64 px reklam bandı: REKLAM etiketi, reklamlar 6 sn arayla sırayla döner,
@@ -177,7 +188,23 @@ public class AdBand : Control
     public override void OnApplyTemplate()
     {
         base.OnApplyTemplate();
-        if (GetTemplateChild("PART_Open") is ButtonBase open)
-            open.Click += (_, _) => { if (Current is { } ad && Uri.TryCreate(ad.Url, UriKind.Absolute, out var url)) BrowserLauncher.Open(url); };
+        if (GetTemplateChild("PART_AppStore") is ButtonBase appStore) appStore.Click += (_, _) => Open(Current?.AppStore);
+        if (GetTemplateChild("PART_GooglePlay") is ButtonBase googlePlay) googlePlay.Click += (_, _) => Open(Current?.GooglePlay);
+    }
+
+    private static void Open(string? link)
+    {
+        if (link is not null && Uri.TryCreate(link, UriKind.Absolute, out var url)) BrowserLauncher.Open(url);
+    }
+}
+
+/// <summary>Görsel ağaçta yukarı doğru arama.</summary>
+public static class VisualTree
+{
+    public static T? FindAncestor<T>(this DependencyObject element) where T : DependencyObject
+    {
+        for (var current = VisualTreeHelper.GetParent(element); current is not null; current = VisualTreeHelper.GetParent(current))
+            if (current is T match) return match;
+        return null;
     }
 }

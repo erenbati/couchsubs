@@ -585,12 +585,13 @@ class XboxSessionMachineTest {
     }
 
     @Test fun pictureResetsTheNoPictureStreak() {
-        val m = XboxSessionMachine()
+        var now = 1_000L
+        val m = XboxSessionMachine(clock = { now })
         assertEquals(XboxSessionMachine.Action.Retry(5000), m.fail(XboxError.NO_FIRST_FRAME, "görüntü yok"))
         m.start(); m.played(); m.status("Provisioned", null); m.streaming()
-        assertEquals(XboxSessionMachine.Action.Retry(15000), m.fail(XboxError.NO_PICTURE, "kesildi"))
-        m.start(); m.played(); m.status("Provisioned", null)
-        assertEquals(XboxSessionMachine.Action.Retry(45000), m.fail(XboxError.NO_FIRST_FRAME, "görüntü yok"))
+        now += 60_000
+        // Görüntü geldi: görüntüsüz bağlantı dizisi baştan sayılır, bu görüntüsüz bağlantı durdurmaz.
+        assertEquals(XboxSessionMachine.Action.Retry(5000), m.fail(XboxError.NO_FIRST_FRAME, "görüntü yok"))
         assertEquals(30_000L, XboxFirstFrameWatch.FIRST_FRAME_LIMIT_MS)
     }
 
@@ -610,26 +611,49 @@ class XboxSessionMachineTest {
         assertEquals(XboxSessionMachine.Action.Retry(null), m.status("Provisioning", """{"code":"Conflict","message":"x"}"""))
     }
 
-    @Test fun retriesBackOffThenStop() {
-        val m = XboxSessionMachine()
+    /**
+     * Gerçek kopmada en çok bir kez, geri çekilerek (5 sn) yeniden bağlanılır; o da kopunca durulur. Eskiden 5, 15, 45 sn
+     * aralarla üç deneme vardı, her biri Xbox'ta "uzaktan yürütme başlatıldı / durduruldu" bildirimi çıkarıyordu (Play,
+     * Android beta.85).
+     */
+    @Test fun realDropReconnectsAtMostOnceWithBackoff() {
+        var now = 1_000L
+        val m = XboxSessionMachine(clock = { now })
+        m.start(); m.played(); m.status("Provisioned", null); m.streaming()
+        now += 120_000
         assertEquals(XboxSessionMachine.Action.Retry(5000), m.fail(XboxError.NETWORK, "kopma"))
-        assertEquals(XboxSessionMachine.Action.Retry(15000), m.fail(XboxError.NETWORK, "kopma"))
-        assertEquals(XboxSessionMachine.Action.Retry(45000), m.fail(XboxError.NETWORK, "kopma"))
-        assertEquals(3, (m.phase as XboxSessionMachine.Phase.Failed).attempt)
-        assertEquals(XboxSessionMachine.Action.Retry(null), m.fail(XboxError.NETWORK, "kopma"))
+        assertEquals(1, (m.phase as XboxSessionMachine.Phase.Failed).attempt)
+        // Yeniden bağlanma da kısa sürede koptu: ikinci deneme yok.
+        m.start(); m.played(); m.status("Provisioned", null); m.streaming()
+        now += 10_000
+        assertEquals(XboxSessionMachine.Action.Retry(null), m.fail(XboxError.SERVER_CLOSED, "Xbox görüntü kanalını kapattı"))
+        assertFalse((m.phase as XboxSessionMachine.Phase.Failed).willRetry)
+        // Bağlanırken hata (görüntü hiç gelmedi): yine en çok bir deneme.
+        val fresh = XboxSessionMachine()
+        assertEquals(XboxSessionMachine.Action.Retry(5000), fresh.fail(XboxError.NETWORK, "kopma"))
+        assertEquals(XboxSessionMachine.Action.Retry(null), fresh.fail(XboxError.NETWORK, "kopma"))
     }
 
     @Test fun healthyStreamResetsRetries() {
         var now = 1_000L
         val m = XboxSessionMachine(clock = { now })
-        m.fail(XboxError.NETWORK, "kopma"); m.fail(XboxError.NETWORK, "kopma")
+        m.fail(XboxError.NETWORK, "kopma")
         m.start(); m.played(); m.status("Provisioned", null); m.streaming()
         now += 60_000
         assertEquals(XboxSessionMachine.Action.Retry(5000), m.fail(XboxError.NETWORK, "kopma"))
         // Kısa süren yayın sayacı sıfırlamaz.
         m.start(); m.played(); m.status("Provisioned", null); m.streaming()
         now += 1_000
-        assertEquals(XboxSessionMachine.Action.Retry(15000), m.fail(XboxError.NETWORK, "kopma"))
+        assertEquals(XboxSessionMachine.Action.Retry(null), m.fail(XboxError.NETWORK, "kopma"))
+    }
+
+    /** Görüntü akarken başarısız canlı tutma (404 dahil) yayını kapatmaz; görüntü durmuşsa eskisi gibi kapatır. */
+    @Test fun keepaliveFailureDoesNotEndAFlowingStream() {
+        assertFalse(XboxKeepalive.shouldEnd(gone = true, exhausted = false, pictureFlowing = true))
+        assertFalse(XboxKeepalive.shouldEnd(gone = false, exhausted = true, pictureFlowing = true))
+        assertTrue(XboxKeepalive.shouldEnd(gone = true, exhausted = false, pictureFlowing = false))
+        assertTrue(XboxKeepalive.shouldEnd(gone = false, exhausted = true, pictureFlowing = false))
+        assertFalse(XboxKeepalive.shouldEnd(gone = false, exhausted = false, pictureFlowing = false))
     }
 
     @Test fun signInErrorsDoNotRetry() {

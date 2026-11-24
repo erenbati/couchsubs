@@ -140,7 +140,14 @@ android {
     sourceSets.main.assets.srcDirs += layout.buildDirectory.dir('generated/couchsubs-tv')
     // Android TV ve LG paketleri: son GitHub sürümünden (tvReleasePackages).
     sourceSets.main.assets.srcDirs += layout.buildDirectory.dir('generated/couchsubs-tv-release')
-    testOptions { unitTests.returnDefaultValues = true }
+    // Perde tasarım belirteçleri (design/yeni-arayuz/tasarim.json v2): Mac, iPhone ve Windows'un okuduğu dosyadan derlemede
+    // üretilir (DesignTokens.kt); renk ve ölçü elle yazılmaz.
+    sourceSets.main.java.srcDirs += layout.buildDirectory.dir('generated/couchsubs-design/kotlin')
+    testOptions {
+        unitTests.returnDefaultValues = true
+        // Ekran görüntüsü testleri (Robolectric + Roborazzi) Android kaynaklarını ister.
+        unitTests.includeAndroidResources = true
+    }
     // BouncyCastle ve jsch jar'ları aynı OSGi dosyalarını taşır (uygulamada kullanılmaz).
     packaging { resources { excludes += ['/META-INF/{AL2.0,LGPL2.1}', 'META-INF/versions/*/OSGI-INF/MANIFEST.MF'] } }
 }
@@ -149,7 +156,62 @@ android {
 tasks.register('copyCouchSubsAssets', Copy) {
     into layout.buildDirectory.dir('generated/couchsubs-assets')
     from("$repoRoot/core/Sources/CouchSubsCore/Resources") { include 'ai-models.json', 'glossary-en-tr.json', 'obs-overlay.html', 'second-screen.html' }
+    // Açılır reklam promo.json indirilemezse uygulamayla gelen reklam (Mac, Windows ve iPhone ile aynı dosya ve görsel).
+    // Alt reklam şeridinin simgeleri de (Cebbin, Gramla, Bakkal; iPhone ile aynı dosyalar).
+    from("$repoRoot/design/yeni-arayuz") { include 'reklamlar.json', 'reklam/popup-*.jpg', 'reklam/*.png' }
 }
+
+// tasarim.json → DesignTokens.kt: renkler (açık/koyu ARGB), boşluk, köşe, ölçü ve hareket süreleri. Mac DSTokens ile
+// aynı adlar; anahtar eklenince Android'de de kendiliğinden görünür.
+def designTokensJson = file("$repoRoot/design/yeni-arayuz/tasarim.json")
+def designTokensOut = layout.buildDirectory.dir('generated/couchsubs-design/kotlin').get().asFile
+tasks.register('generateDesignTokens') {
+    inputs.file(designTokensJson)
+    outputs.dir(designTokensOut)
+    def source = designTokensJson
+    def outDir = designTokensOut
+    doLast {
+        def tokens = new groovy.json.JsonSlurper().parse(source)
+        def argb = { String hex ->
+            def h = hex.replace('#', '')
+            if (h.length() == 6) h = 'FF' + h
+            else if (h.length() == 8) h = h.substring(6) + h.substring(0, 6)
+            else throw new GradleException("tasarim.json: geçersiz renk $hex")
+            "0x${h.toUpperCase()}"
+        }
+        def number = { value -> value instanceof Integer || value instanceof Long ? "${value}f" : "${(value as BigDecimal).toPlainString()}f" }
+        def name = { String key -> key.replaceAll(/[^A-Za-z0-9]/, '') }
+        def out = new StringBuilder()
+        out << '// Üretilen dosya (app/build.gradle › generateDesignTokens); kaynak: design/yeni-arayuz/tasarim.json. Elle değiştirmeyin.\n'
+        out << 'package com.couchsubs.mobile.ui\n\n'
+        out << "/** Perde tasarım belirteçleri (tasarim.json v${tokens.version}). Renkler 0xAARRGGBB. */\n"
+        out << 'object DesignTokens {\n'
+        out << "    const val VERSION = ${tokens.version}\n"
+        out << "    const val DEFAULT_DARK = ${tokens.defaultTheme == 'dark'}\n"
+        out << "    const val MUTED_TRACKING = ${number(tokens.mutedTracking)}\n"
+        ['light', 'dark'].each { theme ->
+            out << "    object ${theme == 'light' ? 'Light' : 'Dark'} {\n"
+            tokens.color.each { key, pair -> out << "        const val ${name(key)} = ${argb(pair[theme])}L\n" }
+            out << '    }\n'
+        }
+        [space: tokens.space, radius: tokens.radius, size: tokens.size].each { group, values ->
+            out << "    object ${group.capitalize()} {\n"
+            values.each { key, value -> if (value instanceof Number) out << "        const val ${name(key)} = ${number(value)}\n" }
+            out << '    }\n'
+        }
+        out << '    object Motion {\n'
+        tokens.motion.each { key, value ->
+            if (value instanceof Number) out << "        const val ${name(key)} = ${value}\n"
+            else out << "        val ${name(key)} = floatArrayOf(${value.collect { number(it) }.join(', ')})\n"
+        }
+        out << '    }\n'
+        out << '}\n'
+        def file = new File(outDir, 'com/couchsubs/mobile/ui/DesignTokens.kt')
+        file.parentFile.mkdirs()
+        file.text = out.toString()
+    }
+}
+preBuild.dependsOn 'generateDesignTokens'
 tasks.register('copyCouchSubsPacks', Copy) {
     into layout.buildDirectory.dir('generated/couchsubs-packs')
     from("$repoRoot/core/Sources/CouchSubsCore/Resources") { include 'packs/*.json.gz' }
@@ -294,9 +356,14 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0'
     // Cihaz üstü yazı tanıma (Latin modeli uygulamayla gelir) ve ücretsiz çeviri (EN→TR modeli ilk kullanımda iner).
     implementation 'com.google.mlkit:text-recognition:16.0.1'
+    // Ayarlar › Konsol ve Kaynak › Oyunun dili: Japonca oyunlar (Mac/iPhone'daki gibi).
+    implementation 'com.google.mlkit:text-recognition-japanese:16.0.1'
     implementation 'com.google.mlkit:translate:17.0.3'
     implementation 'androidx.navigation:navigation-compose:2.8.5'
     implementation 'androidx.compose.material:material-icons-core'
+    // Perde cam katmanları (sekme çubuğu, üst/alt kenar): Android 12+ arkadaki içeriği RenderEffect ile bulanıklaştırır,
+    // öncesinde yarı saydam zemin (Apache-2.0).
+    implementation 'dev.chrisbanes.haze:haze:1.1.1'
 
     // Firebase: google-services.json yoksa da derlenir; çalışırken Backend.kt Firebase'in açılıp açılmadığına bakar.
     implementation platform('com.google.firebase:firebase-bom:33.7.0')
@@ -321,4 +388,23 @@ dependencies {
     testImplementation 'org.json:json:20240303'
     // Yalnız testlerde: paket imzasını bağımsız bir XML imza doğrulayıcısıyla denetlemek için (Apache-2.0).
     testImplementation 'org.apache.santuario:xmlsec:3.0.4'
+    // Yalnız ekran görüntüsü testleri (-Pcouchsubs.screenshots=true): Robolectric'in yerel grafik kipi ve Roborazzi.
+    testImplementation 'org.robolectric:robolectric:4.14.1'
+    testImplementation 'io.github.takahirom.roborazzi:roborazzi:1.39.0'
+    testImplementation 'io.github.takahirom.roborazzi:roborazzi-compose:1.39.0'
+    testImplementation 'androidx.compose.ui:ui-test-junit4'
+    debugImplementation 'androidx.compose.ui:ui-test-manifest'
+}
+
+// Ekran görüntüsü testleri (app/src/test/.../screenshots) yavaştır ve Robolectric'in Android kitaplığını indirir: CI'daki
+// JVM testlerinde çalışmaz, yalnız `-Pcouchsubs.screenshots=true` ile (çıktı: app/build/outputs/roborazzi;
+// iPhone görüntüleriyle yan yana göz kontrolü için).
+def screenshots = (findProperty('couchsubs.screenshots') ?: 'false').toString().toBoolean()
+tasks.withType(Test).configureEach {
+    if (!screenshots) exclude '**/screenshots/**'
+    else {
+        systemProperty 'roborazzi.test.record', 'true'
+        systemProperty 'robolectric.pixelCopyRenderMode', 'hardware'
+        maxHeapSize = '3g'
+    }
 }

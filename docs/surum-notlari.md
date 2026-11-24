@@ -4,11 +4,28 @@ CouchSubs'ın yeni deneme sürümü. Türkçe dil desteği olmayan PS5 oyunları
 
 **İndir:** [Mac (DMG)](https://github.com/yorulmazsinan/couchsubs/releases/latest/download/CouchSubs-macos.dmg) · [Windows (kurulum)](https://github.com/yorulmazsinan/couchsubs/releases/latest/download/CouchSubs-windows-Setup.exe) · [Android telefon (Google Play)](https://play.google.com/store/apps/details?id=com.couchsubs.mobile)
 
-**Bu sürümde yeni** (yalnız hata düzeltmeleri; gerçek oyun kareleriyle gerileme testinden geçti)
+**Bu sürümde yeni**
 
-- **Android TV'de siyah ekran** (Philips, TCL vb.): Görüntü modu artık varsayılan olarak Otomatik; TV uygulaması doğrudan Katman'da açılıyor, çeviri başlayınca ekran kararmıyor (TV uygulaması 0.9.74). İsteyen Ayarlar'dan Uygulama İçinde ya da Katman'ı seçebilir.
-- **Güncelleme penceresi:** Yalnız yeni sürümün notlarını gösteriyor, eski sürümlerin notları tekrar gelmiyor.
-- **Oyun paketleri:** Paket indirme istekleri uygulama tarafından imzalanıyor. Paketlerin kesintisiz inmesi için bu sürüme güncellemeniz önerilir.
+- **GTA 6 telefonu:** Oyun içi telefonun otomatik çevirisi artık varsayılan açık; daha önce kapalı kalmışsa bir kez açılıyor. Telefonda mesajları kaydırınca çeviri yenileniyor, ek alan çevirisi tek karelik ıskada silinmiyor (Windows, Mac, iPhone, Android).
+- **Kalan ekran yazısı çevirisi:** Menü, tabela ve yardım kutusu yazısı oyundan kalkınca çevirisi de TV'den ve ekrandan kalkıyor, oyunun önünde asılı kalmıyor (Windows, Mac, iPhone, Android; TV uygulaması 0.9.96).
+- **Eski TV uygulaması:** TV'deki uygulama eskiyse telefonda güncelleme önerisi çeviri ekranında da çıkıyor ve tek dokunuşla kuruluyor; TV'deki panelde "TV uygulaması eski" uyarısı görünüyor (iPhone, Android; TV uygulaması 0.9.95).
+- **Altyazı günlüğü:** Bir satır gösterilmeyip düşürülünce ya da bekletilince nedeni altyazı günlüğüne yazılıyor; sorun bildiriminde nedeni bulmayı kolaylaştırıyor.
+
+**beta.92'de gelenler:** Karakter Adı "Tüm Satır" (TV uygulaması 0.9.93), kare sayacı olmayan LG'lerde kararma (TV uygulaması 0.9.94), telefonda "Çevirileri kaldır", Windows hata pencereleri.
+
+**beta.91'de gelenler:** "Üstünde"de çevirinin İngilizce satıra binmemesi (TV uygulaması 0.9.89–0.9.91), ekran yazısı çevirisinin oturum boyunca aynı boy ve renkte kalması, Windows yayın penceresinde yerinde çizim, oyun takılması, Samsung'da silinen TV uygulaması, PS5'in IP'si değişince bulunması, sıkışık altyazı, reklam şeridi, Windows'ta PS5/Xbox akışı.
+
+**beta.90'da gelenler:** ekran yazısı çevirisinin özgün yazının yerinde çizilmesi (TV uygulaması 0.9.85), TV'nin adresi değişince yeniden bulunması, LG'de güncellemeden sonra eski sürüm (TV uygulaması 0.9.88) ve ilk oturumda kararma (TV uygulaması 0.9.87), PS5 Türkçe menü yazıları, açık mavi kâğıttaki ilan, GTA 6 telefon paneli, dublajda ses cinsiyeti.
+
+**beta.89'da gelenler:** LG'de 2 sn aralıkla kararma (TV uygulaması 0.9.82), Android TV'de çökme ve "Uygulama içinde" modu, LG "TV bağlantıyı reddetti" uyarısı, Xbox'ta oyun seçimi, açık zeminde koyu yazı, eksik Türkçe metinler.
+
+**beta.88'de gelenler:** yeni tasarım (Mac, Windows), Xbox'ta "Uzaktan yürütme başlatıldı / durdu" döngüsü, PS5'te bağlan-kop döngüsü, Windows'ta nadir çökmeye karşı önlem.
+
+**beta.87'de gelenler:** Windows'ta yeni arayüz, GTA 6 telefon mesajlarının yerinde durması, konuşan adı renginin yalnız adı boyaması, LG'de aralıklı kararma (TV uygulaması 0.9.80), TV'de eşleştirme kodu (TV uygulaması 0.9.81).
+
+**beta.86'da gelenler:** Mac'te yeni arayüz, TV bağlantısı koptuğunda "Yeniden bağlanılıyor…" ve TV uygulamasının kendiliğinden yeniden açılması, yapay zekâ çevirisinde kaybolan satırlar (#893), GTA 6 telefon mesajlarının yanda panelde gösterilmesi, plaka ve tabela yazılarının çevrilmemesi, Samsung "Sunucu bakım altında" uyarısı, Windows'ta güncelleme döngüsü.
+
+**beta.84'te gelenler:** Android TV'de siyah ekran düzeltmesi (varsayılan Otomatik görüntü modu, TV uygulaması 0.9.74), güncelleme penceresinde yalnız yeni sürümün notları, imzalı paket indirme.
 
 **beta.83'te gelenler:** GTA 6 telefon mesajlarının kendi balonunda çevrilmesi, haber bandının konuşmanın önüne geçmemesi (#933), Samsung'da AS400 uyarısı düzeltmesi.
 

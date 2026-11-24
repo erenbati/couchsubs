@@ -50,8 +50,12 @@ class RegionPixels(
  * Altyazı bölgesini Google ML Kit (cihaz üstü, Latin modeli uygulamayla gelir) ile okur. Renk gerekmez: yalnız parlaklık
  * düzlemi kopyalanır, renk düzlemleri nötr (128) bırakılır; bu hem hızlıdır hem beyaz/sarı altyazıyı aynı okur.
  */
-class SubtitleReader : AutoCloseable {
-    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+class SubtitleReader(language: String = "en") : AutoCloseable {
+    // Oyunun dili Japoncaysa Japonca modeli (uygulamayla gelir); diğer diller (en, de, fr, es) Latin modeliyle okunur
+    // (Mac/iPhone VisionReader(language:) ile aynı seçim).
+    private val recognizer = if (language == "ja")
+        TextRecognition.getClient(com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions.Builder().build())
+    else TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
     companion object {
         /** Karenin (Y düzlemi) bölgesini NV21 gri görüntüye kopyalar (en ve boy çift sayıya yuvarlanır). */

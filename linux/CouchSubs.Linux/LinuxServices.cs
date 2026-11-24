@@ -118,7 +118,8 @@ public sealed class LinuxServices : IAppServices
                 throw;
             }
         }, () => LgDiscovery.SearchAsync(), onMoved);
-        return new Keeper(new TvKeeper(locator.ConnectAsync, AppController.TvAppId, parameters));
+        // Açık ve bağlı TV uygulamasına yeni bağlantıda açma komutu gitmez (#1055; Windows ile aynı).
+        return new Keeper(new TvKeeper(locator.ConnectAsync, AppController.TvAppId, parameters, tvConnected: appConnected));
     }
 
     // --- TV uygulamasını kurma ---

@@ -17,7 +17,10 @@ import androidx.compose.animation.AnimatedContentTransitionScope.SlideDirection
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -31,6 +34,7 @@ import androidx.navigation.compose.rememberNavController
 import com.couchsubs.mobile.Services
 import com.couchsubs.mobile.account.Telemetry
 import com.couchsubs.mobile.promo.PromoController
+import com.couchsubs.mobile.promo.PromoPolicy
 import com.couchsubs.mobile.service.LiveState
 import com.couchsubs.mobile.service.TranslationService
 import com.couchsubs.mobile.settings.SubtitleTarget
@@ -51,6 +55,8 @@ object Routes {
     const val PLATFORM = "platform"
     const val XBOX_LOGIN = "xboxlogin"
     const val XBOX_CONSOLE = "xboxconsole"
+    /** Kurulumda TV adımından sonra: PS5 TV'nin hangi girişine takılı (Mac ve iPhone ile aynı adım). */
+    const val HDMI = "hdmi"
 
     /** Kurulumun eksik ilk adımı; hepsi tamamsa ana ekran. */
     fun next(): String {
@@ -75,13 +81,17 @@ object Routes {
 /** Ekran geçişinin süresi (ms) ve kayma payı (genişliğin 1/n'i). */
 private const val NAV_MS = 280
 private const val NAV_SHIFT = 8
+/** Geçiş animasyonları kapalıyken kullanılan kısa solma (ms). */
+private const val FADE_MS = 120
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Uygulama hep koyu; sistem açık temadayken de durum çubuğu simgeleri açık renk kalsın.
-        enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
         val settings = Services.settings
+        // Ayarlar › Temel › Görünüm ve Geçiş Animasyonları (Mac ve iPhone ile aynı; varsayılan koyu ve açık).
+        Tokens.appearance = settings.appearance
+        Tokens.transitionAnimations = settings.transitionAnimations
+        applySystemBars(Tokens.dark)
         // Tanıtım popup'ı: uygulama ön plana her geldiğinde (soğuk açılışta hemen, sonra en çok günde bir) promo.json'a
         // arka planda bakılır; ağ hatası sessizdir. Kurulum ya da ilk tur bitmediyse bu açılışta hazırlanmaz.
         lifecycle.addObserver(androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -89,10 +99,32 @@ class MainActivity : ComponentActivity() {
                 PromoController.refresh(applicationContext, Services.scope, setupDone = Routes.next() == Routes.MAIN && settings.tourShown)
         })
         setContent {
-            CouchSubsTheme {
+            CouchSubsTheme(forceDark = inPip) {
+                // Görünüm değişince durum ve gezinme çubuğu simgeleri de zemine uyar (koyu zeminde açık, açık zeminde koyu).
+                val dark = Tokens.dark
+                LaunchedEffect(dark) { applySystemBars(dark) }
                 val navigation = rememberNavController()
                 val currentEntry by navigation.currentBackStackEntryAsState()
                 val status by LiveState.status.collectAsState()
+                // Hareket kapısı: çeviri sürerken sürekli animasyonlar durur (yalnız canlı nabız kalır).
+                LaunchedEffect(status.running) { Tokens.translating = status.running }
+                // Perde: üç sekme (Ana Ekran · Geçmiş · Ayarlar); her sekmenin kökü ana ekran yolunda (Routes.MAIN).
+                var tab by rememberSaveable { mutableStateOf(PhoneTab.HOME) }
+                fun select(chosen: PhoneTab) {
+                    // Aynı sekmeye yeniden dokunmak o sekmenin köküne döner; üstte açık sayfa varsa kapanır.
+                    if (currentEntry?.destination?.route != Routes.MAIN) navigation.popBackStack(Routes.MAIN, inclusive = false)
+                    tab = chosen
+                }
+                homeTab = { tab = PhoneTab.HOME }
+                /** Uygulama sayfaları: alt reklam şeridi (çeviri ve deneme modunda yok) ve cam sekme çubuğu. */
+                @Composable
+                fun AppPage(active: PhoneTab?, content: @Composable () -> Unit) {
+                    CompositionLocalProvider(
+                        LocalTabBar provides TabBarState(active ?: tab, ::select),
+                        LocalAdBand provides PromoPolicy.adBandVisible(appPage = true, translating = status.running, demo = status.demo),
+                        content = content,
+                    )
+                }
                 LaunchedEffect(status.running) {
                     if (status.running && settings.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -112,12 +144,14 @@ class MainActivity : ComponentActivity() {
                 }
                 // Ekranlar arası geçiş: yeni ekran sağdan biraz kayarak ve solarak gelir, geri dönüşte tersi (~280 ms).
                 // Sistemde animasyonlar kapalıysa Compose süreleri kendisi sıfırlar.
+                // Ayarlar › Temel › Geçiş Animasyonları kapalıysa yalnız kısa solma (Mac ve iPhone ile aynı).
+                val motion = Tokens.transitionAnimations
                 NavHost(
                     navigation, startDestination = Routes.next(),
-                    enterTransition = { slideIntoContainer(SlideDirection.Start, tween(NAV_MS), initialOffset = { it / NAV_SHIFT }) + fadeIn(tween(NAV_MS)) },
-                    exitTransition = { slideOutOfContainer(SlideDirection.Start, tween(NAV_MS), targetOffset = { it / NAV_SHIFT }) + fadeOut(tween(NAV_MS)) },
-                    popEnterTransition = { slideIntoContainer(SlideDirection.End, tween(NAV_MS), initialOffset = { it / NAV_SHIFT }) + fadeIn(tween(NAV_MS)) },
-                    popExitTransition = { slideOutOfContainer(SlideDirection.End, tween(NAV_MS), targetOffset = { it / NAV_SHIFT }) + fadeOut(tween(NAV_MS)) },
+                    enterTransition = { if (motion) slideIntoContainer(SlideDirection.Start, tween(NAV_MS), initialOffset = { it / NAV_SHIFT }) + fadeIn(tween(NAV_MS)) else fadeIn(tween(FADE_MS)) },
+                    exitTransition = { if (motion) slideOutOfContainer(SlideDirection.Start, tween(NAV_MS), targetOffset = { it / NAV_SHIFT }) + fadeOut(tween(NAV_MS)) else fadeOut(tween(FADE_MS)) },
+                    popEnterTransition = { if (motion) slideIntoContainer(SlideDirection.End, tween(NAV_MS), initialOffset = { it / NAV_SHIFT }) + fadeIn(tween(NAV_MS)) else fadeIn(tween(FADE_MS)) },
+                    popExitTransition = { if (motion) slideOutOfContainer(SlideDirection.End, tween(NAV_MS), targetOffset = { it / NAV_SHIFT }) + fadeOut(tween(NAV_MS)) else fadeOut(tween(FADE_MS)) },
                 ) {
                     composable(Routes.WELCOME) {
                         WelcomeScreen(onDemo = { startDemo(navigation) }) {
@@ -149,13 +183,21 @@ class MainActivity : ComponentActivity() {
                     composable(Routes.PAIR) { PairScreen(onBack = back(navigation), onSkip = skip(navigation)) { advance(navigation) } }
                     composable(Routes.TARGET) {
                         val onboarding = navigation.previousBackStackEntry == null
-                        TargetScreen(onBack = back(navigation), onTvInstall = { navigation.navigate(Routes.TV_INSTALL) }) {
-                            if (onboarding) Telemetry.event(Telemetry.ONBOARDING_DONE, "target" to settings.target.name.lowercase())
-                            advance(navigation)
-                        }
+                        // Kurulum adımı değilse uygulama sayfasıdır (iPhone: hedef sayfası reklam şeridi ve sekme çubuğuyla).
+                        if (!onboarding) AppPage(null) { TargetRoute(navigation, onboarding) }
+                        else TargetRoute(navigation, onboarding)
                     }
+                    composable(Routes.HDMI) { HdmiInputScreen { advance(navigation) } }
                     composable(Routes.MAIN) {
-                        MainScreen(
+                        AppPage(null) {
+                        when (tab) {
+                        PhoneTab.HISTORY -> HistoryScreen(onBack = null)
+                        PhoneTab.SETTINGS -> SettingsScreen(onBack = null, onPacks = { navigation.navigate(Routes.PACKS) },
+                            onTarget = { navigation.navigate(Routes.TARGET) }, onPairing = { pairing(navigation) },
+                            onTvInstall = { navigation.navigate(Routes.TV_INSTALL) },
+                            onPlatform = { navigation.navigate(Routes.PLATFORM) }, onDemo = { startDemo(navigation) },
+                            onPsn = { psn(navigation) })
+                        PhoneTab.HOME -> MainScreen(
                             status = status,
                             onStart = ::startTranslation,
                             onStop = { TranslationService.stop(this@MainActivity) },
@@ -174,30 +216,30 @@ class MainActivity : ComponentActivity() {
                             },
                             onHome = currentEntry?.destination?.route == Routes.MAIN,
                         )
+                        }
+                        }
                     }
                     composable(Routes.PACKS) {
-                        PacksScreen(onBack = { pop(navigation) }, packInUse = status.packInUse)
+                        AppPage(null) { PacksScreen(onBack = { pop(navigation) }, packInUse = status.packInUse) }
                     }
-                    composable(Routes.PROFILE) {
-                        ProfileScreen(
-                            onBack = { pop(navigation) },
-                            onSettings = { navigation.navigate(Routes.SETTINGS) },
-                            onPairing = { pairing(navigation) },
-                            onTarget = { navigation.navigate(Routes.TARGET) },
-                            onPsn = { navigation.navigate(Routes.PSN) },
-                        )
+                    // Profil Ayarlar'a katıldı (hesap kartları, cihazlar, bildirimler); eski bağlantılar Ayarlar'ı açar.
+                    for (route in listOf(Routes.PROFILE, Routes.SETTINGS)) composable(route) {
+                        AppPage(PhoneTab.SETTINGS) {
+                            SettingsScreen(onBack = { pop(navigation) }, onPacks = { navigation.navigate(Routes.PACKS) },
+                                onTarget = { navigation.navigate(Routes.TARGET) }, onPairing = { pairing(navigation) },
+                                onTvInstall = { navigation.navigate(Routes.TV_INSTALL) },
+                                onPlatform = { navigation.navigate(Routes.PLATFORM) }, onDemo = { startDemo(navigation) },
+                                onPsn = { psn(navigation) })
+                        }
                     }
-                    composable(Routes.SETTINGS) {
-                        SettingsScreen(onBack = { pop(navigation) }, onPacks = { navigation.navigate(Routes.PACKS) },
-                            onTarget = { navigation.navigate(Routes.TARGET) }, onPairing = { pairing(navigation) },
-                            onTvInstall = { navigation.navigate(Routes.TV_INSTALL) },
-                            onPlatform = { navigation.navigate(Routes.PLATFORM) }, onDemo = { startDemo(navigation) })
-                    }
-                    composable(Routes.HISTORY) { HistoryScreen(onBack = { pop(navigation) }) }
+                    composable(Routes.HISTORY) { AppPage(PhoneTab.HISTORY) { HistoryScreen(onBack = { pop(navigation) }) } }
                     composable(Routes.TV_INSTALL) {
                         // Kurulum bitince "Ana ekrana geç": kurulumun 3. adımından gelindiyse kurulum biter (TvAppUpdate.installed).
                         TvInstallScreen(onBack = { pop(navigation) }) {
-                            if (Routes.next() == Routes.MAIN) navigation.navigate(Routes.MAIN) { popUpTo(0) { inclusive = true } }
+                            if (Routes.next() == Routes.MAIN) {
+                                homeTab()
+                                navigation.navigate(Routes.MAIN) { popUpTo(0) { inclusive = true } }
+                            }
                             else pop(navigation)
                         }
                     }
@@ -208,6 +250,43 @@ class MainActivity : ComponentActivity() {
                 if (inPip) PipSubtitleView(status)
             }
         }
+    }
+
+    /** Kurulumun hedef adımı ya da Ayarlar'dan açılan hedef seçimi. */
+    @Composable
+    private fun TargetRoute(navigation: NavHostController, onboarding: Boolean) {
+        val settings = Services.settings
+        TargetScreen(onBack = back(navigation), onTvInstall = { navigation.navigate(Routes.TV_INSTALL) }) {
+            if (onboarding) Telemetry.event(Telemetry.ONBOARDING_DONE, "target" to settings.target.name.lowercase())
+            // Kurulumda TV seçildiyse (Android TV değil) TV girişi sorulur (Mac ve iPhone ile aynı adım).
+            if (onboarding && settings.asksTvInput) navigation.navigate(Routes.HDMI) { popUpTo(0) { inclusive = true } }
+            else advance(navigation)
+        }
+    }
+
+    /** Ana ekrana dönerken (TV kurulumu bitti, deneme modu açıldı) Ana Ekran sekmesini seçer. */
+    private var homeTab: () -> Unit = {}
+
+    /** Ayarlar'daki PSN hesabı kartı: giriş sayfası (Xbox seçiliyse Microsoft girişi). */
+    private fun psn(navigation: NavHostController) {
+        navigation.navigate(if (Services.settings.xbox) Routes.XBOX_LOGIN else Routes.PSN)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Tokens.foreground = true
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Uygulama arka plandayken sürekli animasyonlar durur (hareket kapısı).
+        Tokens.foreground = false
+    }
+
+    /** Durum ve gezinme çubuğu: koyu görünümde açık simgeler, açık görünümde koyu simgeler. */
+    private fun applySystemBars(dark: Boolean) {
+        val style = if (dark) SystemBarStyle.dark(Color.TRANSPARENT) else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+        enableEdgeToEdge(style, style)
     }
 
     /** Küçük pencerede (Resim içinde resim) mi; Compose içeriği buna göre çizilir. */
@@ -285,6 +364,7 @@ class MainActivity : ComponentActivity() {
         if (LiveState.status.value.running) TranslationService.stop(this)
         // Durdurma isteği hizmete önce ulaşsın; yeni oturum ardından deneme kaynağıyla açılır.
         window.decorView.postDelayed({ TranslationService.startDemo(this) }, if (LiveState.status.value.running) 600L else 0L)
+        homeTab()
         navigation.navigate(Routes.MAIN) { popUpTo(0) { inclusive = true } }
     }
 

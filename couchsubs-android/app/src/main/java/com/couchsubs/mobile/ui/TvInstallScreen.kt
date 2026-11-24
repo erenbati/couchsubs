@@ -51,6 +51,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -67,6 +68,7 @@ import com.couchsubs.mobile.tv.TvAppStatus
 import com.couchsubs.mobile.tv.TvAppUpdate
 import com.couchsubs.mobile.tv.TvBrand
 import com.couchsubs.mobile.tv.TvDiscovery
+import com.couchsubs.mobile.tv.TvRelocation
 import com.couchsubs.mobile.tv.samsung.AdbKey
 import com.couchsubs.mobile.tv.samsung.InstallLog
 import com.couchsubs.mobile.tv.samsung.InstallStep
@@ -94,11 +96,15 @@ private const val TAG = "CouchSubsTvInstall"
 /** Ağda görülen Samsung TV ve 8001'den okunan durumu (yoksa null). */
 private data class SamsungCandidate(val host: String, val name: String, val info: SamsungTvInfo?)
 
+/** Kayıtlı/yazılan adres hiç yanıt vermiyor ve TV ağda bulunamadı ([TvRelocation.retarget]). */
+internal class TvNotRespondingException : Exception(com.couchsubs.mobile.tv.TvReach.NOT_RESPONDING_LINE)
+
 private sealed interface InstallState {
     data object Idle : InstallState
     data class Working(val step: InstallStep) : InstallState
     data class Done(val version: String, val installed: Boolean) : InstallState
-    data class Failed(val error: SamsungInstallError?, val detail: String?, val refusal: SamsungRefusal = SamsungRefusal.Unknown) : InstallState
+    data class Failed(val error: SamsungInstallError?, val detail: String?, val refusal: SamsungRefusal = SamsungRefusal.Unknown,
+                      val notResponding: Boolean = false) : InstallState
 }
 
 /**
@@ -126,9 +132,9 @@ fun TvInstallScreen(onBack: () -> Unit, onDone: () -> Unit = onBack) {
             val found = withContext(Dispatchers.IO) { runCatching { TvDiscovery.search() }.getOrDefault(emptyList()) }
             brand = found.firstOrNull { it.brand != TvBrand.ANDROID_TV }?.brand ?: found.firstOrNull()?.brand ?: TvBrand.SAMSUNG
         }
-        ScreenScaffold(top = { TopBar(onBack = onBack) }) {
+        ScreenScaffold(top = { TopBar(onBack = onBack) }, ambient = true) {
             Heading(stringResource(R.string.tvinstall_title), stringResource(R.string.tvinstall_any_body))
-            Tile(Modifier.fillMaxWidth()) { StatusLabel(stringResource(R.string.tvinstall_searching), live = true) }
+            InstallSearching()
         }
         return
     }
@@ -153,6 +159,13 @@ internal fun tvAppSummary(): String? {
 @Composable
 internal fun TvAppUpdateCard(onUpdate: (InstalledTv) -> Unit) {
     val status by TvAppUpdate.status.collectAsState()
+    (status as? TvAppStatus.RunningStale)?.let { stale ->
+        // LG: paket güncel ama TV eski sürümü çalıştırmayı sürdürüyor (kapatıp açtıktan sonra da).
+        Tile(Modifier.fillMaxWidth(), style = TileStyle.ACTIVE) {
+            Text(stringResource(R.string.tvapp_stale_running, stale.running), style = Tokens.Type.body, color = Tokens.Color.text)
+        }
+        return
+    }
     val outdated = status as? TvAppStatus.Outdated ?: return
     Tile(Modifier.fillMaxWidth(), style = TileStyle.ACTIVE) {
         Text(stringResource(R.string.tvapp_update_title), style = Tokens.Type.headline, color = Tokens.Color.text)
@@ -193,9 +206,9 @@ private fun SamsungInstallScreen(onBack: () -> Unit, onDone: () -> Unit, brandPi
         val main = Handler(Looper.getMainLooper())
         scope.launch {
             state = try {
-                val result = withContext(Dispatchers.IO) {
-                    val installer = SamsungInstaller(
-                        host = target,
+                val (installedAt, result) = withContext(Dispatchers.IO) {
+                    fun runAt(at: String) = SamsungInstaller(
+                        host = at,
                         profilesDirectory = File(context.noBackupFilesDir, "samsung"),
                         adbKey = { AdbKey.loadOrCreate(File(context.noBackupFilesDir, "sdb/adbkey")) },
                         certificates = SamsungCertificates(log = InstallLog(logFile)::write),
@@ -211,12 +224,27 @@ private fun SamsungInstallScreen(onBack: () -> Unit, onDone: () -> Unit, brandPi
                         },
                         progress = { step -> main.post { if (state is InstallState.Working) state = InstallState.Working(step) } },
                         log = InstallLog(logFile),
-                    )
-                    installer.ensureInstalled({ context.assets.open("tv/couchsubs-samsung.wgt").use { it.readBytes() } },
+                    ).ensureInstalled({ context.assets.open("tv/couchsubs-samsung.wgt").use { it.readBytes() } },
                         BuildConfig.TV_SAMSUNG_VERSION, replaceForeign)
+                    try {
+                        target to runAt(target)
+                    } catch (error: SamsungInstallException) {
+                        // TV'nin adresi değişmiş olabilir: adres hiç yanıt vermiyorsa TV ağda yeniden aranır (LG ile aynı).
+                        if (error.error != SamsungInstallError.UNREACHABLE) throw error
+                        when (val moved = TvRelocation.retarget(target, TvBrand.SAMSUNG, InstallLog(logFile))) {
+                            TvRelocation.Retarget.Responds -> throw error
+                            TvRelocation.Retarget.Silent -> throw TvNotRespondingException()
+                            is TvRelocation.Retarget.Moved -> {
+                                main.post { host = moved.host }
+                                moved.host to runAt(moved.host)
+                            }
+                        }
+                    }
                 }
-                TvAppUpdate.installed(InstalledTv(TvBrand.SAMSUNG, target, version = result.version))
+                TvAppUpdate.installed(InstalledTv(TvBrand.SAMSUNG, installedAt, version = result.version))
                 InstallState.Done(result.version, result.installed)
+            } catch (error: TvNotRespondingException) {
+                InstallState.Failed(SamsungInstallError.UNREACHABLE, null, notResponding = true)
             } catch (error: SamsungInstallException) {
                 // TV'de 26101 kapalıysa 8001'den geliştirici modu yeniden sorulur: neden ayar mı, yeniden başlatma mı (#524).
                 val refusal = if (error.error != SamsungInstallError.UNREACHABLE) SamsungRefusal.Unknown else withContext(Dispatchers.IO) {
@@ -249,69 +277,44 @@ private fun SamsungInstallScreen(onBack: () -> Unit, onDone: () -> Unit, brandPi
         return
     }
 
-    ScreenScaffold(top = { TopBar(onBack = onBack) }, bottom = {
-        if (!manual && !working) GhostButton(stringResource(R.string.tvinstall_not_found)) { manual = true }
+    ScreenScaffold(top = { TopBar(onBack = onBack) }, ambient = true, bottom = {
         if (state is InstallState.Done) PrimaryButton(stringResource(R.string.tvinstall_go_home), onClick = onDone)
         else PrimaryButton(stringResource(if (state is InstallState.Failed) R.string.tvinstall_retry else R.string.tvinstall_button),
-            enabled = !working && host.isNotBlank() && !TvAddress.isPhoneAddress(host, phoneIp)) { install() }
+            enabled = !working && host.isNotBlank() && !TvAddress.isPhoneAddress(host, phoneIp), busy = working) { install() }
     }) {
         Heading(stringResource(R.string.tvinstall_title), stringResource(R.string.tvinstall_body))
         if (!working) brandPicker()
         NoteTile(stringResource(R.string.tvinstall_supported), Tokens.Color.secondary)
 
-        TileLabel(stringResource(R.string.tvinstall_tvs))
+        InstallListTitle(stringResource(R.string.tvinstall_tvs), searching = candidates == null)
         when (val list = candidates) {
-            null -> Tile(Modifier.fillMaxWidth()) { Text(stringResource(R.string.tvinstall_searching), style = Tokens.Type.body, color = Tokens.Color.secondary) }
+            null -> InstallSearching()
             else -> {
-                if (list.isEmpty()) Tile(Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.tvinstall_none), style = Tokens.Type.body, color = Tokens.Color.secondary)
-                }
+                if (list.isEmpty()) InstallEmpty(stringResource(R.string.tvinstall_none))
                 list.forEach { tv ->
-                    Tile(Modifier.fillMaxWidth(), style = if (host == tv.host) TileStyle.ACTIVE else TileStyle.NORMAL,
-                        onClick = { if (!working) host = tv.host }) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Tokens.Space.gap)) {
-                            TileIcon(CouchIcons.Tv)
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Tokens.Space.hair)) {
-                                Text(tv.name, style = Tokens.Type.headline, color = Tokens.Color.text)
-                                Text(listOfNotNull(tv.info?.model, tv.host).joinToString(" · "), style = Tokens.Type.caption, color = Tokens.Color.secondary)
-                                developerState(tv.info, phoneIp)?.let { (text, ok) -> StatusLabel(text, ok = ok) }
-                            }
-                            if (host == tv.host) SelectedCheck()
-                        }
-                    }
+                    TvCard(tv.name, listOfNotNull("Samsung", tv.info?.model, tv.host).joinToString(" · "), host == tv.host,
+                        status = developerState(tv.info, phoneIp)?.let { (text, ok) -> { StatusChip(text, if (ok) ChipTone.OK else ChipTone.AMBER) } },
+                        onClick = { if (!working) host = tv.host })
                 }
             }
         }
+        // iPhone ile aynı yer: "TV Listede Yok mu?" listenin hemen altında, alt çubukta yalnız ana düğme.
+        if (!manual && !working) GhostButton(stringResource(R.string.tvinstall_not_found)) { manual = true }
         if (manual) TvAddressField(host, { host = it.trim() }, phoneIp)
 
-        Tile(Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.tvinstall_steps_title), style = Tokens.Type.headline, color = Tokens.Color.text)
-            Text(stringResource(R.string.tvinstall_step1), style = Tokens.Type.body, color = Tokens.Color.secondary)
-            Text(stringResource(R.string.tvinstall_step2), style = Tokens.Type.body, color = Tokens.Color.secondary)
-            Text(stringResource(R.string.tvinstall_step3), style = Tokens.Type.body, color = Tokens.Color.secondary)
-            Text(phoneIp ?: stringResource(R.string.tvinstall_phone_ip_unknown), style = Tokens.Type.title, color = Tokens.Color.accentText)
-            Text(stringResource(R.string.tvinstall_step4), style = Tokens.Type.body, color = Tokens.Color.secondary)
+        InstallSteps(stringResource(R.string.tvinstall_steps_title), listOf(stringResource(R.string.tvinstall_step1),
+            stringResource(R.string.tvinstall_step2), stringResource(R.string.tvinstall_step3), stringResource(R.string.tvinstall_step4))) {
+            // Host PC IP olarak yazılacak adres (3. adımın hemen altında; mono, amber).
+            Text(phoneIp ?: stringResource(R.string.tvinstall_phone_ip_unknown), style = Tokens.Type.monoValue, color = Tokens.Color.accentText,
+                modifier = Modifier.padding(start = 36.dp))
         }
         Text(stringResource(R.string.tvinstall_signin_note), style = Tokens.Type.caption, color = Tokens.Color.secondary)
 
         when (val current = state) {
             InstallState.Idle -> Unit
-            is InstallState.Working -> Tile(Modifier.fillMaxWidth()) {
-                StatusLabel(stepText(current.step), live = true)
-            }
-            is InstallState.Done -> Tile(Modifier.fillMaxWidth(), style = TileStyle.ACTIVE) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Tokens.Space.gap)) {
-                    TileIcon(Icons.Filled.Check, Tokens.Color.success)
-                    Text(stringResource(if (current.installed) R.string.tvinstall_done else R.string.tvinstall_up_to_date, current.version),
-                        style = Tokens.Type.headline, color = Tokens.Color.text)
-                }
-                // Telefondan kuranların çoğunun bilgisayarı yoktur; TV'nin bekleme ekranı hata sanılıyordu (#113).
-                Text(stringResource(R.string.tvinstall_next), style = Tokens.Type.caption, color = Tokens.Color.secondary)
-            }
-            is InstallState.Failed -> {
-                NoteTile(failureText(current, phoneIp))
-                GhostButton(stringResource(R.string.tvinstall_share_log)) { shareLog(context, logFile) }
-            }
+            is InstallState.Working -> InstallWorking(current.step)
+            is InstallState.Done -> InstallDone(stringResource(if (current.installed) R.string.tvinstall_done else R.string.tvinstall_up_to_date, current.version))
+            is InstallState.Failed -> InstallErrorBox(failureText(current, phoneIp), onShareLog = { shareLog(context, logFile) })
         }
     }
 }
@@ -520,6 +523,7 @@ internal fun stepText(step: InstallStep) = stringResource(when (step) {
 @Composable
 private fun failureText(failure: InstallState.Failed, phoneIp: String?): String {
     val context = LocalContext.current
+    if (failure.notResponding) return context.getString(R.string.tv_not_responding)
     val advice = when (failure.error) {
         SamsungInstallError.UNREACHABLE -> when (val refusal = failure.refusal) {
             is SamsungRefusal.DifferentNetworks -> context.getString(R.string.tvinstall_err_other_network, refusal.tv, refusal.phone)
@@ -541,6 +545,8 @@ private fun failureText(failure: InstallState.Failed, phoneIp: String?): String 
         SamsungInstallError.INSTALL_FAILED, null -> context.getString(R.string.tvinstall_err_failed)
     }
     var text = advice
+    // Kurulum bağlantısı reddedildi ("IP hatası", #1158): hangi menüde ne yapılacağı bu cihazın adresiyle tek satırda.
+    if (failure.error == SamsungInstallError.UNREACHABLE) text += "\n\n" + context.getString(R.string.tvinstall_host_pc_steps, phoneIp ?: "?")
     failure.detail?.takeIf { it.isNotBlank() }?.let { text += "\n\n" + context.getString(R.string.tvinstall_details, it) }
     if (failure.error == SamsungInstallError.INSTALL_FAILED || failure.error == SamsungInstallError.CERTIFICATE_REJECTED)
         text += "\n\n" + context.getString(R.string.tvinstall_maintenance)

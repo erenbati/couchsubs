@@ -55,8 +55,59 @@ public static class ThemeManager
         tile.Freeze();
         resources["tileBrush"] = tile;
         resources["windowBackgroundBrush"] = resources["backgroundBrush"];
+        ApplyPerde(resources, dark);
         Changed?.Invoke();
     }
+
+    /// <summary>
+    /// Perde'nin bileşik fırçaları (tasarim.json v2 › elevation, effect): kartın kıl çizgisi + koyu temada üst kenar parlaması
+    /// (e1), ana düğmenin amber degradesi (glowPrimary), üst parlama, cam çubuklar (e3: yarı saydam koyu degrade; WPF
+    /// arkadaki içeriği bulanıklaştırmaz, bu yüzden cam katmanı biraz daha koyudur).
+    /// </summary>
+    private static void ApplyPerde(ResourceDictionary resources, bool dark)
+    {
+        Color Get(string name) => resources[$"{name}Color"] is Color color ? color : Colors.Transparent;
+        static Brush Frozen(Brush brush)
+        {
+            brush.Freeze();
+            return brush;
+        }
+        var border = Get("border");
+        var highlight = Get("topHighlight");
+        // e1: üst kenarda kıl çizgi + parlama (inset 0 1 0 topHighlight), ortaya doğru normal kıl çizgiye iner.
+        var top = Color.FromArgb((byte)Math.Min(255, border.A + highlight.A * 2), Blend(border.R, 255, highlight.A), Blend(border.G, 255, highlight.A), Blend(border.B, 255, highlight.A));
+        resources["cardEdgeBrush"] = Frozen(new LinearGradientBrush(new GradientStopCollection { new(top, 0), new(border, 0.5) }, 90));
+        var strong = Get("borderStrong");
+        var strongTop = Color.FromArgb((byte)Math.Min(255, strong.A + highlight.A * 2), Blend(strong.R, 255, highlight.A), Blend(strong.G, 255, highlight.A), Blend(strong.B, 255, highlight.A));
+        resources["raisedEdgeBrush"] = Frozen(new LinearGradientBrush(new GradientStopCollection { new(strongTop, 0), new(strong, 0.5) }, 90));
+        // Ana düğme: amberHover → amber (yukarıdan aşağı); üzerine gelince daha açık.
+        resources["primaryFillBrush"] = Frozen(new LinearGradientBrush(Get("amberHover"), Get("amber"), 90));
+        resources["primaryHoverBrush"] = Frozen(new LinearGradientBrush(Color.FromRgb(0xFF, 0xD5, 0x78), Get("amber"), 90));
+        resources["primaryEdgeBrush"] = Frozen(new SolidColorBrush(Color.FromArgb(0x99, Get("amberLine").R, Get("amberLine").G, Get("amberLine").B)));
+        resources["primarySheenBrush"] = Frozen(new LinearGradientBrush(new GradientStopCollection { new(Color.FromArgb(0x73, 255, 255, 255), 0), new(Color.FromArgb(0, 255, 255, 255), 0.5) }, 90));
+        // İlerleme çubuğunun dolgusu: amber → amberHover (soldan sağa).
+        resources["progressFillBrush"] = Frozen(new LinearGradientBrush(Get("amber"), Get("amberHover"), 0));
+        // e3 cam: üst ve alt çubuklar (içerik arkalarından kayar). Bulanıklık yerine yarı saydam koyu degrade.
+        var glass = Get("glass");
+        var bg = Get("background");
+        resources["glassBarBrush"] = Frozen(new LinearGradientBrush(new GradientStopCollection
+        {
+            new(Color.FromArgb(0xFA, bg.R, bg.G, bg.B), 0), new(Color.FromArgb(0xEB, bg.R, bg.G, bg.B), 0.72), new(Color.FromArgb(0x00, bg.R, bg.G, bg.B), 1),
+        }, 90));
+        resources["glassBarBottomBrush"] = Frozen(new LinearGradientBrush(new GradientStopCollection
+        {
+            new(Color.FromArgb(0x00, bg.R, bg.G, bg.B), 0), new(Color.FromArgb(0xEB, bg.R, bg.G, bg.B), 0.28), new(Color.FromArgb(0xFA, bg.R, bg.G, bg.B), 1),
+        }, 90));
+        resources["glassFillBrush"] = Frozen(new SolidColorBrush(Color.FromArgb((byte)Math.Min(255, glass.A + 0x30), glass.R, glass.G, glass.B)));
+        // Durdur düğmesi: üzerine gelince dolu canlı zemin %8 koyulaşır (Mac: siyah %8 örtü).
+        var stop = Get("stopFill");
+        resources["stopHoverBrush"] = Frozen(new SolidColorBrush(Color.FromRgb((byte)(stop.R * 0.92), (byte)(stop.G * 0.92), (byte)(stop.B * 0.92))));
+        resources["focusGlowColor"] = Get("amber");
+        resources["shadowColor"] = dark ? Colors.Black : Color.FromRgb(0x3C, 0x28, 0x0A);
+        resources["raisedShadowOpacity"] = dark ? 0.45 : 0.16;
+    }
+
+    private static byte Blend(byte from, byte to, byte alpha) => (byte)Math.Round(from + (to - from) * (alpha / 255.0));
 
     /// <summary>Uygulanan tema koyu mu (kodda çizilen renkler için).</summary>
     public static bool IsDark { get; private set; }

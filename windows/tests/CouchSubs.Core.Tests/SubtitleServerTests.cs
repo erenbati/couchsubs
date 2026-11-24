@@ -152,7 +152,8 @@ public class SubtitleServerTests
         Assert.False(SubtitleServer.IsTvAppOutdated("", ""));
     }
 
-    /// Konuşana göre renk açıkken adlı satır "speakers" alanını taşır; kapalıyken ve adsız satırda alan yoktur.
+    /// Konuşan adını renklendir açıkken adlı satır "speakerNames" alanını taşır (eski "speakers" hiç gitmez: 0.9.79'dan eski
+    /// TV uygulamaları onunla bütün satırı boyuyordu); kapalıyken ve adsız satırda alan yoktur.
     [Fact]
     public async Task SubtitleCarriesSpeakerColorsOnlyWhenEnabled()
     {
@@ -168,10 +169,10 @@ public class SubtitleServerTests
 
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
         var lines = await ReadLines(reader, "event: clear");
-        Assert.Contains(lines, l => l.Contains("Kapat.") && !l.Contains("speakers"));
+        Assert.Contains(lines, l => l.Contains("Kapat.") && !l.Contains("speaker"));
         Assert.Contains(lines, l => l.Contains("Lucia: Hayır.")
-            && l.Contains("\"speakers\":[{\"color\":\"#90CAF9\",\"name\":\"Mattia\"},{\"color\":\"#F06292\",\"name\":\"Lucia\"}]"));
-        Assert.Contains(lines, l => l.Contains("Adsız satır.") && !l.Contains("speakers"));
+            && !l.Contains("\"speakers\"") && l.Contains("\"speakerNames\":[{\"color\":\"#F76AB7\",\"name\":\"Mattia\"},{\"color\":\"#2AD5E5\",\"name\":\"Lucia\"}]"));
+        Assert.Contains(lines, l => l.Contains("Adsız satır.") && !l.Contains("speaker"));
     }
 
     /// TV yarı açık bağlantıyı adlı "ping" olayının gelmemesinden anlar; yorum satırını EventSource görmez.
@@ -230,6 +231,65 @@ public class SubtitleServerTests
         Assert.Contains("data: {\"id\":\"q\",\"text\":\"\"}", lines);
         Assert.Equal([new SubtitleEvent(SubtitleEventKind.Region, "Demirciyi bul", Id: "q", Box: box), new SubtitleEvent(SubtitleEventKind.Region, "", Id: "q"),
                       new SubtitleEvent(SubtitleEventKind.RegionClear)], received);
+    }
+
+    /// <summary>
+    /// #1198: yeni bağlanan TV önce gösterilen alanların listesini (<c>region-sync</c>; listede olmayanı kaldırır), sonra her
+    /// alanın son çevirisini <c>keep</c> bayrağıyla alır. Temizlenmiş ya da boşalmış alan gelmez.
+    /// </summary>
+    [Fact]
+    public async Task NewStreamGetsTheLiveRegionsAfterASync()
+    {
+        using var server = new SubtitleServer(0);
+        var port = await server.StartAsync();
+        server.SendRegion("q", "Demirciyi bul", new TextBox(0.7, 0.05, 0.95, 0.12), 0.03);
+        server.SendRegion("game-phone", "Merhaba", null);
+        server.SendRegion("gone", "Geçti", null);
+        server.SendRegion("gone", "", null);
+
+        using (var response = await Http.GetAsync($"http://127.0.0.1:{port}/events", HttpCompletionOption.ResponseHeadersRead))
+        {
+            using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
+            const string quest = "data: {\"box\":{\"bottom\":0.12,\"left\":0.7,\"right\":0.95,\"top\":0.05},\"id\":\"q\",\"keep\":true,\"line\":0.03,\"text\":\"Demirciyi bul\"}";
+            var lines = await ReadLines(reader, quest);
+            var sync = lines.IndexOf("event: region-sync");
+            Assert.True(sync >= 0);
+            Assert.Equal("data: {\"ids\":[\"game-phone\",\"q\"]}", lines[sync + 1]);
+            var phone = lines.IndexOf("data: {\"id\":\"game-phone\",\"keep\":true,\"text\":\"Merhaba\"}");
+            Assert.True(phone > sync);
+            Assert.Equal("event: region", lines[phone - 1]);
+            Assert.DoesNotContain(lines, line => line.Contains("Geçti"));
+        }
+
+        server.ClearRegions();
+        using (var response = await Http.GetAsync($"http://127.0.0.1:{port}/events", HttpCompletionOption.ResponseHeadersRead))
+        {
+            using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
+            var lines = await ReadLines(reader, "event: region-sync");
+            Assert.Equal("data: {\"ids\":[]}", await reader.ReadLineAsync());
+            Assert.Equal("", await reader.ReadLineAsync());
+            server.SendSubtitle("Sonra", 1000);
+            Assert.Equal("event: subtitle", await reader.ReadLineAsync());
+        }
+    }
+
+    /// <summary>#1198: gösterilen alanlar aralıkla <c>keep</c> bayrağıyla yenilenir (TV'deki ömrü dolmasın); telefon kartı hariç.</summary>
+    [Fact]
+    public async Task LiveRegionsAreRefreshedExceptThePhoneCard()
+    {
+        using var server = new SubtitleServer(0) { RegionRefreshInterval = TimeSpan.FromMilliseconds(50) };
+        var port = await server.StartAsync();
+        server.SendRegion("q", "Demirciyi bul", null);
+        server.SendRegion("game-phone", "Merhaba", null);
+        using var response = await Http.GetAsync($"http://127.0.0.1:{port}/events", HttpCompletionOption.ResponseHeadersRead);
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
+        const string refresh = "data: {\"id\":\"q\",\"keep\":true,\"text\":\"Demirciyi bul\"}";
+        // Bağlanırken gelen yeniden gönderim, sonra iki yenileme.
+        var lines = await ReadLines(reader, refresh);
+        lines.AddRange(await ReadLines(reader, refresh));
+        lines.AddRange(await ReadLines(reader, refresh));
+        Assert.Equal(1, lines.Count(line => line.Contains("\"game-phone\",\"keep\"")));
+        Assert.Equal(3, lines.Count(line => line == refresh));
     }
 
     /// <summary>Ek alanın ayrı yazı grupları <c>blocks</c> ile kendi yerleriyle gider; birleşik <c>text</c> eski TV'ler için kalır.</summary>
@@ -463,8 +523,8 @@ public class SubtitleServerTests
         await WaitUntil(() => server.ConnectedClients == 1);
         server.SendSubtitle("Kapıyı tut, evlat!", 4000);
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
-        var lines = await ReadLines(reader, "");
-        lines = await ReadLines(reader, "");
+        var lines = await ReadLines(reader, "event: subtitle");
+        lines.Add((await reader.ReadLineAsync())!);
         Assert.Contains(lines, l => l.Contains("Kapıyı tut, evlat!"));
     }
 
@@ -523,6 +583,120 @@ public class SubtitleServerTests
         Assert.Equal(new SubtitleStyle(58, 12, SubtitlePlacement.Cover, 90, false), style);
         var again = System.Text.Json.JsonSerializer.Deserialize<SubtitleStyle>(System.Text.Json.JsonSerializer.Serialize(style! with { Placement = SubtitlePlacement.Below }));
         Assert.Equal(SubtitlePlacement.Below, again!.Placement);
+    }
+
+    /// <summary>TV akışı <c>link</c> olayıyla kimliğini alır; alındı yalnız bağlı bağlantının kimliğine kabul edilir.</summary>
+    [Fact]
+    public async Task TvStreamGetsALinkIdThatAcksAccept()
+    {
+        using var server = new SubtitleServer(0);
+        var port = await server.StartAsync();
+        using var response = await Http.GetAsync($"http://127.0.0.1:{port}/events", HttpCompletionOption.ResponseHeadersRead);
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
+        var lines = await ReadLines(reader, "event: link");
+        Assert.Equal("event: link", lines[^1]);
+        var data = await reader.ReadLineAsync();
+        var id = JsonDocument.Parse(data!["data: ".Length..]).RootElement.GetProperty("id").GetString()!;
+        Assert.Matches("^[A-Za-z0-9]{16}$", id);
+
+        using var known = await Http.GetAsync($"http://127.0.0.1:{port}/ack?c={id}");
+        Assert.Equal(HttpStatusCode.NoContent, known.StatusCode);
+        using var unknown = await Http.GetAsync($"http://127.0.0.1:{port}/ack?c=bilinmeyen0000000");
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        // OBS izleyicisi TV değildir: kimlik almaz.
+        using var obs = await Http.GetAsync($"http://127.0.0.1:{port}/events?viewer=obs", HttpCompletionOption.ResponseHeadersRead);
+        using var obsReader = new StreamReader(await obs.Content.ReadAsStreamAsync());
+        var obsLines = await ReadLines(obsReader, "event: ping");
+        Assert.DoesNotContain("event: link", obsLines);
+    }
+
+    /// <summary><c>link</c> olayı bu bilgisayardaki TV paketinin sürümünü (<c>latest</c>) taşır; TV daha eskiyse paneli
+    /// "TV uygulaması eski" der (GitHub #1199).</summary>
+    [Fact]
+    public async Task LinkCarriesBundledTvAppVersion()
+    {
+        using var server = new SubtitleServer(0) { LatestTvAppVersion = "0.9.95" };
+        var port = await server.StartAsync();
+        using var response = await Http.GetAsync($"http://127.0.0.1:{port}/events?v=0.9.71", HttpCompletionOption.ResponseHeadersRead);
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
+        await ReadLines(reader, "event: link");
+        var data = await reader.ReadLineAsync();
+        Assert.Equal("0.9.95", JsonDocument.Parse(data!["data: ".Length..]).RootElement.GetProperty("latest").GetString());
+    }
+
+    /// <summary>Alındı gönderip susan TV (LG'de uygulama arka planda askıya alındı) kopmuş sayılır ve kapatılır; hiç alındı
+    /// göndermeyen eski TV uygulamasına dokunulmaz.</summary>
+    [Fact]
+    public async Task TvThatStopsAckingIsDroppedButOldTvStays()
+    {
+        using var server = new SubtitleServer(0, TimeSpan.FromMilliseconds(100));
+        var stale = 0;
+        server.TvStale += () => Interlocked.Increment(ref stale);
+        var port = await server.StartAsync();
+        using var acking = await Http.GetAsync($"http://127.0.0.1:{port}/events", HttpCompletionOption.ResponseHeadersRead);
+        using var reader = new StreamReader(await acking.Content.ReadAsStreamAsync());
+        await ReadLines(reader, "event: link");
+        var id = JsonDocument.Parse((await reader.ReadLineAsync())!["data: ".Length..]).RootElement.GetProperty("id").GetString()!;
+        using var old = await Http.GetAsync($"http://127.0.0.1:{port}/events", HttpCompletionOption.ResponseHeadersRead);
+        await WaitUntil(() => server.ConnectedClients == 2);
+
+        using var ack = await Http.GetAsync($"http://127.0.0.1:{port}/ack?c={id}");
+        Assert.Equal(HttpStatusCode.NoContent, ack.StatusCode);
+        // Alındı kesildi: 3 ping turu sonra bağlantı düşer.
+        await WaitUntil(() => server.ConnectedClients == 1);
+        using var again = await Http.GetAsync($"http://127.0.0.1:{port}/ack?c={id}");
+        Assert.Equal(HttpStatusCode.NotFound, again.StatusCode);
+        await Task.Delay(500);
+        Assert.Equal(1, server.ConnectedClients);
+        // #1055: TV'nin başka bağlantısı açıkken bekçi yenilenmez (yenilenen bekçi LG'de uygulamayı yeniden başlatıyordu).
+        Assert.Equal(0, Volatile.Read(ref stale));
+    }
+
+    /// <summary>#1055: alındı gönderen TV ping turları boyunca düşmez; TV'nin tek bağlantısı susunca <see cref="SubtitleServer.TvStale"/>
+    /// bir kez tetiklenir.</summary>
+    [Fact]
+    public async Task OnlyTheLastSilentTvConnectionRenewsTheKeeper()
+    {
+        using var server = new SubtitleServer(0, TimeSpan.FromMilliseconds(100));
+        var stale = 0;
+        server.TvStale += () => Interlocked.Increment(ref stale);
+        var port = await server.StartAsync();
+        using var acking = await Http.GetAsync($"http://127.0.0.1:{port}/events", HttpCompletionOption.ResponseHeadersRead);
+        using var reader = new StreamReader(await acking.Content.ReadAsStreamAsync());
+        await ReadLines(reader, "event: link");
+        var id = JsonDocument.Parse((await reader.ReadLineAsync())!["data: ".Length..]).RootElement.GetProperty("id").GetString()!;
+        await WaitUntil(() => server.ConnectedClients == 1);
+        for (var i = 0; i < 10; i++)
+        {
+            using var ack = await Http.GetAsync($"http://127.0.0.1:{port}/ack?c={id}");
+            Assert.Equal(HttpStatusCode.NoContent, ack.StatusCode);
+            await Task.Delay(80);
+        }
+        Assert.Equal(1, server.ConnectedClients);
+        Assert.Equal(0, Volatile.Read(ref stale));
+        await WaitUntil(() => server.ConnectedClients == 0);
+        await WaitUntil(() => Volatile.Read(ref stale) == 1);
+        await Task.Delay(400);
+        Assert.Equal(1, Volatile.Read(ref stale));
+    }
+
+    /// <summary>#1055: ping turu gitmediyse (zamanlayıcı gecikti) TV'den alındı beklenmez: alındısız sayılan yalnız ping
+    /// turlarıdır, geçen saat değil.</summary>
+    [Fact]
+    public async Task TvIsNotDroppedWhilePingsAreNotSent()
+    {
+        using var server = new SubtitleServer(0, TimeSpan.FromHours(1));
+        var port = await server.StartAsync();
+        using var acking = await Http.GetAsync($"http://127.0.0.1:{port}/events", HttpCompletionOption.ResponseHeadersRead);
+        using var reader = new StreamReader(await acking.Content.ReadAsStreamAsync());
+        await ReadLines(reader, "event: link");
+        var id = JsonDocument.Parse((await reader.ReadLineAsync())!["data: ".Length..]).RootElement.GetProperty("id").GetString()!;
+        using var ack = await Http.GetAsync($"http://127.0.0.1:{port}/ack?c={id}");
+        await WaitUntil(() => server.ConnectedClients == 1);
+        for (var turn = 0; turn < SubtitleServer.AckMissLimit; turn++) Assert.False(server.DropSilentTvs());
+        Assert.Equal(1, server.ConnectedClients);
+        Assert.True(server.DropSilentTvs());
+        Assert.Equal(0, server.ConnectedClients);
     }
 
     [Fact]

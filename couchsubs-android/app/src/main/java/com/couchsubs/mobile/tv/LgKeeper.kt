@@ -70,7 +70,42 @@ class LgKeeperRule(private val now: () -> Long = { System.currentTimeMillis() })
         lastForced = null
     }
 
+    private var reopens = 0
+    private var lastReopen: Long? = null
+    private var connectedSince: Long? = null
+
+    /**
+     * Yeniden kurulan bağlantıda (ya da "Otomatik açmayı dene"/alındı kesintisinde) uygulama açılabilir mi. #1055 (beta.86,
+     * LG OLED C4): her yeni bağlantıda, uygulama açık ve bağlıyken de açma komutu gidiyordu; webOS uygulamayı yeniden
+     * başlatıp HDMI görüntüsünü yeniden kuruyor, ekran kararıp "HDR" yazısıyla geri geliyordu. Bağlı uygulamaya hiç açma
+     * gitmez; bağlı değilse ilk yeniden açma hemen, sonra [REOPEN_BACKOFF_MS] aralığıyla (Mac/iPhone ve Windows ile aynı).
+     * true dönerse açma sayılmıştır.
+     */
+    fun mayReopen(connected: Boolean): Boolean {
+        val time = now()
+        noteHealth(connected)
+        if (connected) return false
+        val last = lastReopen
+        if (last != null && reopens > 0 && time - last < REOPEN_BACKOFF_MS[minOf(reopens - 1, REOPEN_BACKOFF_MS.size - 1)]) return false
+        reopens++
+        lastReopen = time
+        lastForced = time
+        return true
+    }
+
+    /** Uygulama [HEALTHY_RESET_MS] boyunca kesintisiz bağlı kaldıysa yeniden açmanın geri çekilmesi sıfırlanır. */
+    fun noteHealth(connected: Boolean) {
+        val time = now()
+        if (!connected) { connectedSince = null; return }
+        val since = connectedSince ?: time
+        connectedSince = since
+        if (time - since >= HEALTHY_RESET_MS) { reopens = 0; lastReopen = null }
+    }
+
     companion object {
+        /** Yeniden kurulan bağlantıda iki açma arasındaki en kısa süre: 30 sn, 1, 2, 5 dk (Mac/iPhone ve Windows ile aynı). */
+        val REOPEN_BACKOFF_MS = longArrayOf(30_000L, 60_000L, 120_000L, 300_000L)
+        const val HEALTHY_RESET_MS = 600_000L
         const val APP_ID = "com.couchsubs.tv"
         const val STAND_DOWN_AFTER = 3
         const val STAND_DOWN_WINDOW_MS = 90_000L
@@ -100,12 +135,16 @@ object LgKeeper {
     /**
      * Çeviri sürdükçe CouchSubs TV'yi LG'de önde tutar. [open] bağlanır (olmazsa null); ilk bağlantıda uygulama yeni
      * açılmış olduğundan yeniden açılmaz, sonraki bağlantılarda (TV kapanıp açıldı) açılır. Bloklar.
+     * [connected]: TV uygulaması telefona bağlı mı. Verilirse açık ve bağlı uygulamaya yeni bağlantıda da "Otomatik açmayı
+     * dene"de de açma komutu gitmez; bağlı değilse [LgKeeperRule.mayReopen] aralığıyla açılır (#1055).
      */
     fun keep(open: () -> LgControl?, active: () -> Boolean, consolePort: () -> Int?, rule: LgKeeperRule = LgKeeperRule(),
              sleep: (Long) -> Unit = { Thread.sleep(it) }, log: (String) -> Unit = {},
-             onOpenResult: (TvOpenProblem?) -> Unit = {}, retry: () -> Boolean = { false }) {
+             onOpenResult: (TvOpenProblem?) -> Unit = {}, retry: () -> Boolean = { false }, connected: (() -> Boolean)? = null) {
         var control: LgControl? = null
         var first = true
+        // Yeni bağlantıda ya da istekte açılsın mı: bağlantı bilgisi yoksa eskisi gibi her zaman.
+        fun reopen(): Boolean = connected == null || rule.mayReopen(connected())
         try {
             while (active()) {
                 if (control == null) {
@@ -113,13 +152,14 @@ object LgKeeper {
                     // Ana ekrandaki satır: TV'ye bağlanılamadı (kapalı, başka ağda ya da saklı izin yok).
                     if (control == null) { onOpenResult(TvOpenProblem.UNREACHABLE); sleep(LgKeeperRule.RECONNECT_MS); continue }
                     onOpenResult(null)
-                    if (!first || retry()) try { control.launch() } catch (_: Exception) { control.close(); control = null }
+                    if ((!first || retry()) && reopen()) try { control.launch() } catch (_: Exception) { control.close(); control = null }
                     first = false
                     sleep(LgKeeperRule.FOREGROUND_POLL_MS)
                     continue
                 }
-                // "Otomatik açmayı dene": TV'de ne açık olursa olsun CouchSubs öne getirilir.
-                if (retry()) try { control.launch() } catch (_: Exception) { control.close(); control = null; continue }
+                connected?.let { rule.noteHealth(it()) }
+                // "Otomatik açmayı dene" ya da alındı kesintisi: CouchSubs öne getirilir (bağlı uygulamaya dokunulmaz).
+                if (retry() && reopen()) try { control.launch() } catch (_: Exception) { control.close(); control = null; continue }
                 if (!rule.settling()) {
                     try {
                         val current = control.foregroundAppId()

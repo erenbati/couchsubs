@@ -16,7 +16,24 @@ namespace CouchSubs.App.Views.Steps;
 public partial class XboxLoginStep : UserControl
 {
     private bool working;
-    public XboxLoginStep() => InitializeComponent();
+    public XboxLoginStep()
+    {
+        InitializeComponent();
+        Loaded += (_, _) =>
+        {
+            loadingSound = true;
+            XboxSound.IsChecked = Controller.Settings.XboxAudioOnComputer;
+            loadingSound = false;
+        };
+    }
+
+    private bool loadingSound;
+
+    /// <summary>SES kartı: Xbox sesi bu bilgisayarda da çalar (Ayarlar › Konsol ve Kaynak ile aynı ayar).</summary>
+    private void OnXboxSound(object sender, RoutedEventArgs e)
+    {
+        if (!loadingSound) Controller.Settings = Controller.Settings with { XboxAudioOnComputer = XboxSound.IsChecked == true };
+    }
     private AppController Controller => (AppController)DataContext;
 
     /// <summary>"Bilgisayarda Xbox uygulaması/play.xbox.com ile mi oynuyorsunuz?": Xbox'a bağlanılmaz, kurulum biter (#853).</summary>
@@ -55,12 +72,6 @@ public partial class XboxLoginStep : UserControl
             working = false;
             SignIn.IsEnabled = true;
         }
-    }
-
-    private void OnCopyCode(object sender, MouseButtonEventArgs e)
-    {
-        CopyCode();
-        Code.SelectAll();
     }
 
     private void CopyCode()

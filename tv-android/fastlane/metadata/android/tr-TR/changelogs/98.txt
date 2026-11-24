@@ -1,0 +1,1 @@
+0.9.95: Telefondaki ya da bilgisayardaki CouchSubs daha yeni bir TV uygulaması taşıyorsa TV'deki panel "TV uygulaması eski" der.

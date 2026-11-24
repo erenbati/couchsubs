@@ -203,9 +203,50 @@ public partial class RegionWatcherTests
         await watcher.PassAsync(PresetFrame(panel: true), [PresetHelp]);
         await watcher.PassAsync(PresetFrame(panel: true), [PresetHelp]);
         Assert.Contains(server.Sent, message => message.Id == "preset-help" && message.Text == "TR: Follow Vicki to the car.");
+        // Kutu tek karede bulunamayınca çeviri kalır; ancak RegionWatcher.PanelMissTurns tur art arda yoksa kalkar (#1202).
+        for (var i = 1; i < RegionWatcher.PanelMissTurns; i++)
+        {
+            clock += 1000;
+            await watcher.PassAsync(PresetFrame(panel: false), [PresetHelp]);
+            Assert.Equal("TR: Follow Vicki to the car.", server.Sent[^1].Text);
+        }
         clock += 1000;
         await watcher.PassAsync(PresetFrame(panel: false), [PresetHelp]);
         Assert.Equal(("preset-help", ""), (server.Sent[^1].Id, server.Sent[^1].Text));
+    }
+
+    [Fact]
+    public async Task PresetAreaSurvivesBriefPanelMissesAndReturnsWithTheSameText()
+    {
+        // #1202: kutu tek karede bulunamayınca çeviri siliniyor, panel aynı yazıyla geri gelince iz değişmediği için bir
+        // daha gösterilmiyordu.
+        var reader = new Reader { Lines = [Line("Follow Vicki to the car.")] };
+        var server = new Server();
+        long clock = 0;
+        var watcher = new RegionWatcher(reader, new Translator(), server, clock: () => clock);
+        async Task Pass(bool panel)
+        {
+            await watcher.PassAsync(PresetFrame(panel), [PresetHelp]);
+            clock += 1000;
+        }
+        await Pass(true);
+        await Pass(true);
+        Assert.Equal("TR: Follow Vicki to the car.", server.Sent[^1].Text);
+        var sends = server.Sent.Count;
+        // İki karelik ıska: kutu kalır, hiçbir şey gönderilmez.
+        await Pass(false);
+        await Pass(false);
+        Assert.Equal(sends, server.Sent.Count);
+        await Pass(true);
+        await Pass(true);
+        Assert.Equal("TR: Follow Vicki to the car.", server.Sent[^1].Text);
+        // Üç tur art arda kutu yok: kalkar.
+        for (var i = 0; i < RegionWatcher.PanelMissTurns; i++) await Pass(false);
+        Assert.Equal("", server.Sent[^1].Text);
+        // Panel aynı yazıyla (aynı görüntüyle) geri gelince çeviri yeniden gösterilir.
+        await Pass(true);
+        await Pass(true);
+        Assert.Equal("TR: Follow Vicki to the car.", server.Sent[^1].Text);
     }
 
     [Fact]
@@ -425,10 +466,18 @@ public partial class RegionWatcherTests
         Assert.Equal(2, reader.ScreenReads);
         Assert.Single(server.Sent);
 
+        // Satır yüksekliğinin çeyreğinden (0,1 → 0,025) az oynama da yerinde kalır (PhoneSteady.SteadyPositions, X 22 Kas:
+        // "yazılar sürekli oynuyor"); daha büyük gerçek hareket izlenir.
         reader.Lines = [Line("Call me.", .2 + 3.0 / 180)];
+        var other = Shade(40);
+        Array.Fill(other.Pixels, (byte)120, 0, 4);
+        await watcher.PassAsync(other, [phone]);
+        Assert.Equal(3, reader.ScreenReads);
+        Assert.Single(server.Sent);
+        reader.Lines = [Line("Call me.", .2 + 6.0 / 180)];
         await watcher.PassAsync(Shade(40), [phone]);
         Assert.Equal(2, server.Sent.Count);
-        Assert.Equal(.2 + 3.0 / 180, server.Sent[^1].Box!.Value.Top, 5);
+        Assert.Equal(.2 + 6.0 / 180, server.Sent[^1].Box!.Value.Top, 5);
         await watcher.PassAsync(Shade(180), [phone]);
         Assert.Equal(3, server.Sent.Count);
         Assert.Single(translator.Calls);
@@ -1603,5 +1652,79 @@ public partial class RegionWatcherTests
         await watcher.PassAsync(Shade(10), [MenuLabel]);
         await watcher.PassAsync(Shade(10), [MenuLabel]);
         Assert.Empty(server.Sent.Where(item => item.Text.Length > 0));
+    }
+
+    /// <summary>Düz gri kare; üst şeridi (izin yarısından azı) <paramref name="strip"/> tonunda.</summary>
+    private static Frame Striped(byte strip)
+    {
+        var frame = Shade(10);
+        Array.Fill(frame.Pixels, strip, 0, frame.Stride * 50);
+        return frame;
+    }
+
+    /// <summary>
+    /// #1198: çevirisi gösterilen alanda okuma <see cref="RegionWatcher.UnsteadyLimit"/> tur art arda değişip doğrulanamazsa
+    /// (yazı gitti, yerinde sahne oynuyor) çeviri kaldırılır; gösterilen yazının bozuk okumaları kaldırmaz.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task UnsteadyReadsRemoveTheShownTranslationOnlyWhenTheTextIsGone(bool gone)
+    {
+        var reader = new Reader();
+        var server = new Server();
+        var watcher = new RegionWatcher(reader, new Translator(), server);
+        reader.Lines = [Line("Talk to Arthur")];
+        await watcher.PassAsync(Shade(10), [Hud]);
+        await watcher.PassAsync(Shade(10), [Hud]);
+        Assert.Equal(["TR: Talk to Arthur"], server.Sent.Select(s => s.Text));
+        string[] reads = gone
+            ? ["Meet Arthur at the barn", "Find the blacksmith", "Escape the city"]
+            : ["Talk to Arthur.", "Ta1k to Arthur", "Talk to Arthor"];
+        for (var i = 0; i < reads.Length; i++)
+        {
+            reader.Lines = [Line(reads[i])];
+            await watcher.PassAsync(Striped((byte)(60 + 50 * i)), [Hud]);
+            if (i < reads.Length - 1) Assert.Single(server.Sent);
+        }
+        if (gone) Assert.Equal(["TR: Talk to Arthur", ""], server.Sent.Select(s => s.Text));
+        else Assert.Single(server.Sent);
+    }
+
+    /// <summary>Görüntü bütünüyle değişip yazı da gidince (boş okuma) çeviri beklemeden kalkar.</summary>
+    [Fact]
+    public async Task BigChangeWithNoTextRemovesTheTranslationAtOnce()
+    {
+        var reader = new Reader();
+        var server = new Server();
+        var watcher = new RegionWatcher(reader, new Translator(), server);
+        await Show(watcher, reader, "Talk to Arthur", 10);
+        reader.Lines = [];
+        await watcher.PassAsync(Shade(200), [Quest]);
+        Assert.Equal(["TR: Talk to Arthur", ""], server.Sent.Select(s => s.Text));
+    }
+
+    /// <summary>
+    /// #1198: hiç bitmeyen çeviri isteği turu kilitlemez; <see cref="RegionWatcher.TranslationTimeoutMs"/> sonra tur biter,
+    /// aday korunur ve motor düzelince sonraki turda gösterilir.
+    /// </summary>
+    [Fact]
+    public async Task HangingTranslationTimesOutAndALaterPassShowsTheTranslation()
+    {
+        var reader = new Reader { Lines = [Line("Talk to Arthur")] };
+        var translator = new Translator { Respond = _ => new TaskCompletionSource<string>().Task };
+        var server = new Server();
+        var watcher = new RegionWatcher(reader, translator, server) { TranslationTimeoutMs = 100 };
+        await watcher.PassAsync(Shade(10), [Quest]);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var pass = watcher.PassAsync(Shade(10), [Quest]);
+        Assert.Same(pass, await Task.WhenAny(pass, Task.Delay(5000)));
+        await pass;
+        Assert.True(clock.ElapsedMilliseconds < 3000);
+        Assert.Empty(server.Sent);
+
+        translator.Respond = null;
+        await watcher.PassAsync(Shade(10), [Quest]);
+        Assert.Equal(["TR: Talk to Arthur"], server.Sent.Select(s => s.Text));
     }
 }

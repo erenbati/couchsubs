@@ -42,6 +42,13 @@ public enum SubtitleBackgroundShape
 /// Hızlı konuşmada önceki satır(lar) yeni satırın üstünde kısa süre soluk kalsın mı; kapalıysa yeni satır eskisinin
 /// yerine geçer. TV uygulaması 0.9.16 ve sonrası tanır.
 /// </param>
+/// <param name="BackgroundColor">Zeminin rengi ("#RRGGBB"); koyuluğu <paramref name="Background"/>. TV'ye <c>backgroundColor</c>.</param>
+/// <param name="TextHex">Yazının rengi ("#RRGGBB"); yoksa <paramref name="TextColor"/>. TV'ye <c>textHex</c>.</param>
+/// <param name="NameColorMode">Karakter adının rengi: yazıyla aynı / tek renk / karaktere göre (TV'ye gitmez; sunucu uygular).</param>
+/// <param name="NameHex">"Tek Renk"te adların rengi.</param>
+/// <param name="CharacterColors">"Karaktere Göre"de seçilen renkler (küçük harfli ad → "#RRGGBB").</param>
+/// <param name="NameOnly">Konuşan rengi yalnız adı boyar (yeni arayüz). TV'ye <c>nameOnly</c>.</param>
+/// <param name="HdmiInput">Kurulumda seçilen TV girişi (1–4); yoksa null. TV'ye <c>hdmiInput</c>.</param>
 public sealed record SubtitleStyle(
     int FontSize = 46,
     int BottomPercent = 7,
@@ -51,7 +58,38 @@ public sealed record SubtitleStyle(
     SubtitleTextColor TextColor = SubtitleTextColor.White,
     TvDisplayMode DisplayMode = TvDisplayMode.Auto,
     bool StackPrevious = true,
-    SubtitleBackgroundShape BackgroundShape = SubtitleBackgroundShape.Fit);
+    SubtitleBackgroundShape BackgroundShape = SubtitleBackgroundShape.Fit,
+    string BackgroundColor = SubtitleStyle.DefaultBackgroundColor,
+    string? TextHex = null,
+    NameColorMode NameColorMode = NameColorMode.Speaker,
+    string? NameHex = null,
+    IReadOnlyDictionary<string, string>? CharacterColors = null,
+    bool NameOnly = false,
+    int? HdmiInput = null)
+{
+    public const string DefaultBackgroundColor = "#101014";
+
+    /// <summary>Geçerli "#RRGGBB" ise büyük harfle; değilse null (Mac SubtitleStyle.hex ile aynı).</summary>
+    public static string? Hex(string? value) =>
+        value is { Length: 7 } && value[0] == '#' && value.Skip(1).All(char.IsAsciiHexDigit) ? value.ToUpperInvariant() : null;
+
+    /// <summary>Yazının gerçek rengi ("#RRGGBB"): seçilen renk, yoksa beyaz / sarı.</summary>
+    public string TextRgb => Hex(TextHex) ?? (TextColor == SubtitleTextColor.Yellow ? "#FFE135" : "#FFFFFF");
+
+    /// <summary>Zeminin rengi ("#RRGGBB"); bozuk kayıtta varsayılan.</summary>
+    public string BackgroundRgb => Hex(BackgroundColor) ?? DefaultBackgroundColor;
+}
+
+/// <summary>Altyazı Görünümü › Karakter Adı (Mac NameColorMode ile aynı değerler).</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<NameColorMode>))]
+public enum NameColorMode
+{
+    [JsonStringEnumMemberName("text")] Text,
+    [JsonStringEnumMemberName("single")] Single,
+    [JsonStringEnumMemberName("speaker")] Speaker,
+    /// <summary>"Tüm Satır": karaktere göre renk; ad ve cümle o karakterin renginde (TV'ye <c>style.wholeLine</c>).</summary>
+    [JsonStringEnumMemberName("line")] Line,
+}
 
 /// <summary>
 /// Android TV'de PS5 görüntüsünün nasıl gösterildiği. Yalnız Android TV uygulaması kullanır; diğer TV'ler ve OBS
@@ -66,7 +104,7 @@ public enum TvDisplayMode
     /// </summary>
     [JsonStringEnumMemberName("InApp")]
     Auto,
-    /// <summary>Bilerek seçilmiş uygulama içi; görüntü hiç gelmezse TV uygulaması kendiliğinden katmana geçer. TV'ye "inAppOnly".</summary>
+    /// <summary>Bilerek seçilmiş uygulama içi; TV uygulaması (0.9.84+) hiçbir durumda kendiliğinden katmana geçmez. TV'ye "inAppOnly".</summary>
     InAppOnly,
     /// <summary>TV HDMI'yı kendi ekranında gösterir, altyazı üstteki şeffaf katmanda (bazı TV'lerde uygulama içi görüntü siyah kalıyor).</summary>
     Overlay,
@@ -149,6 +187,10 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
         public Stream Stream { get; } = tcp.GetStream();
         /// <summary>Aynı bağlantıya iki yazma iç içe geçmesin.</summary>
         public SemaphoreSlim WriteLock { get; } = new(1, 1);
+        /// <summary>TV akışının <c>link</c> olayıyla bildirilen kimliği (izleyicilerde null; bkz. <see cref="AckTimeout"/>).</summary>
+        public string? LinkId { get; init; }
+        /// <summary>Son alındıdan beri geçen ping turu (<c>gate</c> altında); hiç alındı göndermemiş (eski) TV'de null.</summary>
+        public int? AckMisses { get; set; }
     }
 
     /// <summary>Bu kurulumun kalıcı kimliği (<c>/hello</c> yanıtında). Aynı ağda iki CouchSubs varken TV uygulaması kendi
@@ -161,7 +203,7 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
     /// ~/.local/share/CouchSubs). Dosya yazılamazsa kimlik bu çalışmalık kalır.</summary>
     private static string LoadInstallationId()
     {
-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CouchSubs", "server-id");
+        var path = Path.Combine(AppDataPaths.Root, "server-id");
         try
         {
             if (File.Exists(path) && HelloId(File.ReadAllText(path)) is { Length: > 0 } saved) return saved;
@@ -202,11 +244,37 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
     /// </summary>
     internal const string PingFrame = ": ping\n\nevent: ping\ndata: {}\n\n";
 
+    /// <summary>
+    /// TV'nin alındısı (bağlantı denetimi): ping yalnız bilgisayardan TV'ye gidiyordu; TV'nin onu gerçekten aldığı
+    /// bilinmiyordu. LG uygulaması arka plana düşüp askıya alınınca (ya da Android TV uygulamayı dondurunca) TV'nin ağ
+    /// katmanı soketi açık tutuyor, TCP canlılık denetimi ve gönderim hatası hiç gelmiyordu: bilgisayar saatlerce "Bağlı"
+    /// gösteriyor, altyazı TV'ye ulaşmıyordu. Akış açılınca <c>link</c> olayı bağlantının kimliğini (<c>id</c>) taşır;
+    /// 0.9.76+ TV her ping'de (ve <c>link</c>'te) <c>GET /ack?c=&lt;id&gt;</c> gönderir. Bir kez alındı gönderen
+    /// bağlantıdan bu süre boyunca alındı gelmezse bağlantı kopmuş sayılır ve kapatılır (TV sayısı düşer), <see cref="TvStale"/>
+    /// tetiklenir; TV kendi tarafında yeniden bağlanır, bekçi uygulamayı yeniden açar. Hiç alındı göndermeyen eski TV
+    /// uygulaması eskisi gibi kalır. Bilinmeyen kimliğe 404 döner: TV hemen yeniden bağlanır. Mac/iPhone ve Android ile aynı.
+    /// </summary>
+    internal TimeSpan AckTimeout => (pingInterval ?? TimeSpan.FromSeconds(15)) * 3;
+
+    /// <summary>Alındısı kesilen TV bağlantısı kapatıldı (iş parçacığı havuzunda). Çağıran "Yeniden bağlanılıyor" gösterip
+    /// TV bekçisini yeniler.</summary>
+    public event Action? TvStale;
+
     private readonly object gate = new();
     private readonly List<Client> clients = [];
     private TcpListener? listener;
     private Timer? pingTimer;
     private SubtitleStyle? lastStyle;
+    /// <summary>
+    /// Gösterilen ek alanların son <c>region</c> olayları (<c>gate</c> altında). TV yeniden bağlanınca bunlar yeniden
+    /// gönderilir, gösterilmeyenler kaldırılır (<c>region-sync</c>); her <see cref="RegionRefreshInterval"/>'da telefon kartı
+    /// dışındakiler <c>keep</c> bayrağıyla yenilenir. TV, yenilenmeyen alanı 15 sn sonra kendisi kaldırır (#1198;
+    /// tv-webos/app.js REGION_LIFE_MS). Mac: SubtitleServer.liveRegions.
+    /// </summary>
+    private readonly SortedDictionary<string, SortedDictionary<string, object>> liveRegions = new(StringComparer.Ordinal);
+    private Timer? regionTimer;
+    /// <summary>Gösterilen ek alanların TV'de yenilenme aralığı (TV'deki 15 sn'lik ömrün üçte biri).</summary>
+    internal TimeSpan RegionRefreshInterval { get; set; } = TimeSpan.FromSeconds(5);
     /// <summary>GET ile verilen dosyalar: dublaj sesleri ve seslendirme modelinin ses örnekleri.</summary>
     private readonly Dictionary<string, (byte[] Data, string Type)> files = new(StringComparer.Ordinal);
     private readonly Queue<string> speechPaths = new();
@@ -225,9 +293,10 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
     public bool SendsToTv { get; set; } = true;
 
     /// <summary>
-    /// Konuşana göre renk: açıkken <c>subtitle</c> olayı satır başındaki konuşan adlarını ve renklerini <c>speakers</c>
-    /// alanında taşır (<see cref="Core.SpeakerColors"/>); kapalıyken ya da metinde ad yoksa alan yazılmaz. Eski TV
-    /// uygulamaları alanı yok sayar.
+    /// Konuşan adını renklendir: açıkken <c>subtitle</c> olayı satır başındaki konuşan adlarını ve renklerini
+    /// <c>speakerNames</c> alanında taşır (<see cref="Core.SpeakerColors"/>; TV yalnız adı boyar); kapalıyken ya da metinde
+    /// ad yoksa alan yazılmaz. Eski <c>speakers</c> alanı gönderilmez: 0.9.79'dan eski TV uygulamaları onunla bütün satırı
+    /// boyuyordu; yeni alanı tanımaz, tek renk gösterir.
     /// </summary>
     public bool SpeakerColors { get; set; }
 
@@ -266,6 +335,13 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
         get { lock (gate) return tvAppVersion; }
     }
 
+    /// <summary>
+    /// Bu bilgisayarın paketindeki TV uygulamasının sürümü: <c>link</c> olayının <c>latest</c> alanıyla TV'ye bildirilir.
+    /// TV'deki uygulama bundan eskiyse TV'nin paneli "TV uygulaması eski" der (GitHub #1199: LG'de 0.9.71 kalmıştı,
+    /// düzeltme 0.9.94'teydi). Null ya da boş: alan gönderilmez. Mac ve Android ile aynı.
+    /// </summary>
+    public string? LatestTvAppVersion { get; set; }
+
     /// <summary>TV uygulaması altyazı akışına her bağlandığında bildirdiği sürümle (boş: eski TV uygulaması) çağrılır
     /// (iş parçacığı havuzunda).</summary>
     public event Action<string>? TvAppVersionReported;
@@ -302,7 +378,12 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
         this.listener = listener;
         _ = AcceptLoop(listener);
         var every = pingInterval ?? TimeSpan.FromSeconds(15);
-        pingTimer = new Timer(_ => Broadcast(PingFrame), null, every, every);
+        pingTimer = new Timer(_ =>
+        {
+            DropSilentTvs();
+            Broadcast(PingFrame);
+        }, null, every, every);
+        regionTimer = new Timer(_ => RefreshRegions(), null, RegionRefreshInterval, RegionRefreshInterval);
         return Task.FromResult(((IPEndPoint)listener.LocalEndpoint).Port);
     }
 
@@ -315,6 +396,8 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
         if (!keepPairing) Pairing.SetSession(false);
         pingTimer?.Dispose();
         pingTimer = null;
+        regionTimer?.Dispose();
+        regionTimer = null;
         listener?.Stop();
         listener = null;
         List<Client> closing;
@@ -322,6 +405,8 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
         {
             closing = [.. clients];
             clients.Clear();
+            // Port değişip hemen yeniden açılıyorsa gösterilenler yeni akışa yeniden gönderilsin.
+            if (!keepPairing) liveRegions.Clear();
         }
         foreach (var client in closing) client.Tcp.Dispose();
     }
@@ -342,7 +427,7 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
         if (replaces) json["replace"] = true;
         if (box is { } b) json["box"] = BoxJson(b);
         if (SpeakerColors && Core.SpeakerColors.Speakers(text) is { Count: > 0 } speakers)
-            json["speakers"] = speakers.Select(name => new SortedDictionary<string, object> { ["name"] = name, ["color"] = SpeakerBook.Color(name)! }).ToList();
+            json["speakerNames"] = speakers.Select(name => new SortedDictionary<string, object> { ["name"] = name, ["color"] = SpeakerBook.Color(name)! }).ToList();
         lock (gate)
         {
             legacyHoldGeneration++;
@@ -422,7 +507,20 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
     /// </summary>
     public void SendScreen(IReadOnlyList<ScreenTranslation.Item> items, int durationMs)
     {
-        items = [.. items.Where(item => Area(item.Box) <= MaxBoxArea)];
+        items = Steadied([.. items.Where(item => Area(item.Box) <= MaxBoxArea)]);
+        IReadOnlyList<ScreenTranslation.Item> shown;
+        lock (screenStyle)
+        {
+            screenEpoch++;
+            screenShown = (items, Environment.TickCount64 + durationMs);
+            screenVisible = [.. items.Select(item => !presence.Hidden(item))];
+            shown = [.. items.Where(item => !presence.Hidden(item))];
+        }
+        EmitScreen(shown, durationMs);
+    }
+
+    private void EmitScreen(IReadOnlyList<ScreenTranslation.Item> items, int durationMs)
+    {
         var list = items.Select(item => ItemJson(item, phone: false)).ToList();
         Broadcast(Frame("screen", new SortedDictionary<string, object> { ["duration"] = durationMs, ["items"] = list }), subtitle: true);
         // Altyazı yalnız bilgisayardaysa (TV yok) çeviriler başka hiçbir yere gitmiyordu: tuşa basınca yalnız
@@ -458,7 +556,43 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
                            IReadOnlyList<ScreenTranslation.Item>? blocks)
     {
         (text, blocks) = Guard(text, box, blocks);
-        Broadcast(Frame("region", RegionData(id, text, box, lineHeight, icons, blocks)), subtitle: true);
+        if (id != "game-phone" && blocks is not null) blocks = Steadied(blocks);
+        if (id != "game-phone")
+        {
+            IReadOnlyList<ScreenTranslation.Item>? visible;
+            lock (screenStyle)
+            {
+                if (text.Length == 0 || blocks is not { Count: > 0 })
+                {
+                    regionShown.Remove(id);
+                    regionVisible.Remove(id);
+                }
+                else
+                {
+                    regionShown[id] = new RegionSent(text, box, lineHeight, icons, blocks);
+                    regionVisible[id] = [.. blocks.Select(item => !presence.Hidden(item))];
+                }
+                visible = blocks is null ? null : [.. blocks.Where(item => !presence.Hidden(item))];
+            }
+            if (blocks is not null && visible is not null && visible.Count != blocks.Count)
+            {
+                EmitRegion(id, visible.Count == 0 ? "" : text, box, lineHeight, icons, visible);
+                return;
+            }
+        }
+        EmitRegion(id, text, box, lineHeight, icons, blocks);
+    }
+
+    private void EmitRegion(string id, string text, TextBox? box, double? lineHeight, IReadOnlyList<IconPlacement>? icons,
+                            IReadOnlyList<ScreenTranslation.Item>? blocks)
+    {
+        var data = RegionData(id, text, box, lineHeight, icons, blocks);
+        lock (gate)
+        {
+            if (text.Length == 0) liveRegions.Remove(id);
+            else liveRegions[id] = data;
+        }
+        Broadcast(Frame("region", data), subtitle: true);
         EventSent?.Invoke(new SubtitleEvent(SubtitleEventKind.Region, text, Id: id, Box: box,
                                             Blocks: blocks is { Count: > 0 } && text.Length > 0 ? blocks : null));
     }
@@ -469,6 +603,99 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
     /// (LG'de "siyah ekran, ses var").
     /// </summary>
     internal const double MaxBoxArea = 0.4;
+
+    /// <summary>
+    /// Ekran yazısı çevirilerinin görünüşü oturum boyunca kilitli (<see cref="ScreenStyleLock"/>); "Ekranı çevir" ve otomatik
+    /// ekran yazısı aynı kilidi paylaşır (Mac: SubtitleServer.steadied, Android: SubtitleServer.steadied).
+    /// </summary>
+    private readonly ScreenStyleLock screenStyle = new();
+    /// <summary>Ekrandaki çeviriler ve özgün yazılarının takibi (<see cref="ScreenPresence"/>).</summary>
+    private readonly ScreenPresence presence = new();
+    /// <summary><see cref="ScreenPresence"/>'ın kaldırma ve geri getirme kararları altyazı günlüğüne (<see cref="DropLog"/>; sınırlı, tekrarsız).</summary>
+    private readonly DropLog presenceDrops = new();
+    private (IReadOnlyList<ScreenTranslation.Item> Items, long Until)? screenShown;
+    /// <summary>
+    /// Her <see cref="SendScreen"/> ve <see cref="ClearScreen"/> bir üst numara verir. <c>Observe</c> değişikliği kilidin
+    /// dışında gönderir; arada çeviri kaldırıldıysa eski öğeler yeniden gönderilmez (kaldırılan çeviri TV'de geri
+    /// çiziliyordu, #1182).
+    /// </summary>
+    private long screenEpoch;
+    private List<bool> screenVisible = [];
+    private sealed record RegionSent(string Text, TextBox? Box, double? LineHeight, IReadOnlyList<IconPlacement>? Icons,
+                                     IReadOnlyList<ScreenTranslation.Item> Blocks);
+    private readonly SortedDictionary<string, RegionSent> regionShown = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<bool>> regionVisible = [];
+
+    /// <summary>
+    /// Her karede çağrılır: çevirisi gösterilen yazılar hâlâ yerinde mi (<see cref="ScreenPresence"/>). Özgün yazısı kalkan öğe
+    /// TV'den ve masaüstünden aynı karede kalkar; geri gelirse yeniden gösterilir (Mac: SubtitleServer.observe).
+    /// </summary>
+    public void Observe(Frame frame) => Observe(box => ScreenPresence.Patch(frame, box));
+
+    internal void Observe(Func<TextBox, IReadOnlyList<int>?> patch)
+    {
+        var now = Environment.TickCount64;
+        List<ScreenTranslation.Item>? screenChange = null;
+        var regionChanges = new List<(string Id, RegionSent Sent, List<ScreenTranslation.Item> Kept)>();
+        long until;
+        var flips = new List<(string Source, bool Visible)>();
+        long epoch;
+        lock (screenStyle)
+        {
+            epoch = screenEpoch;
+            if (screenShown is { } expired && expired.Until <= now) screenShown = null;
+            var screen = screenShown?.Items ?? [];
+            var regions = regionShown.ToList();
+            var all = screen.Concat(regions.SelectMany(r => r.Value.Blocks)).ToList();
+            if (!all.Any(ScreenPresence.Tracks) && screenVisible.Count == 0 && regionVisible.Count == 0) return;
+            var visible = presence.Visible(all, patch);
+            var flags = visible.Take(screen.Count).ToList();
+            var before = screenVisible.Count == 0 ? [.. screen.Select(_ => true)] : screenVisible;
+            if (screen.Count > 0 && !flags.SequenceEqual(before)) screenChange = [.. screen.Where((_, i) => flags[i])];
+            // Kaldırma ya da geri getirme kararı günlüğe (DropLog): periyodik kopmalarda hangi yazının izinin kaçtığı görünsün.
+            for (var i = 0; i < screen.Count && i < before.Count; i++) if (before[i] != flags[i]) flips.Add((screen[i].Source, flags[i]));
+            screenVisible = screen.Count == 0 ? [] : flags;
+            var offset = screen.Count;
+            var previous = new Dictionary<string, List<bool>>(regionVisible);
+            regionVisible.Clear();
+            foreach (var (id, sent) in regions)
+            {
+                var part = visible.Skip(offset).Take(sent.Blocks.Count).ToList();
+                offset += sent.Blocks.Count;
+                var old = previous.TryGetValue(id, out var seen) ? seen : [.. sent.Blocks.Select(_ => true)];
+                regionVisible[id] = part;
+                for (var i = 0; i < sent.Blocks.Count && i < old.Count; i++) if (old[i] != part[i]) flips.Add((sent.Blocks[i].Source, part[i]));
+                if (!part.SequenceEqual(old)) regionChanges.Add((id, sent, [.. sent.Blocks.Where((_, i) => part[i])]));
+            }
+            until = screenShown?.Until ?? now;
+        }
+        foreach (var (source, shown) in flips)
+            presenceDrops.Note("ScreenPresence",
+                shown ? "özgün yazı geri geldi, çeviri yeniden gösterildi" : "özgün yazının izi kaçtı, çeviri kaldırıldı", source);
+        if (screenChange is not null)
+        {
+            bool current;
+            lock (screenStyle) current = screenEpoch == epoch;
+            if (current) EmitScreen(screenChange, (int)Math.Max(1, until - now));
+        }
+        foreach (var (id, sent, kept) in regionChanges)
+            EmitRegion(id, kept.Count == 0 ? "" : sent.Text, sent.Box, sent.LineHeight, sent.Icons, kept.Count == 0 ? null : kept);
+    }
+
+    internal IReadOnlyList<ScreenTranslation.Item> Steadied(IReadOnlyList<ScreenTranslation.Item> items)
+    {
+        lock (screenStyle) return screenStyle.Steady(items, Environment.TickCount64);
+    }
+
+    /// <summary>Ekran yazısının görünüşü yeniden ölçülsün (oturum yeniden başladı).</summary>
+    public void ResetScreenStyle()
+    {
+        lock (screenStyle)
+        {
+            screenStyle.Reset();
+            presence.Reset();
+        }
+    }
 
     internal static double Area(TextBox box) => Math.Max(0, box.Right - box.Left) * Math.Max(0, box.Bottom - box.Top);
 
@@ -510,6 +737,12 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
     /// <summary>Bütün ek alan kutularını kaldırır.</summary>
     public void ClearRegions()
     {
+        lock (screenStyle)
+        {
+            regionShown.Clear();
+            regionVisible.Clear();
+        }
+        lock (gate) liveRegions.Clear();
         Broadcast(Frame("region-clear", new SortedDictionary<string, object>()), subtitle: true);
         EventSent?.Invoke(new SubtitleEvent(SubtitleEventKind.RegionClear));
     }
@@ -517,6 +750,12 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
     /// <summary>TV'deki "ekranı çevir" çevirilerini kaldırır (altyazıya dokunmaz).</summary>
     public void ClearScreen()
     {
+        lock (screenStyle)
+        {
+            screenEpoch++;
+            screenShown = null;
+            screenVisible = [];
+        }
         Broadcast(Frame("screen-clear", new SortedDictionary<string, object>()), subtitle: true);
         EventSent?.Invoke(new SubtitleEvent(SubtitleEventKind.ScreenClear));
     }
@@ -531,6 +770,9 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
             ["text"] = item.Translation,
         };
         if (item.Paragraphs) json["paragraphs"] = true;
+        // Yerleşim (ScreenFit): kutunun genişleyebileceği alan ve özgün satır sayısı (eski TV yok sayar).
+        if (item.Room is { } room) json["room"] = BoxJson(room);
+        if (item.Rows > 1) json["rows"] = item.Rows;
         if (item.Icons is { Count: > 0 } icons) json["icons"] = IconsJson(icons);
         if ((phone || item.Look is not null) && item.Style is { } style && IsRgb(style.Background) && IsRgb(style.Foreground))
         {
@@ -590,6 +832,9 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
     public void SendStyle(SubtitleStyle style)
     {
         lock (gate) lastStyle = style;
+        // Karakter adı rengi: "Tek Renk"te herkes aynı renk, "Karaktere Göre"de seçilen renkler (Mac ile aynı).
+        SpeakerBook.Configure(style.NameColorMode == NameColorMode.Single ? SubtitleStyle.Hex(style.NameHex) : null,
+            style.NameColorMode is NameColorMode.Speaker or NameColorMode.Line ? style.CharacterColors ?? new Dictionary<string, string>() : new Dictionary<string, string>());
         Broadcast(StyleFrame(style, SetApart), subtitle: true);
     }
 
@@ -678,6 +923,19 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
                 }
                 await OpenStream(tcp, obs, cors, checkedKey, obs ? null : ParseHdmiPort(request.Parameter("hdmi")), unreported);
             }
+            else if (method == "GET" && path == "/ack")
+            {
+                // TV'nin alındısı (bkz. AckTimeout). Bilinmeyen kimlik: sunucuda bu bağlantı yok, TV yeniden bağlanmalı.
+                var link = request.Parameter("c") ?? "";
+                bool known;
+                lock (gate)
+                {
+                    var client = link.Length == 0 ? null : clients.FirstOrDefault(c => c.LinkId == link);
+                    if (client is not null) client.AckMisses = 0;
+                    known = client is not null;
+                }
+                await RespondAndClose(tcp, known ? "204 No Content" : "404 Not Found", cors: cors);
+            }
             else if (method == "GET" && path == "/obs") await RespondAndClose(tcp, ObsOverlay, "text/html; charset=utf-8", cors);
             // Anahtar Authorize'da denetlendi (anahtarsız istek 401 aldı).
             else if (method == "GET" && path == SecondScreen.Path) await RespondAndClose(tcp, SecondScreen.Page, "text/html; charset=utf-8", cors);
@@ -749,13 +1007,21 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
             .Append("Connection: keep-alive\r\n")
             .Append(cors).Append("\r\n")
             .Append("retry: 2000\n\n");
-        var client = new Client(tcp, viewer, legacy);
+        var client = new Client(tcp, viewer, legacy) { LinkId = viewer ? null : MakeLinkId() };
         int count;
         lock (gate)
         {
             // Yetki denetimi ile istemci kaydı arasındaki yenileme yarışını kapatır.
             if (accessKey != checkedKey) { tcp.Dispose(); return; }
             if (lastStyle is { } style) head.Append(StyleFrame(style, SetApart));
+            // Kimlik stilden sonra: TV'ye ilk giden veri eskisi gibi stil olsun (olay sırası protokolü etkilemez).
+            if (client.LinkId is { } link)
+            {
+                var json = new SortedDictionary<string, object> { ["id"] = link };
+                if (ParseTvAppVersion(LatestTvAppVersion) is { Length: > 0 } latest) json["latest"] = latest;
+                head.Append(Frame("link", json));
+            }
+            head.Append(RegionReplay(viewer || SendsToTv));
             clients.Add(client);
             if (hdmi is not null) consolePort = hdmi;
             count = TvCount();
@@ -763,6 +1029,73 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
         await Write(client, head.ToString());
         ClientsChanged?.Invoke(count);
         await WatchForClose(client);
+    }
+
+    /// <summary>
+    /// Yeni bağlanan TV'ye (ya da OBS'e) gösterilen ek alanlar: önce <c>region-sync</c> (listede olmayan alanları TV kaldırır;
+    /// kopukken kaçan temizleme komutları), sonra her alanın son <c>region</c> olayı <c>keep</c> bayrağıyla (TV'de duran aynı
+    /// alan yeniden çizilmez). <c>gate</c> altında çağrılır.
+    /// </summary>
+    private string RegionReplay(bool tv)
+    {
+        var live = tv ? liveRegions.ToList() : [];
+        var frames = new StringBuilder(Frame("region-sync", new SortedDictionary<string, object> { ["ids"] = live.Select(r => r.Key).ToList() }));
+        foreach (var (_, data) in live) frames.Append(Frame("region", Kept(data)));
+        return frames.ToString();
+    }
+
+    private static SortedDictionary<string, object> Kept(SortedDictionary<string, object> data) =>
+        new(data) { ["keep"] = true };
+
+    /// <summary>
+    /// Gösterilen ek alanları (telefon kartı hariç) <c>keep</c> bayrağıyla yeniden gönderir: TV'de sahnede kalan yazının
+    /// çevirisi 15 sn'lik ömrü dolup kalkmasın. Telefon kartı kendi takibiyle yenilenir.
+    /// </summary>
+    internal void RefreshRegions()
+    {
+        List<SortedDictionary<string, object>> live;
+        lock (gate) live = [.. liveRegions.Where(r => r.Key != "game-phone").Select(r => Kept(r.Value))];
+        foreach (var data in live) Broadcast(Frame("region", data), subtitle: true);
+    }
+
+    /// <summary><c>link</c> olayındaki bağlantı kimliği: tahmin edilemez, URL'de kaçışsız gider.</summary>
+    internal static string MakeLinkId()
+    {
+        const string letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        return new string([.. Enumerable.Range(0, 16).Select(_ => letters[System.Security.Cryptography.RandomNumberGenerator.GetInt32(letters.Length)])]);
+    }
+
+    /// <summary>Bu kadar ping turu alındısız geçerse bağlantı kopmuş sayılır.</summary>
+    internal const int AckMissLimit = 3;
+
+    /// <summary>
+    /// Bir ping turu (ping gönderilmeden hemen önce): son alındıdan beri <see cref="AckMissLimit"/> turdan fazla geçmiş TV
+    /// bağlantılarını kapatır; kapattıysa true. #1055 (beta.86): süre saatle ölçülüyordu; zamanlayıcı gecikince (bilgisayar
+    /// uykudan döndü, iş parçacığı havuzu tıkandı) ping gitmediği halde sağlam TV "susmuş" sayılıyordu. Artık alındısız
+    /// geçen ping turları sayılır. <see cref="TvStale"/> da yalnız TV'den hiç bağlantı kalmadıysa tetiklenir: TV yeni akışını
+    /// açmışken eski, yarı açık bağlantısının susması bekçiyi yenilemez (yenilenen bekçi LG'de açık uygulamayı yeniden
+    /// başlatıyor, ekran kararıyordu). Mac/iPhone ve Android ile aynı.
+    /// </summary>
+    internal bool DropSilentTvs()
+    {
+        List<Client> silent = [];
+        int remaining;
+        lock (gate)
+        {
+            foreach (var client in clients)
+            {
+                if (client.AckMisses is not { } misses) continue;
+                if (misses + 1 > AckMissLimit) silent.Add(client);
+                else client.AckMisses = misses + 1;
+            }
+            remaining = clients.Count(c => !c.Viewer && !silent.Contains(c));
+        }
+        if (silent.Count == 0) return false;
+        foreach (var client in silent) Remove(client);
+        SubtitleLog.Write($"TV {AckMissLimit} ping turu alındı göndermedi: bağlantı kopmuş sayıldı, kapatıldı"
+                          + (remaining > 0 ? " (TV'nin başka bağlantısı açık, bekçiye dokunulmadı)" : ""));
+        if (remaining == 0) TvStale?.Invoke();
+        return true;
     }
 
     /// <summary>İstemci bağlantıyı kapattığında listeden çıkarır.</summary>
@@ -830,10 +1163,14 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
         catch (SocketException) { }
     }
 
-    private static string StyleFrame(SubtitleStyle style, bool setApart) =>
-        Frame("style", new SortedDictionary<string, object>
+    private static string StyleFrame(SubtitleStyle style, bool setApart)
+    {
+        var json = new SortedDictionary<string, object>
         {
             ["background"] = Math.Clamp(style.Background, 0, 100),
+            ["backgroundColor"] = style.BackgroundRgb,
+            ["nameOnly"] = style.NameOnly,
+            ["wholeLine"] = style.NameColorMode == NameColorMode.Line,
             ["backgroundShape"] = style.BackgroundShape.ToString().ToLowerInvariant(),
             ["bold"] = style.Bold,
             ["bottomPercent"] = style.BottomPercent,
@@ -848,7 +1185,12 @@ public sealed class SubtitleServer(int port = 8787, TimeSpan? pingInterval = nul
             ["setApart"] = setApart,
             ["stackPrevious"] = style.StackPrevious,
             ["textColor"] = style.TextColor.ToString().ToLowerInvariant(),
-        });
+        };
+        // Yeni alanlar (TV 0.9.77+); eski TV tanımaz, eskisi gibi çizer.
+        if (SubtitleStyle.Hex(style.TextHex) is { } text) json["textHex"] = text;
+        if (style.HdmiInput is >= 1 and <= 4) json["hdmiInput"] = style.HdmiInput.Value;
+        return Frame("style", json);
+    }
 
     private static string Frame(string name, SortedDictionary<string, object> json) =>
         $"event: {name}\ndata: {JsonSerializer.Serialize(json, JsonOptions)}\n\n";

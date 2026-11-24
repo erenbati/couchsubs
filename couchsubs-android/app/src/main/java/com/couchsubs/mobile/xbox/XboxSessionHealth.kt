@@ -15,6 +15,15 @@ class XboxKeepalive {
 
         /** Yanıt oturumun Xbox hizmetinde artık olmadığını söylüyor (HTTP 404/410): beklenmez, oturum biter. */
         fun sessionGone(message: String?): Boolean = message.orEmpty().let { it.contains("HTTP 404") || it.contains("HTTP 410") }
+
+        /**
+         * Başarısız canlı tutma isteğinden sonra yayın bitirilmeli mi. Görüntü akarken ([pictureFlowing]) hayır: Xbox
+         * yayını sürdürüyor, canlı tutma yanıtı (404 dahil) yanıltıcı olabiliyor. Android beta.85'te 404 ya da üç hata
+         * görüntü akarken de yayını kapatıyordu; ilk istek bağlantıdan 30 sn sonra gittiği için Xbox'ta "uzaktan yürütme
+         * başlatıldı / durduruldu" döngüsü oluyordu (beta.65'te hata yalnız günlüğe yazılıyordu). Görüntü durmuşsa
+         * eskisi gibi: oturum Xbox hizmetinde yoksa ([gone]) ya da hatalar [MAX_FAILURES]'a vardıysa ([exhausted]) biter.
+         */
+        fun shouldEnd(gone: Boolean, exhausted: Boolean, pictureFlowing: Boolean): Boolean = !pictureFlowing && (gone || exhausted)
     }
 
     var failures = 0

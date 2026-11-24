@@ -16,7 +16,7 @@ struct GameAskTile: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Which game are you playing?").font(Mobile.TypeScale.headline)
                 Spacer(minLength: Mobile.Space.inline)
-                Button("Don't ask") { choice.dismiss() }
+                Button("Don't Ask") { choice.dismiss() }
                     .font(Mobile.TypeScale.caption)
                     .foregroundStyle(Mobile.Palette.secondary)
             }
@@ -67,6 +67,11 @@ struct GameSection: View {
             GameAskTile(choice: choice)
         } else {
             PlayedGameRow(choice: choice)
+            // Xbox oynanan oyunu bildirmez: oyun seçilmediyse satır vurgulanır ve kısa not görünür (zorlayıcı kart açılmaz).
+            if choice.xboxNeedsGame {
+                MobileNote(text: String(localized: "Xbox doesn't report the game being played; choose the game to turn on game-specific translation and the GTA 6 phone."),
+                           tone: Mobile.Palette.secondary)
+            }
             GameAreasRow(areas: areas)
         }
     }
@@ -95,7 +100,7 @@ struct GameAreasRow: View {
                     Spacer(minLength: Mobile.Space.inline)
                     Button("Undo") { areas.undo() }
                         .font(Mobile.TypeScale.caption.weight(.semibold))
-                        .foregroundStyle(Mobile.Palette.accent)
+                        .foregroundStyle(Mobile.Palette.accentText)
                 }
             }
         }
@@ -111,7 +116,7 @@ struct PlayedGameRow: View {
     @ObservedObject var choice: GameChoice
 
     var body: some View {
-        Tile {
+        Tile(emphasis: choice.xboxNeedsGame ? .warning : .none) {
             HStack(spacing: Mobile.Space.gap) {
                 MobileTileIcon(symbol: "gamecontroller")
                 VStack(alignment: .leading, spacing: Mobile.Space.hair) {
@@ -123,7 +128,7 @@ struct PlayedGameRow: View {
                 if !choice.asking {
                     Button(choice.game == nil ? LocalizedStringKey("Choose") : LocalizedStringKey("Change")) { choice.ask() }
                         .font(Mobile.TypeScale.caption.weight(.semibold))
-                        .foregroundStyle(Mobile.Palette.accent)
+                        .foregroundStyle(Mobile.Palette.accentText)
                 }
             }
         }

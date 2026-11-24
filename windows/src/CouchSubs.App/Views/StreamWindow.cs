@@ -30,6 +30,8 @@ public sealed class StreamWindow : Window
     private readonly StackPanel linesPanel = new() { VerticalAlignment = VerticalAlignment.Bottom };
     /// <summary>Ek alanların (görev, telefon mesajı, bildirim) çevirileri; saydam penceredeki gibi üstte, alanın yanına yaslı.</summary>
     private readonly DesktopRegionsPanel regionsPanel;
+    /// <summary>Özgün stilli ekran yazısı çevirileri oyun karesindeki kendi yerlerinde (Mac ScreenTextBlocks).</summary>
+    private readonly ScreenTextCanvas screenTextLayer = new();
     private readonly Dictionary<string, (string Text, CouchSubs.Core.TextBox? Box, IReadOnlyList<ScreenTranslation.Item>? Blocks)> regions = [];
     private readonly Border linesHost;
     /// <summary>Düz zemin; telefon katmanı ve altyazı bunun üstünde.</summary>
@@ -90,8 +92,12 @@ public sealed class StreamWindow : Window
         layers.Children.Add(regionsPanel);
         layers.Children.Add(linesPanel);
         linesHost = new Border { Child = layers };
-        root = new Grid { Children = { phoneLayer, linesHost } };
+        root = new Grid { Children = { phoneLayer, screenTextLayer, linesHost } };
+        root.Children.Add(BuildBar());
         Content = root;
+        // Çubuk yalnız fare pencerenin üstündeyken görünür: yayın programı yakalarken görüntüye girmez.
+        MouseEnter += (_, _) => ShowBar();
+        MouseLeave += (_, _) => ShowBar();
         ApplyBackground();
         linesHost.SizeChanged += (_, _) =>
         {
@@ -117,6 +123,85 @@ public sealed class StreamWindow : Window
             timer.Stop();
             open = null;
         };
+    }
+
+    // ───── Alt çubuk (tuval 13): Ekranı Çevir, Örtsün, Çubuğu Gizle; gizliyken sağ altta "Çubuğu Göster". ─────
+
+    private Border? bar;
+    private Button? showBar;
+    private Button? cover;
+    private bool barHidden;
+    /// <summary>"Örtsün"den önceki zemin koyuluğu (yeniden basınca geri gelir).</summary>
+    private int? coverBefore;
+
+    private UIElement BuildBar()
+    {
+        var text = Localizer.Current;
+        Button Pill(string label, Brush background, Brush foreground, FontWeight weight)
+        {
+            var button = new Button { Content = label, Height = 36, MinHeight = 36, Padding = new Thickness(16, 0, 16, 0), FontSize = 13, FontWeight = weight,
+                Background = background, Foreground = foreground, Margin = new Thickness(4, 0, 4, 0) };
+            button.SetResourceReference(StyleProperty, "ButtonBase");
+            return button;
+        }
+        var translate = Pill(text["Translate the Screen"], (Brush)FindResource("accentBrush"), (Brush)FindResource("onAccentBrush"), FontWeights.SemiBold);
+        translate.Click += async (_, _) =>
+        {
+            try { await controller.TranslateScreenAsync(); }
+            catch (Exception error) { StartupGuard.Log("Yayın penceresinden ekran çevrilemedi", error); }
+        };
+        cover = Pill(text["Cover"], Brushes.Transparent, Brushes.White, FontWeights.Medium);
+        cover.Click += (_, _) => ToggleCover();
+        var hide = Pill(text["Hide the Bar"], new SolidColorBrush(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)), Brushes.White, FontWeights.Medium);
+        hide.Click += (_, _) => { barHidden = true; ShowBar(); };
+        bar = new Border
+        {
+            Child = new StackPanel { Orientation = Orientation.Horizontal, Children = { translate, cover, hide } },
+            Padding = new Thickness(2, 6, 2, 6), CornerRadius = new CornerRadius(24), Background = new SolidColorBrush(Color.FromArgb(0xB3, 0x10, 0x10, 0x14)),
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(16),
+        };
+        showBar = Pill(text["Show the Bar"], new SolidColorBrush(Color.FromArgb(0x99, 0x10, 0x10, 0x14)), Brushes.White, FontWeights.Medium);
+        showBar.Height = showBar.MinHeight = 32;
+        showBar.FontSize = 12;
+        showBar.HorizontalAlignment = HorizontalAlignment.Right;
+        showBar.VerticalAlignment = VerticalAlignment.Bottom;
+        showBar.Margin = new Thickness(16);
+        showBar.Click += (_, _) => { barHidden = false; ShowBar(); };
+        ShowCover();
+        var layer = new Grid { Children = { bar, showBar } };
+        ShowBar();
+        return layer;
+    }
+
+    private void ShowBar()
+    {
+        if (bar is null || showBar is null) return;
+        var hover = IsMouseOver;
+        bar.Visibility = hover && !barHidden ? Visibility.Visible : Visibility.Collapsed;
+        showBar.Visibility = hover && barHidden ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>"Örtsün": altyazı zemini tam koyu olur, oyunun İngilizce altyazısı görünmez; yeniden basınca eski koyuluk.</summary>
+    private void ToggleCover()
+    {
+        var style = controller.Settings.Style;
+        if (coverBefore is { } before)
+        {
+            controller.Settings = controller.Settings with { Style = style with { Background = before } };
+            coverBefore = null;
+        }
+        else
+        {
+            coverBefore = style.Background;
+            controller.Settings = controller.Settings with { Style = style with { Background = 100 } };
+        }
+        ShowCover();
+    }
+
+    private void ShowCover()
+    {
+        if (cover is null) return;
+        cover.Background = coverBefore is null ? new SolidColorBrush(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)) : (Brush)FindResource("successBrush");
     }
 
     private void ApplyBackground()
@@ -195,7 +280,19 @@ public sealed class StreamWindow : Window
             screenRegionUntil = 0;
         }
         var lines = stack.Lines(now).ToList();
-        regionsPanel.ShowRegions(regions, MakeRegionBox);
+        // Özgün stilli ekran yazısı (Ekranı çevir ve otomatik ekran yazısı) kendi yerinde çizilir; kalanlar eskisi gibi
+        // pencerenin üstünde (Mac StreamWindow ile aynı). "Ekranı çevir" ekrandayken onun altında kalan bloklar çizilmez.
+        var shown = ScreenRegions.Visible(regions).ToList();
+        var inPlace = ScreenTranslation.Layered(shown.Where(pair => pair.Key != "game-phone")
+                                                     .SelectMany(pair => pair.Value.Blocks ?? []).Where(ScreenTextCanvas.Draws));
+        var listed = new Dictionary<string, (string Text, CouchSubs.Core.TextBox? Box, IReadOnlyList<ScreenTranslation.Item>? Blocks)>();
+        foreach (var (id, region) in shown)
+        {
+            if (id == "game-phone" || region.Blocks is not { Count: > 0 } blocks) { listed[id] = region; continue; }
+            var rest = blocks.Where(block => !ScreenTextCanvas.Draws(block)).ToList();
+            if (rest.Count > 0) listed[id] = (region.Text, region.Box, rest);
+        }
+        regionsPanel.ShowRegions(listed, MakeRegionBox);
         linesPanel.Children.Clear();
         foreach (var id in boxes.Keys.Except(lines.Select(l => l.Id)).ToList()) boxes.Remove(id);
         foreach (var line in lines)
@@ -212,6 +309,11 @@ public sealed class StreamWindow : Window
             }
             linesPanel.Children.Add(box);
         }
+        linesPanel.UpdateLayout();
+        Rect? subtitles = linesPanel.Children.Count > 0 && linesPanel.ActualHeight > 0
+            ? linesPanel.TransformToAncestor(root).TransformBounds(new Rect(linesPanel.RenderSize))
+            : null;
+        screenTextLayer.Show(inPlace, subtitles);
         timer.Stop();
         if (ScreenRegions.NextChange(stack.NextChange(now), screenRegionUntil) is { } next)
         {
@@ -233,7 +335,7 @@ public sealed class StreamWindow : Window
         var size = Math.Max(1, OverlayPlacement.FontSize(style.FontSize) * scale * (current ? 1 : 0.8) * wrapped.Scale);
         var boxed = StreamBackgrounds.BoxOpacity(style.Background) > 0;
         var dim = line.Role switch { SubtitleStack.Role.Current => 1.0, SubtitleStack.Role.Previous => 0.6, _ => 0.45 };
-        var color = style.TextColor == SubtitleTextColor.Yellow ? Color.FromRgb(0xFF, 0xE1, 0x35) : Colors.White;
+        var color = SpeakerText.Rgb(style.TextRgb);
         if (boxed) color.A = (byte)Math.Round(dim * 255);
         var text = new TextBlock
         {
@@ -246,10 +348,10 @@ public sealed class StreamWindow : Window
             Effect = boxed ? null : new DropShadowEffect { Color = Colors.Black, ShadowDepth = 2 * scale, BlurRadius = 4 * scale, Opacity = 1, Direction = 270 },
         };
         // Konuşana göre renk: "Ad: …" satırı o konuşanın renginde (ayar kapalıysa düz metin).
-        SpeakerText.Fill(text, wrapped.Text, line.Text, controller.Settings.SpeakerColors, controller.SpeakerBook, color.A);
+        SpeakerText.Fill(text, wrapped.Text, line.Text, controller.Settings.SpeakerColors, controller.SpeakerBook, color.A, style.NameOnly, style.NameColorMode == NameColorMode.Line);
         return new Border
         {
-            Background = boxed ? Brushes.Black : Brushes.Transparent,
+            Background = boxed ? new SolidColorBrush(SpeakerText.Rgb(style.BackgroundRgb)) : Brushes.Transparent,
             CornerRadius = new CornerRadius(10 * scale),
             Padding = current ? new Thickness(26 * scale, 10 * scale, 26 * scale, 10 * scale) : new Thickness(20 * scale, 6 * scale, 20 * scale, 6 * scale),
             Margin = new Thickness(0, 14 * scale, 0, 0),
@@ -282,7 +384,7 @@ public sealed class StreamWindow : Window
                 Text = text,
                 FontSize = size,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = style.TextColor == SubtitleTextColor.Yellow ? new SolidColorBrush(Color.FromRgb(0xFF, 0xE1, 0x35)) : Brushes.White,
+                Foreground = new SolidColorBrush(SpeakerText.Rgb(style.TextRgb)),
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = size * 1.25,
             },

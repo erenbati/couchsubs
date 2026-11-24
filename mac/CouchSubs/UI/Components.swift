@@ -5,6 +5,29 @@ import SwiftUI
 // Ortak bileşenler. Ölçü ve renkler Theme'den (design/tokens.json) gelir; ekranlar sabit değer kullanmaz.
 // Bileşenlerin tarifi docs/TASARIM.md'de; Windows sürümü aynı bileşenleri aynı adlarla kurar.
 
+/// Mac'in yeni arayüzü (design/yeni-arayuz) içinde true: eski kartlar yeni sayfalara gömülünce aynı dilde çizilir
+/// (düğme, karo, alan, ipucu). iPhone bu değeri hiç vermez; görünümü değişmez.
+private struct CSNewLookKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private struct CSInsideCardKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var csNewLook: Bool {
+        get { self[CSNewLookKey.self] }
+        set { self[CSNewLookKey.self] = newValue }
+    }
+
+    /// Yeni arayüzde bir kartın içindeyiz: gömülü eski karolar çerçevesiz, düz satır olarak çizilir (kart içinde kart yok).
+    var csInsideCard: Bool {
+        get { self[CSInsideCardKey.self] }
+        set { self[CSInsideCardKey.self] = newValue }
+    }
+}
+
 /// Uygulamanın logosu (kanepe + altyazı).
 struct LogoView: View {
     var size: CGFloat = 40
@@ -35,7 +58,28 @@ struct CSButtonStyle: ButtonStyle {
     var height = "buttonHeight"
 
     func makeBody(configuration: Configuration) -> some View {
+        CSButtonSwitch(configuration: configuration, kind: kind, fullWidth: fullWidth, height: height)
+    }
+}
+
+/// Yeni arayüzde (yalnız Mac) düğme yeni dilde çizilir; değilse eski görünüm.
+private struct CSButtonSwitch: View {
+    let configuration: ButtonStyleConfiguration
+    let kind: CSButtonStyle.Kind
+    let fullWidth: Bool
+    let height: String
+    @Environment(\.csNewLook) private var newLook
+
+    var body: some View {
+        #if os(macOS)
+        if newLook {
+            NewLookButton(configuration: configuration, kind: kind, fullWidth: fullWidth)
+        } else {
+            CSButtonBody(configuration: configuration, kind: kind, fullWidth: fullWidth, height: height)
+        }
+        #else
         CSButtonBody(configuration: configuration, kind: kind, fullWidth: fullWidth, height: height)
+        #endif
     }
 }
 
@@ -112,7 +156,26 @@ struct CSTextFieldStyle: TextFieldStyle {
     var height: CGFloat = Theme.size("buttonHeight")
 
     func _body(configuration: TextField<Self._Label>) -> some View {
-        CSTextFieldBody(field: configuration.textFieldStyle(.plain), font: font, height: height)
+        CSTextFieldSwitch(field: configuration.textFieldStyle(.plain), font: font, height: height)
+    }
+}
+
+private struct CSTextFieldSwitch<Field: View>: View {
+    let field: Field
+    let font: Font
+    let height: CGFloat
+    @Environment(\.csNewLook) private var newLook
+
+    var body: some View {
+        #if os(macOS)
+        if newLook {
+            DSFieldChrome { field }
+        } else {
+            CSTextFieldBody(field: field, font: font, height: height)
+        }
+        #else
+        CSTextFieldBody(field: field, font: font, height: height)
+        #endif
     }
 }
 
@@ -147,6 +210,41 @@ struct TileBackground: ViewModifier {
     var fill: Color = .csSurface
 
     func body(content: Content) -> some View {
+        TileBody(content: content, style: style, padding: padding, fill: fill)
+    }
+}
+
+private struct TileBody<Content: View>: View {
+    let content: Content
+    let style: TileStyle
+    let padding: CGFloat
+    let fill: Color
+    @Environment(\.csNewLook) private var newLook
+    @Environment(\.csInsideCard) private var insideCard
+
+    var body: some View {
+        #if os(macOS)
+        if newLook && insideCard && style == .plain {
+            // Kartın içindeki eski karo: çerçevesiz, zeminsiz; düz satırlar olarak durur (ek dikey boşluk yok: ritim kartın).
+            content
+        } else if newLook {
+            // Yeni arayüzde kendi başına duran eski karo: yeni kart gibi (24 köşe, 24 iç boşluk); seçili karo 2 pt amber.
+            // İçindeki karolar düz çizilir.
+            let shape = RoundedRectangle(cornerRadius: style == .active ? DS.radius("tile") : DS.radius("card"), style: .continuous)
+            content
+                .environment(\.csInsideCard, true)
+                .padding(padding == Theme.space("tile") && style == .plain ? DS.space("l") : padding)
+                .background(fill == .csSurface ? Color.dsSurface : Color.dsField, in: shape)
+                .overlay(shape.strokeBorder(style == .active ? Color.dsAmber : Color.dsBorder, lineWidth: style == .active ? 2 : 1))
+        } else {
+            legacy
+        }
+        #else
+        legacy
+        #endif
+    }
+
+    private var legacy: some View {
         let shape = RoundedRectangle(cornerRadius: Theme.radius("card"), style: .continuous)
         return content
             .padding(padding)
@@ -166,14 +264,22 @@ struct Card<Content: View>: View {
     var title: LocalizedStringKey?
     var style: TileStyle = .plain
     @ViewBuilder var content: Content
+    @Environment(\.csNewLook) private var newLook
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.space("m")) {
+        // Yeni arayüzde birimler arası her yerde 24 (DS.unitGap); başlık → ilk birim de 24.
+        VStack(alignment: .leading, spacing: newLook ? DS.unitGap : Theme.space("m")) {
             if let title {
-                Text(title).font(.csHeadline)
+                if newLook {
+                    // Yeni arayüzde kart başlığı: sistem yazısı, cümle düzeni, 17 orta kalın (DSCardHeader ile aynı).
+                    Text(title).font(.system(size: 17, weight: .medium))
+                } else {
+                    Text(title).font(.csHeadline)
+                }
             }
             content
         }
+        .environment(\.dsCardSpacing, newLook ? DS.unitGap : Theme.space("m"))
         .frame(maxWidth: .infinity, alignment: .leading)
         .tile(style)
     }
@@ -424,21 +530,28 @@ struct StepLayout<Content: View>: View {
     let title: LocalizedStringKey
     let message: LocalizedStringKey
     @ViewBuilder var content: Content
+    @Environment(\.csNewLook) private var newLook
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.space("l")) {
-            Text(title)
-                .font(.csDisplay)
-            Text(message)
-                .font(.csBody)
-                .foregroundStyle(Color.csSecondary)
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-            content
-                .padding(.top, Theme.space("s"))
-            Spacer(minLength: 0)
+        // Yeni arayüzde başlık ve açıklamayı sihirbazın kendisi (tuvaldeki metinlerle) çizer; adım yalnız içeriğini verir.
+        if newLook {
+            VStack(alignment: .leading, spacing: 16) { content }
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: Theme.space("l")) {
+                Text(title)
+                    .font(.csDisplay)
+                Text(message)
+                    .font(.csBody)
+                    .foregroundStyle(Color.csSecondary)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                content
+                    .padding(.top, Theme.space("s"))
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -543,8 +656,21 @@ struct DoneLabel: View {
 /// İkincil açıklama metni.
 struct HintText: View {
     let text: LocalizedStringKey
+    @Environment(\.csNewLook) private var newLook
 
     var body: some View {
+        #if os(macOS)
+        if newLook {
+            Text(text).dsMuted()
+        } else {
+            legacy
+        }
+        #else
+        legacy
+        #endif
+    }
+
+    private var legacy: some View {
         Text(text)
             .font(.csCallout)
             .foregroundStyle(Color.csSecondary)

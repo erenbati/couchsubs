@@ -14,6 +14,11 @@ data class PromoPopup(
     val alt: String,
     val everyHours: Int,
     val targets: Set<String>,
+    /**
+     * Uygulamayla gelen reklam (design/yeni-arayuz/reklamlar.json › popups[0]; promo.json indirilemezse). [image] o
+     * zaman uygulamanın içindeki görselin adıdır (reklam/ altında), adres değil.
+     */
+    val bundled: Boolean = false,
 )
 
 /** Şu anki ekran: popup yalnız ana ekranda ve kullanıcı boştayken açılır. */
@@ -65,6 +70,23 @@ object PromoPolicy {
         null
     }
 
+    /**
+     * Uygulamayla gelen açılır reklam (Mac ve Windows'un okuduğu reklamlar.json › popups[0]; iPhone ile aynı kural): görsel
+     * adı boşsa ya da '/' içeriyorsa, bağlantı https değilse ya da kimlik yoksa null. Günde en çok bir kez, yalnız Android'de.
+     */
+    fun parseBundled(json: String): PromoPopup? = try {
+        JSONObject(json).optJSONArray("popups")?.optJSONObject(0)?.let {
+            val id = it.optString("id").trim()
+            val image = it.optString("image").trim()
+            val link = it.optString("link").trim()
+            if (id.isEmpty() || image.isEmpty() || '/' in image || '\\' in image || !isHttps(link)) null
+            else PromoPopup(id = id, active = true, image = image, link = link, alt = it.optString("alt").trim(),
+                everyHours = DEFAULT_EVERY_HOURS, targets = setOf(PLATFORM), bundled = true)
+        }
+    } catch (error: org.json.JSONException) {
+        null
+    }
+
     /** Görsel ve bağlantı yalnız https (görsel) ve http/https (bağlantı); başka şema (intent:, javascript:) açılmaz. */
     fun isHttps(url: String) = url.startsWith("https://", ignoreCase = true) && url.length > "https://".length
     fun isWebLink(url: String) = isHttps(url) || (url.startsWith("http://", ignoreCase = true) && url.length > "http://".length)
@@ -73,7 +95,8 @@ object PromoPolicy {
     fun due(popup: PromoPopup?, record: PromoRecord, nowMs: Long, platform: String = PLATFORM): Boolean {
         if (popup == null || !popup.active || popup.id.isEmpty()) return false
         if (platform !in popup.targets) return false
-        if (!isHttps(popup.image) || !isWebLink(popup.link)) return false
+        // Uygulamayla gelen reklamın görseli adres değil, paketteki dosyanın adıdır.
+        if ((!popup.bundled && !isHttps(popup.image)) || !isWebLink(popup.link)) return false
         if (record.id != popup.id) return true
         val hours = if (popup.everyHours > 0) popup.everyHours else DEFAULT_EVERY_HOURS
         // Saat geri alındıysa (gösterim gelecekte görünüyor) yeniden gösterilir; sonsuza dek susmaz.
@@ -84,6 +107,9 @@ object PromoPolicy {
     /** Popup'ın şu an açılabileceği an: girişten 10 sn sonra, yalnız ana ekranda, oturum, deneme, kurulum ve tur yokken. */
     fun idle(moment: PromoMoment) = moment.onHome && !moment.sessionActive && !moment.demo && !moment.onboarding &&
         !moment.tour && moment.inAppMs >= SHOW_DELAY_MS
+
+    /** Alt reklam şeridi (METINLER.md › Reklam kuralları; Mac, Windows, iPhone ile aynı): çeviri sürerken ve deneme modunda gizli. */
+    fun adBandVisible(appPage: Boolean, translating: Boolean, demo: Boolean) = appPage && !translating && !demo
 
     fun shouldShow(popup: PromoPopup?, record: PromoRecord, nowMs: Long, moment: PromoMoment, platform: String = PLATFORM) =
         idle(moment) && due(popup, record, nowMs, platform)

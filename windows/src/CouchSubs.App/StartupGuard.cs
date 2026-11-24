@@ -120,6 +120,8 @@ internal static class StartupGuard
         Log(message, error);
         if (renderFolder is null)
         {
+            // Arayüz açılamadı: düzeltilmiş sürüm varsa kurulup uygulama yeniden başlar (RescueUpdate).
+            RescueUpdate.TryNow();
             MessageBox.Show(message, "CouchSubs", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         else

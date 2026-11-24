@@ -213,14 +213,15 @@ public class ExtraRegionTests
         Assert.Null(settings.ExtraAreaAt(2));
     }
 
-    /// <summary>En çok üç ek alan; dördüncüsü eklenmez.</summary>
+    /// <summary>Ek alan sınırı yok (yeni arayüz): dördüncü ve sonrası eklenir; kısayol yalnız ilk üçünde.</summary>
     [Fact]
-    public void AtMostThreeExtraAreas()
+    public void ExtraAreasHaveNoLimit()
     {
         var settings = new UserSettings().WithArea(new CropRegion()).WithArea(new CropRegion()).WithArea(new CropRegion());
-        Assert.False(settings.CanAddExtraArea);
-        Assert.Equal(3, settings.WithAddedExtraArea(ExtraArea.Create("Dördüncü", new CropRegion())).ExtraAreas.Count);
-        Assert.Equal(3, (settings with { ExtraAreas = [.. settings.ExtraAreas, ExtraArea.Create("x", new CropRegion())] }).ExtraAreas.Count);
+        Assert.True(settings.CanAddExtraArea);
+        var more = settings.WithAddedExtraArea(ExtraArea.Create("Dördüncü", new CropRegion())).WithAddedExtraArea(ExtraArea.Create("Beşinci", new CropRegion()));
+        Assert.Equal(5, more.ExtraAreas.Count);
+        Assert.Equal(3, ExtraArea.ShortcutCount);
     }
 
     /// <summary>Yeni ek alan sürekli okunur ve sonucu TV'de gösterir (Mac, iPhone, Android ile aynı varsayılan).</summary>

@@ -37,8 +37,8 @@ class SubtitleServerTest {
     fun clearAndStyleFrames() {
         assertEquals("event: clear\ndata: {}\n\n", SubtitleServer.clearFrame())
         assertEquals(
-            "event: style\ndata: {\"background\":90,\"backgroundShape\":\"fit\",\"bold\":false,\"bottomPercent\":7,\"displayMode\":\"inApp\",\"fontSize\":46," +
-                "\"placement\":\"cover\",\"setApart\":true,\"stackPrevious\":true,\"textColor\":\"white\"}\n\n",
+            "event: style\ndata: {\"background\":90,\"backgroundColor\":\"#101014\",\"backgroundShape\":\"fit\",\"bold\":false,\"bottomPercent\":7,\"displayMode\":\"inApp\",\"fontSize\":46," +
+                "\"nameOnly\":false,\"placement\":\"cover\",\"setApart\":true,\"stackPrevious\":true,\"textColor\":\"white\",\"wholeLine\":false}\n\n",
             SubtitleServer.styleFrame(SubtitleStyle()),
         )
         assertTrue(SubtitleServer.styleFrame(SubtitleStyle(displayMode = TvDisplayMode.OVERLAY, textColor = SubtitleTextColor.YELLOW))
@@ -52,6 +52,19 @@ class SubtitleServerTest {
         assertTrue(SubtitleServer.styleFrame(SubtitleStyle(stackPrevious = false)).contains("\"stackPrevious\":false"))
         // "Ekran yazılarını altyazıdan ayır" kapalıysa TV'ye false gider (yoksa açık sayılır).
         assertTrue(SubtitleServer.styleFrame(SubtitleStyle(), setApart = false).contains("\"setApart\":false"))
+    }
+
+    /** Mac/iPhone SubtitleStyle.json ile aynı alanlar: zemin ve yazı rengi, yalnız ad, TV girişi. */
+    @Test
+    fun styleFrameCarriesColorsNameOnlyAndHdmiInput() {
+        val frame = SubtitleServer.styleFrame(SubtitleStyle(backgroundColor = "#0e1a30", textHex = "#ffe066", nameOnly = true, hdmiInput = 2))
+        assertTrue(frame.contains("\"backgroundColor\":\"#0E1A30\""))
+        assertTrue(frame.contains("\"textHex\":\"#FFE066\""))
+        assertTrue(frame.contains("\"nameOnly\":true"))
+        assertTrue(frame.contains("\"hdmiInput\":2"))
+        // Seçilmemiş yazı rengi ve TV girişi gönderilmez; bozuk zemin rengi varsayılana döner.
+        val plain = SubtitleServer.styleFrame(SubtitleStyle(backgroundColor = "kirmizi", hdmiInput = 7))
+        assertTrue(!plain.contains("textHex") && !plain.contains("hdmiInput") && plain.contains("\"backgroundColor\":\"#101014\""))
     }
 
     @Test
@@ -107,6 +120,217 @@ class SubtitleServerTest {
                 assertEquals("data: {}", reader.readLine())
             }
         } finally {
+            server.stop()
+        }
+    }
+
+    private fun get(port: Int, path: String): String = Socket("127.0.0.1", port).use { socket ->
+        socket.soTimeout = 5000
+        socket.getOutputStream().write("GET $path HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray())
+        socket.getInputStream().readBytes().toString(Charsets.UTF_8)
+    }
+
+    /** TV akışını açar, `link` olayının kimliğini döner (soket açık kalır). */
+    private fun openTv(port: Int, sockets: MutableList<Socket>): String {
+        val socket = Socket("127.0.0.1", port)
+        sockets.add(socket)
+        socket.soTimeout = 5000
+        socket.getOutputStream().write("GET /events?v=0.9.76 HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray())
+        val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+        while (reader.readLine() != "event: link") Unit
+        val data = reader.readLine()
+        assertTrue(data, data.matches(Regex("data: \\{\"id\":\"[A-Za-z0-9]{16}\"\\}")))
+        return data.substringAfter("\"id\":\"").substringBefore('"')
+    }
+
+    private fun waitFor(ms: Long = 3000, condition: () -> Boolean): Boolean {
+        val deadline = System.currentTimeMillis() + ms
+        while (!condition()) {
+            if (System.currentTimeMillis() > deadline) return false
+            Thread.sleep(10)
+        }
+        return true
+    }
+
+    /** TV akışını açar ve `link`'ten sonraki olayları (ad, veri) sırayla okuyan işlev döner. */
+    private fun tvEvents(port: Int, sockets: MutableList<Socket>): () -> Pair<String, String> {
+        val socket = Socket("127.0.0.1", port)
+        sockets.add(socket)
+        socket.soTimeout = 5000
+        socket.getOutputStream().write("GET /events?v=0.9.76 HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray())
+        val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+        while (reader.readLine() != "event: link") Unit
+        reader.readLine()
+        return {
+            var name = ""
+            var data = ""
+            while (true) {
+                val line = reader.readLine() ?: break
+                if (line.startsWith("event: ")) name = line.removePrefix("event: ")
+                else if (line.startsWith("data: ")) data = line.removePrefix("data: ")
+                else if (line.isEmpty() && name.isNotEmpty()) break
+            }
+            name to data
+        }
+    }
+
+    /**
+     * #1198: yeni bağlanan TV önce gösterilen alanların listesini (`region-sync`; listede olmayanları kaldırır), sonra
+     * her alanı `keep` bayrağıyla alır. Kopukken kaçan boşaltma olayı yüzünden çeviri ekranda kalıyordu.
+     */
+    @Test
+    fun newStreamGetsLiveRegionsWithSync() {
+        val server = SubtitleServer(0)
+        val port = server.start()
+        val sockets = mutableListOf<Socket>()
+        try {
+            server.sendRegion("q", "Selam", TextBox(0.1, 0.1, 0.3, 0.2), 0.03)
+            server.sendRegion("game-phone", "Mesaj", null, null)
+            server.sendRegion("bos", "Gitti", null, null)
+            server.sendRegion("bos", "", null, null)
+            val next = tvEvents(port, sockets)
+            assertEquals("region-sync" to "{\"ids\":[\"game-phone\",\"q\"]}", next())
+            val phone = next()
+            assertEquals("region", phone.first)
+            assertTrue(phone.second, phone.second.contains("\"id\":\"game-phone\"") && phone.second.contains("\"keep\":true"))
+            val q = next()
+            assertTrue(q.second, q.second.contains("\"id\":\"q\"") && q.second.contains("\"keep\":true") && q.second.contains("Selam"))
+            server.clearRegions()
+            assertEquals("region-clear", next().first)
+            assertEquals("region-sync" to "{\"ids\":[]}", tvEvents(port, sockets)())
+        } finally {
+            sockets.forEach { it.close() }
+            server.stop()
+        }
+    }
+
+    /** Gösterilen alan (telefon kartı hariç) aralıkla `keep` bayrağıyla yenilenir: TV'deki ömrü dolup kalkmasın. */
+    @Test
+    fun liveRegionsAreRefreshedExceptThePhone() {
+        val server = SubtitleServer(0)
+        server.regionRefreshMs = 100
+        val port = server.start()
+        val sockets = mutableListOf<Socket>()
+        try {
+            val next = tvEvents(port, sockets)
+            assertEquals("region-sync", next().first)
+            assertTrue(waitFor { server.connectedClients == 1 })
+            server.sendRegion("q", "Selam", null, null)
+            server.sendRegion("game-phone", "Mesaj", null, null)
+            val seen = mutableListOf<Pair<String, String>>()
+            repeat(8) { seen.add(next()) }
+            val kept = seen.filter { it.second.contains("\"keep\":true") }
+            assertTrue(seen.toString(), kept.size >= 2)
+            assertTrue(seen.toString(), kept.all { it.first == "region" && it.second.contains("\"id\":\"q\"") })
+        } finally {
+            sockets.forEach { it.close() }
+            server.stop()
+        }
+    }
+
+    /** TV akışı `link` ile kimliğini alır; `/ack` bilinen kimliğe 204, bilinmeyene 404 (Mac/iPhone ve Windows ile aynı). */
+    @Test
+    fun tvStreamCarriesALinkIdThatAcksAccept() {
+        val server = SubtitleServer(0)
+        val port = server.start()
+        val sockets = mutableListOf<Socket>()
+        try {
+            val id = openTv(port, sockets)
+            assertTrue(waitFor { server.connectedClients == 1 })
+            assertTrue(get(port, "/ack?c=$id").startsWith("HTTP/1.1 204 No Content"))
+            assertTrue(get(port, "/ack?c=bilinmeyen").startsWith("HTTP/1.1 404 Not Found"))
+            assertTrue(get(port, "/ack").startsWith("HTTP/1.1 404 Not Found"))
+            // İzleyici (OBS) kimlik almaz.
+            Socket("127.0.0.1", port).use { socket ->
+                socket.soTimeout = 1000
+                socket.getOutputStream().write("GET /events?viewer=obs HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray())
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+                while (reader.readLine() != "retry: 2000") Unit
+                server.clear()
+                val lines = mutableListOf<String>()
+                while (true) { val line = reader.readLine() ?: break; lines.add(line); if (line == "event: clear") break }
+                assertFalse(lines.contains("event: link"))
+            }
+        } finally {
+            sockets.forEach { it.close() }
+            server.stop()
+        }
+    }
+
+    /**
+     * Alındı gönderip susan TV (uygulama arka planda askıda, bağlantı yarı açık) üç ping sonra kopmuş sayılır: bağlantı
+     * kapanır, TV sayısı düşer, onTvStale çağrılır. Hiç alındı göndermeyen eski TV uygulaması bağlı kalır.
+     */
+    @Test
+    fun silentTvThatAckedIsDroppedButOldTvStays() {
+        val server = SubtitleServer(0, pingIntervalMs = 100)
+        val stale = java.util.concurrent.atomic.AtomicInteger()
+        server.onTvStale = { stale.incrementAndGet() }
+        val port = server.start()
+        val sockets = mutableListOf<Socket>()
+        try {
+            val acked = openTv(port, sockets)
+            openTv(port, sockets)
+            assertTrue(waitFor { server.connectedClients == 2 })
+            assertTrue(get(port, "/ack?c=$acked").startsWith("HTTP/1.1 204"))
+            assertTrue("susan TV düşmeli", waitFor { server.connectedClients == 1 })
+            // Düşen bağlantının kimliği artık bilinmiyor: TV beklemeden yeniden bağlanır.
+            assertTrue(get(port, "/ack?c=$acked").startsWith("HTTP/1.1 404"))
+            Thread.sleep(500)
+            assertEquals(1, server.connectedClients)
+            // #1055: TV'nin başka bağlantısı açıkken bekçi yenilenmez (yenilenen bekçi LG'de uygulamayı yeniden başlatıyordu).
+            assertEquals(0, stale.get())
+            assertEquals(300L, SubtitleServer.ackTimeoutMs(100))
+        } finally {
+            sockets.forEach { it.close() }
+            server.stop()
+        }
+    }
+
+    /** #1055: alındı gönderen TV ping turları boyunca düşmez; TV'nin tek bağlantısı susunca onTvStale bir kez çağrılır. */
+    @Test
+    fun onlyTheLastSilentTvConnectionRenewsTheKeeper() {
+        val server = SubtitleServer(0, pingIntervalMs = 100)
+        val stale = java.util.concurrent.atomic.AtomicInteger()
+        server.onTvStale = { stale.incrementAndGet() }
+        val port = server.start()
+        val sockets = mutableListOf<Socket>()
+        try {
+            val id = openTv(port, sockets)
+            assertTrue(waitFor { server.connectedClients == 1 })
+            repeat(10) {
+                assertTrue(get(port, "/ack?c=$id").startsWith("HTTP/1.1 204"))
+                Thread.sleep(80)
+            }
+            assertEquals(1, server.connectedClients)
+            assertEquals(0, stale.get())
+            assertTrue(waitFor { server.connectedClients == 0 })
+            assertTrue(waitFor { stale.get() == 1 })
+            Thread.sleep(400)
+            assertEquals(1, stale.get())
+        } finally {
+            sockets.forEach { it.close() }
+            server.stop()
+        }
+    }
+
+    /** #1055: alındısız sayılan ping turlarıdır, geçen saat değil: ping gitmedikçe (zamanlayıcı gecikti) TV düşmez. */
+    @Test
+    fun tvIsDroppedOnlyAfterMissedPingTurns() {
+        val server = SubtitleServer(0, pingIntervalMs = 3_600_000)
+        val port = server.start()
+        val sockets = mutableListOf<Socket>()
+        try {
+            val id = openTv(port, sockets)
+            assertTrue(waitFor { server.connectedClients == 1 })
+            assertTrue(get(port, "/ack?c=$id").startsWith("HTTP/1.1 204"))
+            Thread.sleep(300)
+            repeat(SubtitleServer.ACK_MISS_LIMIT) { assertFalse(server.dropSilentTvs()) }
+            assertEquals(1, server.connectedClients)
+            assertTrue(server.dropSilentTvs())
+            assertEquals(0, server.connectedClients)
+        } finally {
+            sockets.forEach { it.close() }
             server.stop()
         }
     }

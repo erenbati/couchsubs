@@ -1,5 +1,6 @@
 # poolpack.py denemeleri: ağ ve API yok. Çalıştırma: python3 -m unittest tools/packs/test_poolpack.py
-import json, sys, tempfile, unittest
+import json, re, sys, tempfile, types, unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -7,6 +8,27 @@ import poolpack as pp
 
 
 class PoolPackTests(unittest.TestCase):
+    def test_translation_chunks_reject_hallucinated_ids_from_other_chunks(self):
+        rows = [{"speaker": "", "scene": "pool", "text": f"Number {i} is speaking now."}
+                for i in range(pp.CHUNK + 1)]
+        def fake_call(system, prompt, schema, tag, max_tokens):
+            ids = [line.split(chr(9), 1)[0].strip() for line in prompt.splitlines()
+                   if line.startswith("  ") and chr(9) in line]
+            items = [{"id": iid, "tr": "Correct " + iid} for iid in ids]
+            if f"{pp.CHUNK}.0" in ids:
+                items.append({"id": "0.0", "tr": "WRONG OTHER CHUNK"})
+            return {"items": items}
+        fake_llm = types.SimpleNamespace(call=fake_call, spent=lambda: 0.0)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "translated.json"
+            with patch.dict(sys.modules, {"llm": fake_llm}):
+                pp.translate(rows, "Synthetic offline system", "test", output)
+            actual = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(len(actual), pp.CHUNK + 1)
+        self.assertEqual(actual[0]["tr"], ["Correct 0.0"],
+                         "other chunks cannot replace already translated subtitles")
+        self.assertEqual(actual[pp.CHUNK]["tr"], [f"Correct {pp.CHUNK}.0"])
+
     def test_query_is_read_only_and_escaped(self):
         sql = pp.query_sql(title="ppsa12345", game="Grand Theft_Auto's 100%")
         self.assertTrue(sql.startswith("SELECT"))

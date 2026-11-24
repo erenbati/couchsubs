@@ -39,7 +39,7 @@ html, body {
   position: absolute;
   z-index: 9;
   border-radius: 1.4vh;
-  background: rgba(12, 14, 18, 0.97);
+  background: rgba(0, 0, 0, 0.97);
 }
 #subtitle-cover.hidden { display: none; }
 
@@ -88,6 +88,12 @@ html, body {
 }
 /* GTA 6 telefonunun yanındaki sohbet paneli: yuvarlak köşeli, yarı saydam koyu kart; üstte kişinin adı, altında
    mesajlar (karşı taraf solda krem, oyuncu sağda amber balon). Yazı boyu, köşe ve renkler app.js placePanel'den. */
+/* Telefonun yazıları gerçekten yer değiştirince (sohbet kaydı, telefon kıpırdadı) bir kerede yumuşakça kayar; bilgisayar
+   küçük titremeyi göndermez (PhoneSteady). */
+#regions .region-blocks .item.phone, .phone-panel {
+  -webkit-transition: left 0.2s ease-out, top 0.2s ease-out;
+  transition: left 0.2s ease-out, top 0.2s ease-out;
+}
 .phone-panel {
   position: absolute;
   box-sizing: border-box;
@@ -204,13 +210,18 @@ html, body {
    altına inmez. */
 #subtitle-prev2 { opacity: 0.6; }
 #subtitle-prev.fading, #subtitle-prev2.fading { opacity: 0; }
+/* "Koyu" zeminde (app.js applyStyle, body.solid-bg) önceki satırların kutusu saydamlaşmaz: opaklık kutuyu da
+   soluklaştırıyor, OLED'de karanlık sahnede gri kutu kalıyordu. Soluklaştırmayı yazı rengi yapar (app.js dimmedColor);
+   kalkarkenki solma aynen sürer. */
+body.solid-bg #subtitle-prev, body.solid-bg #subtitle-prev2 { opacity: 1; }
+body.solid-bg #subtitle-prev.fading, body.solid-bg #subtitle-prev2.fading { opacity: 0; }
 #subtitle-prev.hidden, #subtitle-prev2.hidden { display: none; }
 
 #subtitle-prev-text, #subtitle-prev2-text {
   display: inline-block;
   padding: 0.24em 0.5em;
   border-radius: 0.33em;
-  background: rgba(12, 14, 18, 0.75);
+  background: rgba(0, 0, 0, 0.75);
   max-width: 100%;
   box-sizing: border-box;
   word-wrap: break-word;
@@ -221,7 +232,7 @@ html, body {
   text-shadow: 0 2px 4px #000;
 }
 
-/* Zemin mavimsi siyah ve neredeyse opaktır; oyunun parlak sahneleri kutudan sızmaz. İç boşluk ve köşe em cinsindendir:
+/* Zemin saf siyah ve neredeyse opaktır; oyunun parlak sahneleri kutudan sızmaz. İç boşluk ve köşe em cinsindendir:
    yazı boyu (ve uzun cümlede otomatik küçülme) değişse de kutu/yazı oranı aynı kalır. Zemin saydamlaşınca yazıya
    sert kontur eklenir (body.thin-bg). Boşluksuz çok uzun bir sözcük (ad, adres) ekrandan taşmasın diye gerekirse
    ortasından kırılır; overflow-wrap: anywhere'i tanımayan eski TV tarayıcılarında word-wrap aynı işi görür. */
@@ -229,7 +240,7 @@ html, body {
   display: inline-block;
   padding: 0.24em 0.5em;
   border-radius: 0.33em;
-  background: rgba(12, 14, 18, 0.9);
+  background: rgba(0, 0, 0, 0.9);
   max-width: 100%;
   box-sizing: border-box;
   word-wrap: break-word;

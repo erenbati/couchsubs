@@ -25,6 +25,22 @@ public enum GamePackImporter {
     /// Içe aktarılan çeviri dosyası için üst sınır (bellek taşmasını önler).
     public static let maxFileBytes = 64 * 1024 * 1024
 
+    /// URL'den en çok `maxFileBytes` okur; sağlayıcı boyut bildirmese veya dosya okuma sırasında büyüse de belleği sınırlar.
+    public static func read(fileAt url: URL) throws -> Data {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        var data = Data()
+        while true {
+            let remaining = maxFileBytes - data.count + 1
+            let chunk = try handle.read(upToCount: min(64 * 1024, remaining))
+            guard let chunk, !chunk.isEmpty else { break }
+            data.append(chunk)
+            guard data.count <= maxFileBytes else { throw ImportError.fileTooLarge }
+        }
+        return data
+    }
+
     public static func parse(_ data: Data, fileName: String) throws -> GamePackImportPreview {
         guard data.count <= maxFileBytes else { throw ImportError.fileTooLarge }
         let bytes = data.starts(with: [0xef, 0xbb, 0xbf]) ? data.dropFirst(3) : data

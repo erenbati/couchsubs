@@ -74,6 +74,12 @@ public sealed partial class RegionWatcher
     /// </summary>
     internal const int HoldLimit = 4;
 
+    /// <summary>
+    /// Hazır alanda arayüz kutusu (<see cref="UiPanel.HasText"/>) art arda bu kadar tur bulunamazsa çeviri kalkar; tek
+    /// karelik ıska çeviriyi silmez (#1202; Mac/iPhone ve Android aynı eşik).
+    /// </summary>
+    internal const int PanelMissTurns = 3;
+
     /// <summary>Çevirisi saklanan en çok yazı sayısı (oyun görev yazısını arada silip yeniden gösteriyor).</summary>
     private const int RenderedLimit = 64;
 
@@ -84,13 +90,22 @@ public sealed partial class RegionWatcher
         public GamePhonePage? ReadPhonePage;
         public GamePhoneReader? PhoneReader;
         public IReadOnlyList<ScreenTranslation.Item>? SentPhoneBlocks;
+        /// <summary>Son gönderilen düzen, ayarı ve Yanda Panel'in dayandığı telefon yeri (<see cref="PhoneSteady.SteadyPose"/>).</summary>
+        public IReadOnlyList<ScreenTranslation.Item>? SentPhoneShown;
+        public PhonePanelOptions? SentPhoneOptions;
+        /// <summary>Yanda Panel'in kilitli telefon yeri ve yazı boyu (#1152): el titremesiyle değişmez.</summary>
+        public PhonePanelSteady PhonePanelSteady = new();
         public double PhoneScale;
+        /// <summary>Boş okumanın art arda kaç turdur sürdüğü: <see cref="PhoneSteady.MissTurns"/> tur sürmeden ekran silinmez.</summary>
+        public int PhoneEmpties;
         /// <summary>Telefonun okunduğu karenin eni / boyu (sohbet panelinin yeri için).</summary>
         public double PhoneAspect = 16.0 / 9;
         public Frame? LastReadCrop;
         public TextBox[] Lines = [];
         public long LastFullCheck;
         public string? LastRead;
+        /// <summary>Hazır alanda arayüz kutusunun art arda bulunamadığı tur sayısı (<see cref="PanelMissTurns"/>).</summary>
+        public int PanelMisses;
         public Candidate? Candidate;
         public string Shown = "";
         /// <summary>Gösterilen yazının <see cref="Candidate.Text"/>'i.</summary>
@@ -101,6 +116,8 @@ public sealed partial class RegionWatcher
         public string Remembered = "";
         /// <summary>Bekletilen okuma ve kaç turdur bekletildiği (<see cref="HoldLimit"/>).</summary>
         public string? Held;
+        /// <summary>Bekletilen okumanın yazısı (günlük için).</summary>
+        public string? HeldText;
         public int Holds;
         public string? RenderedKey;
         public string? RenderedText;
@@ -111,11 +128,19 @@ public sealed partial class RegionWatcher
         public IReadOnlyList<string>? RenderedPhoneParagraphs;
         /// <summary>Gönderilen bloklar ve her birinin <see cref="Candidate.Blocks"/> içindeki sırası.</summary>
         public IReadOnlyList<(int Group, ScreenTranslation.Item Item)>? RenderedBlocks;
+        /// <summary>Çevirisi gösterilirken art arda kaç turdur okuma değişip doğrulanamadı (<see cref="UnsteadyLimit"/>).</summary>
+        public int Unsteady;
+        /// <summary>Bir önceki turun izi (<see cref="BigChangeShare"/> için; <see cref="Signature"/> yalnız okumada güncellenir).</summary>
+        public byte[]? PassSignature;
         // Yalnız açık telefon için. Kısa bir OCR sapmasından veya sohbetten geri dönünce aynı metin yeniden istenmez.
         public Dictionary<string, string>? PhoneTranslations { get; private set; }
         private Queue<string>? phoneKeys;
         public int NextPhoneBlock;
         public (string Prefix, double X, double Y)[] PhoneOrderAnchors = [];
+        /// <summary>Son taze telefon okumasının balonları (yazı, telefona oranlı üst kenar): kaydırmayı tanımak için.</summary>
+        public (string Text, double Top)[]? PhoneLastBubbles;
+        /// <summary>Son taze okumada telefon kaydırılıyordu (<see cref="PhoneSteady.Scrolled"/>): bekletme ve konum sabitleme yok.</summary>
+        public bool PhoneScrolling;
 
         public void RememberPhoneTranslation(string source, string translation)
         {
@@ -167,6 +192,8 @@ public sealed partial class RegionWatcher
     private readonly IRegionSender server;
     private readonly int intervalMs;
     private readonly Func<long> now;
+    /// <summary>Düşürülen ya da bekletilen okumanın nedeni, sınırlı ve tekrarsız (<see cref="DropLog"/>).</summary>
+    private readonly DropLog drops;
     private Dictionary<string, State> states = [];
     private long? lastPass;
     private long? lastPhonePass;
@@ -218,6 +245,7 @@ public sealed partial class RegionWatcher
         this.server = server;
         this.intervalMs = intervalMs;
         now = clock ?? (() => Environment.TickCount64);
+        drops = new DropLog(now);
     }
 
     /// <summary>Tur aralığının çarpanı (<see cref="ReadPressure.Slowdown"/>); verilmezse 1.</summary>
@@ -323,6 +351,16 @@ public sealed partial class RegionWatcher
         }
     }
 
+    /// <summary>
+    /// Çevirisi gösterilen alanda okuma bu kadar tur art arda değişip doğrulanamazsa (yazı gitti, yerinde sahne oynuyor)
+    /// çeviri kaldırılır: menü, tabela ve ipucu kutusunun çevirisi yazı oyundan kalktıktan sonra TV'de kalıyordu (#1198).
+    /// </summary>
+    public const int UnsteadyLimit = 3;
+    /// <summary>Alanın izindeki örneklerin bu kadarı bir turda değiştiyse görüntü bütünüyle değişmiştir: beklemeden kaldırılır.</summary>
+    public const double BigChangeShare = 0.5;
+    /// <summary>Çeviri motoru bu süreyi aşarsa tur biter (aday sonraki turda yeniden denenir): asılı istek turu kilitliyordu.</summary>
+    public int TranslationTimeoutMs { get; set; } = 8000;
+
     private async Task VisitAsync(WatchedArea area, Frame frame, Dictionary<string, State> map, int started, bool confirmOnly)
     {
         State state;
@@ -347,6 +385,8 @@ public sealed partial class RegionWatcher
             return;
         }
         var signature = RegionCropper.Signature(crop);
+        var passSignature = state.PassSignature;
+        state.PassSignature = signature;
         var changed = PixelsChanged(state, crop, signature);
         // Örneklerin arasına düşen ya da eski satır kutusunun dışında beliren bir yazıyı da yakala.
         // Birebir aynı görüntüde süre dolsa bile OCR çalışmaz.
@@ -359,6 +399,7 @@ public sealed partial class RegionWatcher
         if (!changed)
         {
             // İz bir tur değişmedi: okunan yazı kararlıdır.
+            state.Unsteady = 0;
             if (state.Candidate is { } stable)
             {
                 state.Candidate = null;
@@ -368,9 +409,16 @@ public sealed partial class RegionWatcher
         }
         if (area.RequiresPanel && !UiPanel.HasText(crop))
         {
-            // Hazır alanda arayüz kutusu yok (PS5 ana ekranı, başka oyun, oyun dünyası): OCR çalışmaz, gösterilen kutu kalkar.
+            // Hazır alanda arayüz kutusu yok (PS5 ana ekranı, başka oyun, oyun dünyası): OCR çalışmaz. İz unutulur: sonraki
+            // tur görüntü değişmese de yeniden bakar, panel aynı yazıyla geri gelince yeniden okunup gösterilir (önceden
+            // iz aynı kaldığı için çeviri bir daha gelmiyordu, #1202). Gösterilen kutu tek karelik ıskada silinmez;
+            // ancak PanelMissTurns tur art arda kutu yoksa kalkar.
+            state.Signature = null;
+            state.LastReadCrop = null;
             state.Candidate = null;
             (state.Held, state.Holds) = (null, 0);
+            if (++state.PanelMisses < PanelMissTurns && state.Shown.Length > 0) return;
+            state.LastRead = null;
             if (state.Shown.Length > 0)
             {
                 state.Shown = state.ShownText = "";
@@ -385,14 +433,59 @@ public sealed partial class RegionWatcher
             }
             return;
         }
+        state.PanelMisses = 0;
         var candidate = ReadCandidate(frame, crop, signature, area, state, started);
         if (candidate is null) return;
         if (state.LastRead == candidate.Key)
         {
+            state.Unsteady = 0;
             state.Candidate = null;
             await CommitAsync(candidate, area, state, started).ConfigureAwait(false);
         }
-        else Stage(candidate, state);
+        else
+        {
+            Stage(candidate, state);
+            if (!string.IsNullOrEmpty(state.RenderedText)) ClearIfUnsteady(candidate, area, state, passSignature, signature);
+        }
+    }
+
+    /// <summary>
+    /// Çevirisi gösterilen alanda okuma doğrulanamadı: <see cref="UnsteadyLimit"/> tur sürdüyse ya da görüntü bütünüyle
+    /// değiştiyse (<see cref="BigChangeShare"/>) ve yeni okuma gösterilen yazıya benzemiyorsa çeviri kaldırılır. Yazı
+    /// gidince yerinde oynayan sahne hiç kararlı okunmuyor, eski çeviri TV'de kalıyordu (#1198; Mac ile aynı).
+    /// </summary>
+    private void ClearIfUnsteady(Candidate candidate, WatchedArea area, State state, byte[]? before, byte[] signature)
+    {
+        var turns = ++state.Unsteady;
+        // Görüntünün bütünüyle değişmesi tek başına ilk turda yetmez: yeni komut eski komutun yerine geçerken eski çeviri
+        // yenisi doğrulanana dek kalır (kutu yanıp sönmesin). Yazı da gittiyse (boş okuma) ya da ikinci turdaysa kaldırılır.
+        var bigChange = before is not null && ChangedShare(before, signature) >= BigChangeShare
+                        && (candidate.Key.Length == 0 || turns >= 2);
+        if (turns < UnsteadyLimit && !bigChange) return;
+        if (Matches(candidate.Text, state.ShownText) || IsPartOf(candidate.Text, state.ShownText)) return;
+        var shownText = state.ShownText;
+        server.SendRegion(area.Id, "", null);
+        state.Shown = state.ShownText = "";
+        state.ShownIcons = 0;
+        state.RenderedKey = state.RenderedText = null;
+        state.RenderedIcons = null;
+        state.RenderedBox = null;
+        state.RenderedLineHeight = null;
+        state.RenderedLayout = null;
+        state.RenderedPhoneParagraphs = null;
+        state.RenderedBlocks = null;
+        state.Unsteady = 0;
+        drops.Note("RegionWatcher", $"{area.Name}: {turns} tur kararlı okunmadı ya da görüntü çok değişti, çevirisi kaldırıldı",
+                   IconText.Plain(shownText), Log);
+    }
+
+    /// <summary>İzdeki örneklerin <see cref="ReadScheduler.ChangeThreshold"/>'dan çok değişen payı.</summary>
+    internal static double ChangedShare(byte[] a, byte[] b)
+    {
+        if (a.Length != b.Length || a.Length == 0) return 1;
+        var changed = 0;
+        for (var i = 0; i < a.Length; i++) if (Math.Abs(a[i] - b[i]) > ReadScheduler.ChangeThreshold) changed++;
+        return (double)changed / a.Length;
     }
 
     private static void Stage(Candidate candidate, State state)
@@ -766,9 +859,16 @@ public sealed partial class RegionWatcher
             state.RenderedBlocks = moved;
             return;
         }
+        // Bekletilen okuma gösterilmeden yerine başka okuma geldi: o okuma hiç çevrilmedi (günlüğe bir kez).
+        if (state.Held is { } held && held != candidate.Key)
+        {
+            drops.Note("RegionWatcher", $"{area.Name}: bekletilen okuma gösterilmeden yerine yenisi geldi, çevrilmedi", state.HeldText ?? "", Log);
+            state.Held = null;
+        }
         if (ShouldHold(candidate, state))
         {
-            if (state.Held != candidate.Key) (state.Held, state.Holds) = (candidate.Key, 0);
+            if (state.Held != candidate.Key)
+                (state.Held, state.HeldText, state.Holds) = (candidate.Key, IconText.Plain(string.Join(' ', candidate.Paragraphs)), 0);
             if (++state.Holds <= HoldLimit)
             {
                 // Sonraki tur (iz değişmese de) bu okumayı yeniden dener; o hâlde kalırsa sınırda gösterilir.
@@ -796,12 +896,13 @@ public sealed partial class RegionWatcher
         lock (translations) translations.TryGetValue(key, out cached);
         Translation translation;
         var waited = false;
+        using var cancel = new CancellationTokenSource();
         try
         {
             if (cached is not null) translation = cached;
             else
             {
-                var request = TranslateAsync(candidate.Paragraphs, labelsFirst: area.Auto);
+                var request = TranslateAsync(candidate.Paragraphs, labelsFirst: area.Auto, cancel.Token);
                 waited = !request.IsCompleted;
                 // Yeni komut doğrulandı; yavaş motor yanıtını beklerken eski Türkçe onun üstünde kalmasın.
                 if (waited && !string.IsNullOrEmpty(state.RenderedText) && Volatile.Read(ref session) == started)
@@ -811,7 +912,7 @@ public sealed partial class RegionWatcher
                     state.RenderedKey = null;
                     previous = ("", "", 0);
                 }
-                translation = await request.ConfigureAwait(false);
+                translation = await Deadline(request, cancel).ConfigureAwait(false);
             }
         }
         catch (Exception error)
@@ -890,19 +991,31 @@ public sealed partial class RegionWatcher
             if (area.PanelLifetime.HasValue)
             {
                 double scale = area.Region.Bottom - area.Region.Top;
-                // Telefon gerçekten yakınlaşıp uzaklaşınca yeni boyutlar hemen kullanılır.
+                // Telefon gerçekten yakınlaşıp uzaklaşınca balonların yerindeki görünüşü hemen yenilenir (Balonların Üstünde).
                 if (Math.Abs(scale - state.PhoneScale) > state.PhoneScale * 0.03)
                 {
                     state.PhoneScale = scale;
                     state.SentPhoneBlocks = null;
                 }
+                // Yanda Panel'in dayandığı telefon yeri ve yazı boyu ise el titremesiyle değişmez (PhonePanelSteady): yalnız
+                // belirgin ve kalıcı yakınlaşma/kaymada yenilenir. Ekran silinince sonraki gönderi baştan ölçer.
+                var time = now();
+                if (blocks is not { Count: > 0 }) state.PhonePanelSteady.Reset();
+                var placed = blocks is { Count: > 0 } && area.PhonePose is { } seen
+                    ? state.PhonePanelSteady.SteadyPose(seen, time) : ((GamePhoneGeometry.Pose Pose, bool Resized)?)null;
+                // Kaydırılırken konum sabitlenmez (SteadyPositions atlanır): balonlar yeni yerine hemen geçer; görünüşleri
+                // (boy, renk) StablePhoneBlocks ile korunur.
                 if (blocks is not null && state.SentPhoneBlocks is { } previous)
-                    blocks = StablePhoneBlocks(blocks, previous);
+                    blocks = state.PhoneScrolling ? StablePhoneBlocks(blocks, previous)
+                        : PhoneSteady.SteadyPositions(StablePhoneBlocks(blocks, previous), previous, state.PhoneAspect);
                 state.SentPhoneBlocks = blocks;
+                var options = PhonePanel();
                 if (blocks is { Count: > 0 })
                 {
                     // Yanda Panel: mesajlar telefonun yanındaki sohbet panelinde; Balonların Üstünde: her biri kendi balonunda.
-                    var arranged = ArrangedPhone(blocks, area.PhonePose, state.PhoneAspect, PhonePanel());
+                    // Panel telefonun el titremesiyle kaymaz, yazı boyu değişmez (PhonePanelSteady).
+                    var line = state.PhonePanelSteady.SteadyLine(ScreenPhoneCard.MeasuredLine(blocks), time);
+                    var arranged = ArrangedPhone(blocks, placed?.Pose, state.PhoneAspect, options, line);
                     if (arranged.Any(item => item.Panel == ScreenPhoneCard.PanelPart.Card))
                     {
                         text = string.Join('\n', arranged.Where(item => !ScreenPhoneCard.IsBackdrop(item)).Select(item => item.Translation));
@@ -910,6 +1023,17 @@ public sealed partial class RegionWatcher
                     }
                     blocks = arranged.Count == 0 ? null : arranged;
                 }
+                // TV'de ve masaüstünde aynı görünen gönderi yinelenmez (panel mesajlarının akış kutuları önemsiz).
+                if (blocks is { Count: > 0 } shown && state.SentPhoneShown is { } sent && options == state.SentPhoneOptions
+                    && PhoneSteady.SamePicture(shown, sent))
+                {
+                    // Çeviriler aynı ama özgün mesajlar değişti: yeni mesaj TV'ye gitmedi (yalnız bu durum günlüğe; Mac ile aynı).
+                    if (!shown.Select(item => item.Source).SequenceEqual(sent.Select(item => item.Source)))
+                        PhoneNote("PhoneSteady", "samePicture: görüntü aynı sayıldı, gönderilmedi", string.Join(' ', shown.Select(item => item.Source)));
+                    return;
+                }
+                state.SentPhoneShown = blocks;
+                state.SentPhoneOptions = options;
             }
             server.SendRegion(area.Id, text, box, lineHeight, icons, blocks);
         }
@@ -921,11 +1045,11 @@ public sealed partial class RegionWatcher
     /// olanlar atılır). Telefonun yeri bilinmiyorsa balonlar yerinde kalır (Mac: PhoneRegionSession.arranged).
     /// </summary>
     internal static IReadOnlyList<ScreenTranslation.Item> ArrangedPhone(IReadOnlyList<ScreenTranslation.Item> items,
-        GamePhoneGeometry.Pose? pose, double aspect, PhonePanelOptions options)
+        GamePhoneGeometry.Pose? pose, double aspect, PhonePanelOptions options, double? line = null)
     {
         if (!options.Enabled || pose is not { } found || items.Count == 0) return [.. items.Where(item => !item.Unchanged)];
         var handset = new ScreenPhoneCard.Handset(found, aspect);
-        return [.. ScreenPhoneCard.Layout(items, handset, options.TextScale).Where(item => !item.Unchanged)];
+        return [.. ScreenPhoneCard.Layout(items, handset, options.TextScale, line).Where(item => !item.Unchanged)];
     }
 
     // Aynı balon hareket ederken konumu her pakette izlenir. Küçük OCR kutu farkları punto ve satır
@@ -936,13 +1060,9 @@ public sealed partial class RegionWatcher
         return items.Select(item =>
         {
             ScreenTranslation.Item? match = null;
-            foreach (var old in previous)
-            {
-                if (old.Source != item.Source || old.Translation != item.Translation
-                    || Math.Abs(old.Box.Left - item.Box.Left) > .05 || Math.Abs(old.Box.Top - item.Box.Top) > .05) continue;
-                if (match is not null) return item; // Aynı yerdeki iki eş mesaj ayırt edilemiyor.
-                match = old;
-            }
+            // Aynı balon (PhoneSteady.Match: aynı çeviri, OCR'la biraz farklı okunsa da aynı mesaj) ilk okunuşunu ve tarafını
+            // (gelen/giden/not) korur: bir harf ya da hiza oynadı diye gönderi yenilenmez (Mac ile aynı).
+            match = PhoneSteady.Match(item, previous);
             if (match is null) return item;
             var box = item.Box;
             double width = box.Right - box.Left, height = box.Bottom - box.Top;
@@ -958,14 +1078,18 @@ public sealed partial class RegionWatcher
                 // Ön ve arka renkler bağımsızdır: seçimin gerçek yazı/zemin rengi değişimi korunur.
                 style = style with
                 {
-                    Foreground = NearColor(style.Foreground, before.Foreground, 16) ? before.Foreground : style.Foreground,
+                    // Yazı rengi zeminin aynı yanında kaldıysa eskisi kalır (örnek bir siyah bir koyu gri okunuyordu); seçimde
+                    // (siyahtan beyaza) değişim izlenir.
+                    Foreground = NearColor(style.Foreground, before.Foreground, 16)
+                        || PhoneSteady.SameInk(style.Foreground, before.Foreground, style.Background) ? before.Foreground : style.Foreground,
                     Background = NearColor(style.Background, before.Background, 16) ? before.Background : style.Background
                 };
                 // Farklı iki okunabilir paletin karışımı kontrastı düşürebilir. Bu durumda güncel çifti kullan.
                 if (style != before && style != item.Style && DesignTokens.Contrast(style.Background, style.Foreground) < 4.5)
                     style = item.Style;
             }
-            return item with { Box = box, LineHeight = line, Style = style };
+            var phone = item.Phone is { } placement && match.Phone is { } kept ? placement with { Role = kept.Role } : item.Phone;
+            return item with { Source = match.Source, Box = box, LineHeight = line, Style = style, Phone = phone };
         }).ToList();
     }
 
@@ -991,6 +1115,7 @@ public sealed partial class RegionWatcher
         // Sohbet panelinde yalnız aslıyla aynı mesajlar ("ok", kişinin adı) olsa da panel görünür.
         if (similar.All(same => same) && !(keepUnchanged && candidate.Blocks?.Any(block => block.Phone is not null) == true))
         {
+            drops.Note("RegionWatcher", $"{area.Name}: çevirisi aslıyla aynı, gösterilmedi", IconText.Plain(string.Join(' ', candidate.Paragraphs)), Log);
             SendCurrent(area, state, started, "", null);
             state.RenderedKey = candidate.Key;
             state.RenderedText = "";
@@ -1072,9 +1197,23 @@ public sealed partial class RegionWatcher
     /// Otomatik bulunan ekran yazısı: kısa arayüz etiketi ("OFF", "Back") paket ve motordan önce, anında sözlükten
     /// (<see cref="UiCommands.TranslateLabel"/>) çevrilir; büyük/küçük harf biçimi korunur.
     /// </param>
-    private async Task<Translation> TranslateAsync(IReadOnlyList<string> paragraphs, bool labelsFirst = false)
+    /// <summary>
+    /// Çeviri <see cref="TranslationTimeoutMs"/> içinde bitmezse <see cref="TimeoutException"/> (aday korunur, sonraki turda
+    /// yeniden denenir). İptali dinlemeyen motorun görevi beklenmez; hatası gözlenmiş sayılır.
+    /// </summary>
+    private async Task<Translation> Deadline(Task<Translation> request, CancellationTokenSource cancel)
     {
-        if (labelsFirst) return await TranslateLabelsAsync(paragraphs).ConfigureAwait(false);
+        if (request.IsCompleted) return await request.ConfigureAwait(false);
+        var timeout = Task.Delay(TranslationTimeoutMs);
+        if (await Task.WhenAny(request, timeout).ConfigureAwait(false) == request) return await request.ConfigureAwait(false);
+        cancel.Cancel();
+        _ = request.ContinueWith(task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+        throw new TimeoutException($"çeviri {TranslationTimeoutMs / 1000.0:0.#} sn'de bitmedi");
+    }
+
+    private async Task<Translation> TranslateAsync(IReadOnlyList<string> paragraphs, bool labelsFirst = false, CancellationToken cancellationToken = default)
+    {
+        if (labelsFirst) return await TranslateLabelsAsync(paragraphs, cancellationToken).ConfigureAwait(false);
         // Simgeler paket aramasında yok sayılır, çeviride uydurma adlarla korunur (IconText).
         var prepared = paragraphs.Select(IconText.Protect).ToList();
         string?[] result = [.. paragraphs.Select(paragraph =>
@@ -1090,7 +1229,7 @@ public sealed partial class RegionWatcher
         if (missing.Count > 0)
         {
             var texts = missing.Select(i => prepared[i].Text).ToList();
-            var translated = await translator.TranslateAllAsync(texts).ConfigureAwait(false);
+            var translated = await translator.TranslateAllAsync(texts, cancellationToken).ConfigureAwait(false);
             for (var i = 0; i < missing.Count && i < translated.Count; i++) result[missing[i]] = translated[i];
         }
         return new Translation(result, readyCount);
@@ -1177,7 +1316,7 @@ public sealed partial class RegionWatcher
     /// olduğu gibi kalır. Parçalar önce oturum terim sözlüğünden, arayüz sözlüğünden ve paketten; kalanların hepsi tek
     /// toplu istekte motordan çevrilir ve terim sözlüğüne yazılır (aynı ekrana dönüşte anında, aynı etiket hep aynı).
     /// </summary>
-    private async Task<Translation> TranslateLabelsAsync(IReadOnlyList<string> paragraphs)
+    private async Task<Translation> TranslateLabelsAsync(IReadOnlyList<string> paragraphs, CancellationToken cancellationToken = default)
     {
         var parts = paragraphs.Select(paragraph => SplitLabel(paragraph).Select(part => new LabelPart(part.Prefix, part.Core, part.Suffix)).ToList()).ToList();
         var pending = new List<LabelPart>();
@@ -1201,7 +1340,7 @@ public sealed partial class RegionWatcher
         if (unique.Count > 0)
         {
             var protectedTexts = unique.Select(text => IconText.Protect(text)).ToList();
-            var translated = await translator.TranslateAllAsync([.. protectedTexts.Select(item => item.Text)]).ConfigureAwait(false);
+            var translated = await translator.TranslateAllAsync([.. protectedTexts.Select(item => item.Text)], cancellationToken).ConfigureAwait(false);
             var map = new Dictionary<string, string>(StringComparer.Ordinal);
             for (var i = 0; i < unique.Count && i < translated.Count; i++)
                 if (translated[i]?.Trim() is { Length: > 0 } text) map[unique[i]] = text;

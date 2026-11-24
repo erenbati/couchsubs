@@ -127,6 +127,8 @@ internal sealed class FakeServices : IAppServices
     public string? LaunchedServer { get; private set; }
     public List<FakeStream> Streams { get; } = [];
     public List<FakeKeeper> Keepers { get; } = [];
+    /// <summary>Her bekçinin kurulduğu TV kaydı (adres değişince yeni bekçi yeni adrese gider).</summary>
+    public List<LgTv> KeeperTvs { get; } = [];
     public List<string> ReaderLanguages { get; } = [];
     /// <summary>Okuyucunun her karede bulduğu satırlar (verilmezse karede yazı yoktur).</summary>
     public Reading? ReaderLines { get; set; }
@@ -143,6 +145,7 @@ internal sealed class FakeServices : IAppServices
     public PackMatch? FindInPacks(string text) => GamePacks?.Find(text) is { } found ? new PackMatch(found, []) : null;
     public FakeTranslation Translation { get; } = new();
     public IFirewall? Firewall { get; set; }
+    public IUpdater? Updater { get; set; }
     ITranslationModel IAppServices.Translation => Translation;
     public OnlineKeyCheck KeyCheck { get; set; } = new(OnlineKeyState.Valid, 10, 500_000);
     public List<string> CheckedKeys { get; } = [];
@@ -260,6 +263,7 @@ internal sealed class FakeServices : IAppServices
         OnOpenResult = onOpenResult;
         var keeper = new FakeKeeper();
         Keepers.Add(keeper);
+        KeeperTvs.Add(tv);
         return keeper;
     }
     public string? AppOnTv { get; set; } = "0.6.1";
@@ -274,10 +278,21 @@ internal sealed class FakeServices : IAppServices
     public Task<bool> IsDevModeOnAsync(string host)
     {
         TvCalls++;
-        return Task.FromResult(DevMode);
+        return Task.FromResult(DevMode && !SilentHosts.Contains(host));
     }
+    /// <summary>Hiçbir kapısı yanıt vermeyen adresler (TV'nin eski adresi; TvReach.RespondsAsync hayır der).</summary>
+    public HashSet<string> SilentHosts { get; } = [];
+    public List<string> RespondsAsked { get; } = [];
+    public Task<bool> TvRespondsAsync(string host, TvBrand brand)
+    {
+        RespondsAsked.Add(host);
+        return Task.FromResult(!SilentHosts.Contains(host));
+    }
+    /// <summary>Kurulumun gittiği adresler.</summary>
+    public List<string> InstallHosts { get; } = [];
     public Task<string> FetchDevKeyAsync(string host, string passphrase)
     {
+        if (SilentHosts.Contains(host)) throw new DevModeException(DevModeError.KeyServerOff, "zaman aşımı");
         if (!KeyServer) throw new DevModeException(DevModeError.KeyServerOff);
         if (passphrase != "ABC123") throw new DevModeException(DevModeError.WrongPassphrase);
         return Task.FromResult("dev-key");
@@ -293,8 +308,15 @@ internal sealed class FakeServices : IAppServices
     public Task InstallTvAppAsync(string host, string devKey)
     {
         Installs++;
+        InstallHosts.Add(host);
         if (LgInstallError is { } error) throw error;
         AppOnTv = BundledTvAppVersion;
+        return Task.CompletedTask;
+    }
+    public int Closes { get; private set; }
+    public Task CloseTvAppAsync(string host, string devKey)
+    {
+        Closes++;
         return Task.CompletedTask;
     }
     public int? RenewedHours { get; set; } = 999;
@@ -538,10 +560,12 @@ public class AppControllerTests
         var store = StoreUpToTv();
         var controller = Make(store: store);
         await controller.PairAsync(new LgTv("Samsung", "192.168.1.20", TvBrand.Samsung));
-        controller.Advance(); // TV -> çeviri modeli
-        controller.Advance(); // çeviri modeli -> deneme
-        controller.Advance(); // deneme -> daha iyi çeviri
-        controller.Advance(); // daha iyi çeviri -> bitti
+        controller.Advance(); // TV -> TV girişi
+        controller.TryHdmiInput(1, confirmed: true);
+        controller.Advance(); // TV girişi -> çeviri modeli
+        controller.Advance(); // çeviri modeli -> daha iyi çeviri
+        controller.Advance(); // daha iyi çeviri -> deneme
+        controller.Advance(); // deneme -> bitti
         Assert.Equal(OnboardingStep.Done, controller.Step);
         Assert.Equal(OnboardingStep.Done, Make(store: store).Step);
     }
@@ -1038,11 +1062,19 @@ public class AppControllerTests
         await controller.RegisterAsync("192.168.1.253", "12345678"); controller.Advance();
         Assert.Equal(OnboardingStep.Tv, controller.Step);
         await controller.PairAsync(new LgTv("LG TV", "192.168.1.153")); controller.Advance();
+        // TV Girişi: giriş onaylanmadan geçilmez; onaylanınca altyazı biçimine kaydedilir.
+        Assert.Equal(OnboardingStep.Hdmi, controller.Step);
+        Assert.False(controller.CanAdvance);
+        controller.TryHdmiInput(2, confirmed: false);
+        Assert.False(controller.CanAdvance);
+        controller.TryHdmiInput(2, confirmed: true);
+        Assert.Equal(2, controller.Settings.Style.HdmiInput);
+        controller.Advance();
         Assert.Equal(OnboardingStep.Translation, controller.Step); controller.Advance();
-        Assert.Equal(OnboardingStep.Test, controller.Step); controller.Advance();
         Assert.Equal(OnboardingStep.BetterTranslation, controller.Step);
         Assert.True(controller.CanAdvance);
         controller.Advance();
+        Assert.Equal(OnboardingStep.Test, controller.Step); controller.Advance();
         Assert.Equal(OnboardingStep.Done, controller.Step);
         controller.Dispose();
     }
@@ -1056,12 +1088,12 @@ public class AppControllerTests
         Assert.False(controller.UsesFreeGemini);
         Assert.True(controller.CanAdvance);
         controller.Advance();
-        Assert.Equal(OnboardingStep.Done, controller.Step);
+        Assert.Equal(OnboardingStep.Test, controller.Step);
         Assert.Equal(TranslationEngine.Free, controller.Settings.Engine);
         controller.Back();
         Assert.Equal(OnboardingStep.BetterTranslation, controller.Step);
         controller.Back();
-        Assert.Equal(OnboardingStep.Test, controller.Step);
+        Assert.Equal(OnboardingStep.Translation, controller.Step);
     }
 
     [Fact]
@@ -1083,6 +1115,8 @@ public class AppControllerTests
         Assert.True(controller.UsesFreeGemini);
         // Alttaki düğme "Şimdilik geç"ten "Devam"a döner.
         Assert.Contains(nameof(AppController.UsesFreeGemini), changed);
+        controller.Advance();
+        Assert.Equal(OnboardingStep.Test, controller.Step);
         controller.Advance();
         Assert.Equal(OnboardingStep.Done, controller.Step);
     }
@@ -1468,6 +1502,44 @@ public class AppControllerRunTests
         controller.Dispose();
     }
 
+    /// <summary>
+    /// Android TV DHCP'den yeni adres aldı (#985): kurulum TV'yi yeni adreste bulup kaydı güncelliyordu ama çalışan bekçi
+    /// eski adresi tutuyor, TV uygulaması hep eski adreste açılmaya çalışılıyordu. Bekçi yeni adresle yeniden kurulur;
+    /// eski bekçinin geç gelen açma sonucu yok sayılır.
+    /// </summary>
+    [Fact]
+    public async Task AndroidTvKeeperFollowsTheNewAddressAfterInstall()
+    {
+        var services = new FakeServices();
+        services.Bundled[TvBrand.AndroidTv] = new BundledTvApp("couchsubs-androidtv_0.7.0.apk", "0.7.0");
+        var store = new MemoryStore();
+        store.Save(StoreKeys.AccountId, Enumerable.Repeat((byte)1, 8).ToArray());
+        store.Save(StoreKeys.Console, new RegisteredConsole("192.168.1.253", "PS5", Enumerable.Repeat((byte)0x31, 16).ToArray(), Enumerable.Repeat((byte)2, 16).ToArray()));
+        store.Save(StoreKeys.Tv, new LgTv("Android TV", "192.168.1.40", TvBrand.AndroidTv));
+        store.Save(StoreKeys.TvKey, "tv-key");
+        var controller = AppControllerTests.Make(services, store);
+        await controller.StartAsync();
+        for (var i = 0; i < 200 && controller.TvApp.Kind == TvAppKind.Working; i++) await Task.Delay(10);
+        var old = Assert.Single(services.Keepers);
+        var staleResult = services.OnOpenResult!;
+        Assert.Equal("192.168.1.40", services.KeeperTvs[0].Host);
+
+        services.AndroidHosts.Add("192.168.1.41");
+        await controller.RefreshTvAppAsync();
+        Assert.Equal("192.168.1.41", controller.Tv?.Host);
+        Assert.Equal(2, services.Keepers.Count);
+        Assert.False(old.Running);
+        Assert.True(services.Keepers[1].Running);
+        Assert.Equal("192.168.1.41", services.KeeperTvs[1].Host);
+        staleResult(TvOpenProblem.Unreachable);
+        Assert.False(controller.HasTvOpenReason);
+
+        // Adres değişmeyen denetim bekçiyi yenilemez.
+        await controller.RefreshTvAppAsync();
+        Assert.Equal(2, services.Keepers.Count);
+        controller.Dispose();
+    }
+
     [Fact]
     public async Task DoubleStartCreatesOneSession()
     {
@@ -1716,6 +1788,38 @@ public class AppControllerRunTests
         controller.Dispose();
         // Okuyucu, arka planda okuma sürerken kapatılırsa HttpContentReadStream.Dispose NullReferenceException atar.
         await reading.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    /// Çeviri sürerken TV bağlantısı düşünce TV durumu "Yeniden bağlanılıyor…" der; TV bağlanınca ya da 60 sn sonra kalkar.
+    [Fact]
+    public async Task LostTvShowsReconnectingUntilItReturnsOrTimesOut()
+    {
+        var (controller, _, _) = Ready();
+        var now = DateTime.UtcNow;
+        controller.Clock = () => now;
+        await controller.StartAsync();
+        using var http = new HttpClient();
+        var first = await http.GetAsync($"http://127.0.0.1:{controller.ServerPort}/events", HttpCompletionOption.ResponseHeadersRead);
+        for (var i = 0; i < 200 && controller.TvClients == 0; i++) await Task.Delay(10);
+        Assert.Equal(1, controller.TvClients);
+        Assert.False(controller.TvReconnecting);
+
+        first.Dispose();
+        for (var i = 0; i < 300 && controller.TvClients > 0; i++) await Task.Delay(10);
+        Assert.True(controller.TvReconnecting);
+        if (controller.HasTv) Assert.Equal("Reconnecting…", controller.TvStatusText);
+
+        using var second = await http.GetAsync($"http://127.0.0.1:{controller.ServerPort}/events", HttpCompletionOption.ResponseHeadersRead);
+        for (var i = 0; i < 200 && controller.TvClients == 0; i++) await Task.Delay(10);
+        Assert.False(controller.TvReconnecting);
+        second.Dispose();
+        for (var i = 0; i < 300 && controller.TvClients > 0; i++) await Task.Delay(10);
+        Assert.True(controller.TvReconnecting);
+
+        now += TimeSpan.FromSeconds(61);
+        await controller.CheckConnectionsAsync();
+        Assert.False(controller.TvReconnecting);
+        controller.Dispose();
     }
 
     /// #268: uygulama kapanırken çıkış mesajı sunucu kapanmadan TV'ye yazılır.
@@ -2118,12 +2222,19 @@ public class AppControllerRunTests
             AppController.StatusText(SessionState.Disconnected(DisconnectKind.ConsoleClosed, "x"), true, text));
         Assert.Equal("PS5 Uzaktan Oynatma'yı kapattı. Bu çoğunlukla oyun sırasında PS5'te kullanıcı değiştirilince olur. Yeniden bağlanılıyor…",
             AppController.StatusText(SessionState.Disconnected(DisconnectKind.ConsoleClosed, "x"), true, Localizer.ForLanguage("tr")));
+        // GitHub #353: PS5 yeniden bağlanmadan sonra da kapatınca durulur; ana hesapla oynaması söylenir.
+        Assert.Equal("PS5 uzaktan oynatmayı kapattı. Oynarken PS5'te kendi ana hesabınızı seçin; CouchSubs'ın kullandığı ikinci hesapla oynamayın.",
+            AppController.StatusText(SessionState.Disconnected(DisconnectKind.ConsoleClosedRepeatedly), true, Localizer.ForLanguage("tr")));
+        Assert.Equal("The PS5 ended Remote Play. While playing, choose your own main account on the PS5; don't play with the second account CouchSubs uses.",
+            AppController.StatusText(SessionState.Disconnected(DisconnectKind.ConsoleClosedRepeatedly), true, text));
+        Assert.Equal("PS5 bağlantısı art arda koptu, yeniden bağlanma durduruldu. PS5'in açık ve aynı ağda olduğundan emin olun, sonra Yeniden bağlan'a basın.",
+            AppController.StatusText(SessionState.Disconnected(DisconnectKind.ReconnectGaveUp), true, Localizer.ForLanguage("tr")));
         // GitHub #519: İngilizce "Remote Play on Console has crashed" yerine yerelleştirilmiş yönlendirme.
         Assert.Equal("Remote Play on the PS5 has crashed. Turn the PS5 off completely (not rest mode) and back on, then connect again.",
             AppController.StatusText(SessionState.Disconnected(DisconnectKind.ConsoleRemotePlayCrashed), true, text));
         Assert.Equal("PS5'teki Uzaktan Oynatma çöktü. PS5'i tamamen kapatıp (bekleme modu değil) açın, sonra yeniden bağlanın.",
             AppController.StatusText(SessionState.Disconnected(DisconnectKind.ConsoleRemotePlayCrashed), true, Localizer.ForLanguage("tr")));
-        Assert.Equal("PS5 not found at 192.168.1.70. Make sure it is on and on the same network. Reconnecting…",
+        Assert.Equal("PS5 not found at 192.168.1.70. Searching the network for it. Make sure it is on and on the same network; if its address changed, use Enter IP Address in Settings > Console. Reconnecting…",
             AppController.StatusText(SessionState.Disconnected(DisconnectKind.NotFound, "192.168.1.70"), true, text));
         Assert.Equal("Reconnecting… (Session Request RP Version Mismatch)",
             AppController.StatusText(SessionState.Disconnected(DisconnectKind.Other, "Session Request RP Version Mismatch"), true, text));
@@ -2226,6 +2337,166 @@ public class TvAppInstallTests
         await controller.InstallTvAppAsync("ABC123");
         Assert.Equal(DevModeError.KeyServerOff, controller.TvApp.Error);
         Assert.Equal(0, services.Installs);
+    }
+
+    // MARK: TV'nin ağ adresi değişti (beta.89, Mac: 192.168.1.238 → .156; eski adrese gidilip "Key Server kapalı" deniyordu)
+
+    [Fact]
+    public async Task SilentAddressFindsTheSameTvAndInstallsThere()
+    {
+        var services = new FakeServices { AppOnTv = null, DevMode = true };
+        var store = new MemoryStore();
+        var controller = Make(services, store);
+        await controller.PairAsync(Tv);
+        services.SilentHosts.Add(Tv.Host);
+        services.Tvs.Clear();
+        services.Tvs.Add(new LgTv("LG TV", "192.168.1.156"));
+        await controller.InstallTvAppAsync("ABC123");
+        Assert.Equal("192.168.1.156", controller.Tv?.Host);
+        Assert.Equal("192.168.1.156", store.Load<LgTv>(StoreKeys.Tv)?.Host);
+        Assert.Contains("TV'nin adresi değişmiş: 192.168.1.153 → 192.168.1.156", services.InstallLog);
+        Assert.Equal(["192.168.1.156"], services.InstallHosts);
+        Assert.Equal(new TvAppState(TvAppKind.UpToDate, "0.6.1"), controller.TvApp);
+        Assert.False(controller.TvNotResponding);
+    }
+
+    [Fact]
+    public async Task SilentAddressAndNoTvOnTheNetworkSaysNotRespondingNotKeyServerOff()
+    {
+        var services = new FakeServices { AppOnTv = null, DevMode = true };
+        var controller = Make(services);
+        await controller.PairAsync(Tv);
+        services.SilentHosts.Add(Tv.Host);
+        services.Tvs.Clear();
+        await controller.InstallTvAppAsync("ABC123");
+        Assert.Equal(DevModeError.TvNotResponding, controller.TvApp.Error);
+        Assert.True(controller.TvNotResponding);
+        Assert.Equal("Not responding — searching again…", controller.TvStatusText);
+        Assert.Contains(services.InstallLog, line => line.StartsWith(TvReach.NotRespondingLine));
+        Assert.Equal(0, services.Installs);
+    }
+
+    [Fact]
+    public async Task RespondingTvWithClosedKeyServerStillSaysKeyServerOff()
+    {
+        var services = new FakeServices { AppOnTv = null, DevMode = true, KeyServer = false };
+        var controller = Make(services);
+        await controller.PairAsync(Tv);
+        await controller.InstallTvAppAsync("ABC123");
+        Assert.Equal(DevModeError.KeyServerOff, controller.TvApp.Error);
+        Assert.Equal(Tv.Host, controller.Tv?.Host);
+        Assert.False(controller.TvNotResponding);
+    }
+
+    /// <summary>"Ana ekrandan TV uygulamasını güncelle" (yeniden kurma) da önce TV'yi ağda yeniden arar.</summary>
+    [Fact]
+    public async Task ReinstallFollowsTheTvToItsNewAddress()
+    {
+        var services = new FakeServices { AppOnTv = "0.4.0", DevMode = true };
+        var store = new MemoryStore();
+        store.Save(StoreKeys.TvDevKey, "dev-key");
+        var controller = Make(services, store);
+        await controller.PairAsync(Tv);
+        services.SilentHosts.Add(Tv.Host);
+        services.Tvs.Clear();
+        services.Tvs.Add(new LgTv("LG TV", "192.168.1.156"));
+        await controller.ReinstallTvAppAsync();
+        Assert.Equal("192.168.1.156", controller.Tv?.Host);
+        Assert.Contains("192.168.1.156", services.InstallHosts);
+        Assert.Contains("TV'nin adresi değişmiş: 192.168.1.153 → 192.168.1.156", services.InstallLog);
+    }
+
+    [Fact]
+    public async Task ReinstallWithSilentTvNotFoundSaysNotResponding()
+    {
+        var services = new FakeServices { AppOnTv = "0.4.0", DevMode = true };
+        var store = new MemoryStore();
+        store.Save(StoreKeys.TvDevKey, "dev-key");
+        var controller = Make(services, store);
+        await controller.PairAsync(Tv);
+        var installsBefore = services.InstallHosts.Count;
+        services.SilentHosts.Add(Tv.Host);
+        services.Tvs.Clear();
+        await controller.ReinstallTvAppAsync();
+        Assert.Equal(new TvAppState(TvAppKind.Failed, Error: DevModeError.TvNotResponding), controller.TvApp);
+        Assert.Equal(installsBefore, services.InstallHosts.Count);
+    }
+
+    // MARK: Eşli TV kartı: yanıt vermeyen TV, yeniden arama, IP adresi, TV'yi değiştir, eşleşmeyi kaldır
+
+    [Fact]
+    public async Task PairButtonShowsAnExplicitErrorWhenTheTvIsSilent()
+    {
+        var services = new FakeServices { DevMode = true };
+        var controller = Make(services);
+        await controller.PairAsync(Tv);
+        services.SilentHosts.Add(Tv.Host);
+        services.Tvs.Clear();
+        await controller.OpenTvPairingAsync();
+        Assert.True(controller.HasTvUnreachableProblem);
+        Assert.Equal("The TV isn't responding at 192.168.1.153. Its address may have changed.", controller.TvUnreachableProblem);
+
+        // "TV'yi Yeniden Ara": TV ağda yeni adreste bulunur, kart yeni adresi gösterir ve hata kalkar.
+        services.Tvs.Add(new LgTv("LG TV", "192.168.1.156"));
+        Assert.True(await controller.SearchTvAgainAsync());
+        Assert.Equal("192.168.1.156", controller.Tv?.Host);
+        Assert.False(controller.HasTvUnreachableProblem);
+    }
+
+    [Fact]
+    public async Task EnteredIpAddressMovesThePairedTv()
+    {
+        var services = new FakeServices { DevMode = true, Identify = host => new LgTv("LG TV", host) };
+        var store = new MemoryStore();
+        var controller = Make(services, store);
+        await controller.PairAsync(Tv);
+        store.Save(StoreKeys.TvKey, "lg-key");
+        Assert.False(await controller.UseTvAddressAsync("http://"));
+        Assert.True(await controller.UseTvAddressAsync("192.168.1.156"));
+        Assert.Equal("192.168.1.156", controller.Tv?.Host);
+        Assert.Equal("lg-key", store.Load<string>(StoreKeys.TvKey));
+        Assert.Contains("TV'nin adresi değişmiş: 192.168.1.153 → 192.168.1.156", services.InstallLog);
+    }
+
+    [Fact]
+    public async Task CardCheckFindsTheTvAtItsNewAddressAndSearchesAtMostEvery30Seconds()
+    {
+        var services = new FakeServices { DevMode = true };
+        var controller = Make(services);
+        var now = new DateTime(2026, 11, 23, 12, 0, 0, DateTimeKind.Utc);
+        controller.Clock = () => now;
+        await controller.PairAsync(Tv);
+        services.SilentHosts.Add(Tv.Host);
+        services.Tvs.Clear();
+        await controller.CheckTvReachableAsync();
+        Assert.True(controller.TvNotResponding);
+        Assert.Equal("Not responding — searching again…", controller.TvStatusText);
+        services.Tvs.Add(new LgTv("LG TV", "192.168.1.156"));
+        now = now.AddSeconds(10);
+        await controller.CheckTvReachableAsync();
+        Assert.Equal(Tv.Host, controller.Tv?.Host);   // 30 sn dolmadı: ağ yeniden aranmaz
+        now = now.AddSeconds(25);
+        await controller.CheckTvReachableAsync();
+        Assert.Equal("192.168.1.156", controller.Tv?.Host);
+        Assert.False(controller.TvNotResponding);
+    }
+
+    [Fact]
+    public async Task RemovePairingForgetsTheTv()
+    {
+        var services = new FakeServices { DevMode = true };
+        var store = new MemoryStore();
+        var controller = Make(services, store);
+        await controller.PairAsync(Tv);
+        store.Save(StoreKeys.TvDevKey, "dev-key");
+        controller.RemoveTvPairing();
+        Assert.Null(controller.Tv);
+        Assert.False(controller.HasTv);
+        Assert.Null(store.Load<LgTv>(StoreKeys.Tv));
+        Assert.Null(store.Load<string>(StoreKeys.TvKey));
+        Assert.Null(store.Load<string>(StoreKeys.TvDevKey));
+        controller.ChangeTv();
+        Assert.Equal(OnboardingStep.Tv, controller.Step);
     }
 
     [Fact]
@@ -2413,6 +2684,43 @@ public class TvAppInstallTests
         Assert.DoesNotContain("192.168.1.34", TvAppMessages.Problem(state, TvBrand.Lg, Localizer.ForLanguage("tr"), "x.log", "192.168.1.34"));
     }
 
+    /// <summary>"IP hatası" (#1158): metin menüyü, iki ayarı ve bu cihazın adresini tek satırda söyler (Türkçesi de var).</summary>
+    [Fact]
+    public void SamsungUnreachableGivesHostPcStepsWithThisAddress()
+    {
+        var state = new TvAppState(TvAppKind.Failed, Error: DevModeError.Unreachable);
+        var tr = Localizer.ForLanguage("tr");
+        Assert.NotEqual(TvAppMessages.HostPcStepsLine, tr[TvAppMessages.HostPcStepsLine]);
+        Assert.Contains(tr.Format(TvAppMessages.HostPcStepsLine, "192.168.1.34"), TvAppMessages.Problem(state, TvBrand.Samsung, tr, "x.log", "192.168.1.34"));
+        Assert.Contains(tr.Format(TvAppMessages.HostPcStepsLine, "?"), TvAppMessages.Problem(state, TvBrand.Samsung, tr, "x.log"));
+        Assert.Contains("1 2 3 4 5", tr.Format(TvAppMessages.HostPcStepsLine, "192.168.1.34"));
+    }
+
+    /// <summary>
+    /// TV'nin listesi CouchSubs'ın silindiğini söyleyince (#1158) bu bilgisayarın kurduğu sürümün ve "bağlandı" kaydı
+    /// silinir: kart "güncel" göstermez, geliştirici modu kapalıysa kurulum adımları çıkar. Başka TV'nin bildirimi silmez.
+    /// </summary>
+    [Fact]
+    public async Task SamsungAppMissingOnTheTvForgetsTheInstalledVersion()
+    {
+        var services = new FakeServices();
+        services.Bundled[TvBrand.Samsung] = SamsungApp;
+        var store = new MemoryStore();
+        var controller = Make(services, store);
+        await controller.PairAsync(Samsung);
+        store.Save(StoreKeys.TvAppVersion, "0.7.0");
+        store.Save(StoreKeys.TvAppSeen, Samsung.Host);
+        await controller.RefreshTvAppAsync();
+        Assert.Equal(new TvAppState(TvAppKind.UpToDate, "0.7.0"), controller.TvApp);
+        controller.SamsungAppMissing("192.168.1.99");
+        Assert.Equal("0.7.0", store.Load<string>(StoreKeys.TvAppVersion));
+        controller.SamsungAppMissing(" " + Samsung.Host + " ");
+        Assert.Null(store.Load<string>(StoreKeys.TvAppVersion));
+        Assert.Null(store.Load<string>(StoreKeys.TvAppSeen));
+        await controller.RefreshTvAppAsync();
+        Assert.Equal(TvAppKind.DevModeOff, controller.TvApp.Kind);
+    }
+
     [Fact]
     public async Task SamsungFailureIsShown()
     {
@@ -2464,6 +2772,22 @@ public class TvAppInstallTests
         var key = TvAppMessages.Key(error, TvBrand.Samsung);
         Assert.NotEqual(TvAppMessages.Key(DevModeError.InstallFailed, TvBrand.Samsung), key);
         Assert.NotEqual(key, Localizer.ForLanguage("tr")[key]);
+    }
+
+    /// #200, #1116: LG'de Key Server yanıt veriyor ama 9922 reddediyor; genel "TV yanıt vermedi" yerine yeniden başlatma
+    /// ve webOS Hub uyarısı (Mac, iPhone ve Android'dekiyle aynı katalog metni) ve TV'nin sebebi gösterilir.
+    [Fact]
+    public void LgClosedDeveloperConnectionSaysToRestartAndMentionsWebOsHub()
+    {
+        var text = Localizer.ForLanguage("tr");
+        var state = new TvAppState(TvAppKind.Failed, Error: DevModeError.DevConnectionClosed, Reason: "Connection refused");
+        var problem = TvAppMessages.Problem(state, TvBrand.Lg, text, "x.log");
+        Assert.StartsWith(text[TvAppMessages.DevConnectionClosedMessage], problem);
+        Assert.NotEqual(TvAppMessages.DevConnectionClosedMessage, text[TvAppMessages.DevConnectionClosedMessage]);
+        Assert.Contains("fişten çekin", problem);
+        Assert.Contains("webOS Hub", problem);
+        Assert.Contains("Connection refused", problem);
+        Assert.DoesNotContain(text["The TV did not respond. Make sure it is on and on the same network."], problem);
     }
 
     [Fact]
@@ -2999,6 +3323,42 @@ public class TvAppInstallTests
         services.AppOnTv = app;
         services.InstallLog.Clear();
         return controller;
+    }
+
+    /// <summary>
+    /// beta.89 (LG): kurulumdan sonra açılan uygulama hâlâ eski sürümü bildiriyor. Bir kez daha kapatılıp açılır, yine eskiyse
+    /// ana ekran "TV'de CouchSubs'ı kapatıp yeniden açın" der; yeni sürüm bağlanınca kalkar (Mac ile aynı).
+    /// </summary>
+    [Fact]
+    public async Task OldRunningAppAfterInstallIsRestartedOnceThenReported()
+    {
+        var services = new FakeServices { DevMode = true, AppOnTv = "0.5.0" };
+        var controller = await UpdateScenario(services, key: true);
+        await controller.UpdateTvAppAsync();
+        Assert.Equal(1, services.Installs);
+        controller.TvAppReported("0.5.0");
+        Assert.Equal(1, services.Closes);
+        Assert.False(controller.TvAppStaleRunning);
+        controller.TvAppReported("0.5.0");
+        Assert.True(controller.TvAppStaleRunning);
+        Assert.Equal(new TvAppOutdated("0.5.0", "0.6.1"), controller.TvAppOutdated);
+        Assert.Equal(1, services.Closes);
+        Assert.Equal(1, services.Installs);
+        controller.TvAppReported("0.6.1");
+        Assert.False(controller.TvAppStaleRunning);
+        Assert.Null(controller.TvAppOutdated);
+    }
+
+    [Fact]
+    public async Task FreshInstallRunningTheNewVersionIsNotRestarted()
+    {
+        var services = new FakeServices { DevMode = true, AppOnTv = "0.5.0" };
+        var controller = await UpdateScenario(services, key: true);
+        await controller.UpdateTvAppAsync();
+        controller.TvAppReported("0.6.1");
+        Assert.Equal(0, services.Closes);
+        Assert.False(controller.TvAppStaleRunning);
+        Assert.Null(controller.TvAppOutdated);
     }
 
     [Fact]

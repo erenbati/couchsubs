@@ -6,7 +6,7 @@
 #  - Katalogda Türkçesi farklı olan anahtar raporlanır, üzerine yazılmaz (eski ekranlar o metni kullanıyor olabilir).
 #  - Aynı İngilizce anahtar belgede iki farklı Türkçeyle geçerse hata.
 # Kullanım: python3 scripts/metinler-katalog.py [--check]   (--check: yazmaz, eksik/çelişki varsa çıkış kodu 1)
-import json, pathlib, re, sys
+import json, pathlib, re, sys, tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOC = ROOT / "design" / "yeni-arayuz" / "METINLER.md"
@@ -75,9 +75,21 @@ def main():
             sys.exit("Katalog sonu bulunamadı.")
         body = text[:tail.start()].rstrip()
         insert = ",\n".join(entry(en, tr) for en, tr in missing)
-        text = body + ",\n" + insert + text[tail.start():]
+        # An empty strings map has no preceding item to separate with a comma.
+        text = body + (",\n" if strings else "\n") + insert + text[tail.start():]
         json.loads(text)  # bozuk JSON yazılmasın
-        CATALOG.write_text(text)
+        # Localizable.xcstrings is shared by multiple app targets. Do not
+        # truncate its last valid version on a failed write or replacement.
+        staged = None
+        try:
+            with tempfile.NamedTemporaryFile("w", dir=CATALOG.parent, encoding="utf-8",
+                                             prefix=".Localizable.", suffix=".tmp", delete=False) as output:
+                staged = pathlib.Path(output.name)
+                output.write(text)
+            staged.replace(CATALOG)
+        finally:
+            if staged:
+                staged.unlink(missing_ok=True)
     print(f"{len(missing)} metin eklendi, {len(differs)} çelişki raporlandı ({len(seen)} metin).")
 
 

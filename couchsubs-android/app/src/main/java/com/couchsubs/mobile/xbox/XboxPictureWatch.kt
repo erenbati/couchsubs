@@ -4,8 +4,10 @@
 // kalan ya da kare göndermeyi bırakan yayında ana ekran "bağlı" diyor, altyazı donuyor ve bir daha gelmiyordu (X'te
 // kullanıcı bildirimi, iPhone + Xbox Series S). Kare [WARN_AFTER_MS] gelmezse (ICE DISCONNECTED iken 1 sn) uyarı
 // gösterilir; [STALL_AFTER_MS] gelmezse ya da ICE FAILED olursa oturum kapatılıp XboxSessionMachine'in aralıklarıyla
-// (5, 15, 45 sn) yeniden kurulur. CouchSubsCore XboxPictureWatch (iPhone, Mac) ve Windows'taki
-// CouchSubs.Shell/XboxPictureWatch ile birebir.
+// (bir kez, 5 sn sonra) yeniden kurulur. İlk kareden sonraki [STARTUP_GRACE_MS] içinde yalnız ICE FAILED oturumu
+// kapatır: yayının başında Xbox görüntüyü birkaç saniye bekletebiliyor (yükleme, "uzaktan yürütme başlatıldı"
+// bildirimi); eskiden bu boşlukta oturum kapatılıp yeniden açılıyor, Xbox'ta başladı/durdu döngüsü oluyordu (Play,
+// Android beta.85). CouchSubsCore XboxPictureWatch (iPhone, Mac) ve Windows'taki CouchSubs.Shell/XboxPictureWatch ile birebir.
 package com.couchsubs.mobile.xbox
 
 /** Görüntü bekçisinin bir saat adımındaki kararı. */
@@ -25,11 +27,14 @@ class XboxPictureWatch {
         const val STALL_AFTER_MS = 12_000L
         /** ICE DISCONNECTED iken uyarı için yeterli boşluk (bağlantı takılınca kareler hemen kesilir). */
         const val ICE_WARN_AFTER_MS = 1000L
+        /** İlk kareden sonra bu süre içinde kare boşluğu oturumu kapatmaz (yalnız uyarı); ICE FAILED yine kapatır. */
+        const val STARTUP_GRACE_MS = 30_000L
     }
 
     /** IceConnectionState'in bekçiyi ilgilendiren kısmı. */
     enum class Ice { CONNECTED, DISCONNECTED, FAILED, OTHER }
 
+    private var firstFrameMs: Long? = null
     private var lastFrameMs: Long? = null
     private var iceLostSinceMs: Long? = null
     private var iceFailed = false
@@ -38,8 +43,15 @@ class XboxPictureWatch {
         private set
 
     @Synchronized fun frameArrived(atMs: Long) {
+        if (firstFrameMs == null) firstFrameMs = atMs
         lastFrameMs = atMs
     }
+
+    /**
+     * Görüntü akıyor mu: son kare [WARN_AFTER_MS]'den yeni. Akan yayın canlı tutma hatasıyla kapatılmaz (bkz.
+     * [XboxKeepalive.shouldEnd]).
+     */
+    @Synchronized fun isFlowing(atMs: Long): Boolean = lastFrameMs?.let { atMs - it < WARN_AFTER_MS } == true
 
     @Synchronized fun iceChanged(state: Ice, atMs: Long) {
         when (state) {
@@ -56,7 +68,8 @@ class XboxPictureWatch {
         val iceLost = iceLostSinceMs != null
         if (iceFailed) return XboxPictureVerdict.Stalled("Xbox ICE bağlantısı koptu (failed)")
         val gap = atMs - last
-        if (gap >= STALL_AFTER_MS) {
+        val starting = firstFrameMs?.let { atMs - it < STARTUP_GRACE_MS } == true
+        if (gap >= STALL_AFTER_MS && !starting) {
             return XboxPictureVerdict.Stalled("Xbox'tan ${gap / 1000} sn'dir görüntü gelmiyor (${if (iceLost) "ICE disconnected" else "bağlantı açık görünüyor"})")
         }
         val trouble = gap >= WARN_AFTER_MS || (iceLost && gap >= ICE_WARN_AFTER_MS)

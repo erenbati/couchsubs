@@ -45,6 +45,8 @@ public static class Program
                 // Güncelleme kitaplığı açılamasa da uygulama açılır; eksik dosya varsa açılış denetimi söyler.
                 StartupGuard.Log("Velopack başlatılamadı", error);
             }
+            // Güncelleme denetimi ana pencereden yürür; önceki açılış pencereye ulaşmadıysa arayüzden önce burada denenir.
+            if (args is not ["--render-screens", _] and not ["--olc-bosta", _, _]) RescueUpdate.BeforeLaunch();
             return RunApp();
         }
         catch (Exception error)
@@ -60,6 +62,8 @@ public static class Program
             }
             else
             {
+                // Arayüz açılamadı: düzeltilmiş sürüm varsa kurulup uygulama yeniden başlar (RescueUpdate).
+                RescueUpdate.TryNow();
                 // WPF'in kendisi yüklenemiyor olabilir; ileti Windows'un kendi penceresiyle gösterilir.
                 MessageBoxW(IntPtr.Zero, message, "CouchSubs", 0x10 | 0x10000);
             }

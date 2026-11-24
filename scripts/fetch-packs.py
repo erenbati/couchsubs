@@ -133,6 +133,11 @@ def main(argv):
             except urllib.error.URLError as error:
                 print(f"✗ {key} indirilemedi: {getattr(error, 'code', '') or error.__class__.__name__}", file=sys.stderr)
                 return 1
+            # The S3 listing advertises the exact object size. If the GET body
+            # differs, never replace the last good package with untrusted bytes.
+            if len(data) != _size:
+                print(f"✗ {key} boyut uyuşmazlığı: beklenen {_size}, gelen {len(data)}", file=sys.stderr)
+                return 1
             # A successful HTTP response does not guarantee a usable archive. Validate
             # bundled game packs before replacing an existing, working copy.
             if prefix == "bundled/" and name.endswith(".json.gz"):
@@ -140,6 +145,7 @@ def main(argv):
                     pack = json.loads(gzip.decompress(data))
                     if not (isinstance(pack, dict) and pack.get("format") == 2
                             and isinstance(pack.get("entries"), dict) and pack["entries"]
+                            and all(isinstance(v, str) and v.strip() for v in pack["entries"].values())
                             and isinstance(pack.get("segments", {}), dict)
                             and pack.get("id", name.removesuffix(".json.gz")) == name.removesuffix(".json.gz")):
                         raise ValueError("invalid format-2 pack structure, ID or empty entries")

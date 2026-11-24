@@ -581,6 +581,19 @@ public class RegistrationReasonTests
         Assert.Null(ConsoleDiscovery.PickMoved([], "PS5-A"));
     }
 
+    /// <summary>Adresi değişen PS5 adı harf/boşluk farkıyla gelse de yeni adreste bulunur; kayıtta ad yoksa ağdaki tek PS5
+    /// seçilir, iki PS5 varken seçilmez.</summary>
+    [Fact]
+    public void MovedConsoleIsFoundDespiteCaseOrSpacing()
+    {
+        var a = new ConsoleInfo("192.168.1.35", "PS5-A ", false);
+        var b = new ConsoleInfo("192.168.1.36", "PS5-B", true);
+        Assert.Equal(a, ConsoleDiscovery.PickMoved([a, b], "ps5-a"));
+        Assert.True(ConsoleDiscovery.IsRegistered(a, " PS5-a"));
+        Assert.Equal(b, ConsoleDiscovery.PickMoved([b], ""));
+        Assert.Null(ConsoleDiscovery.PickMoved([a, b], ""));
+    }
+
     [Fact]
     public void OtherConsoleAtSavedAddressIsNotTheRegisteredOne()
     {
@@ -612,6 +625,74 @@ public class NativeHelperTests
         var bytes = "PS5-123\0garbage"u8.ToArray();
         fixed (byte* pointer = bytes)
             Assert.Equal("PS5-123", NativeMethods.FixedString(pointer, bytes.Length));
+    }
+}
+
+public class ReconnectLimitTests
+{
+    private const long Start = 1_000_000;
+    private static readonly long Stable = (long)ReconnectPolicy.StableAfter.TotalMilliseconds;
+
+    /// <summary>GitHub #353: PS5 akışı kendisi kapattı (ikinci hesap PS5'te seçildi) → en çok bir yeniden deneme, sonra dur.</summary>
+    [Fact]
+    public void ConsoleClosedRetriesOnceThenStops()
+    {
+        var limit = new ReconnectLimit();
+        Assert.Equal(1, ReconnectLimit.MaxConsoleClosedRetries);
+        var closed = DisconnectReasons.FromNative(NativeMethods.QuitConsoleClosed, "Client disconnected");
+        limit.Connected(Start);
+        Assert.Null(limit.Ended(closed.Kind, Start + 20_000));          // 1. kapatma: bir kez yeniden dene
+        limit.Connected(Start + 40_000);                                // yeniden bağlandı, kısa sürdü
+        Assert.Equal(DisconnectKind.ConsoleClosedRepeatedly, limit.Ended(DisconnectKind.ConsoleClosed, Start + 60_000));
+    }
+
+    /// <summary>Ağ kopmasında beklemeli deneme sürer ama art arda beşten fazla olmaz; sonra "Yeniden bağlan".</summary>
+    [Fact]
+    public void NetworkDropsStopAfterFiveRetries()
+    {
+        var limit = new ReconnectLimit();
+        Assert.Equal(5, ReconnectLimit.MaxNetworkRetries);
+        foreach (var kind in new[] { DisconnectKind.Network, DisconnectKind.NotFound, DisconnectKind.Refused, DisconnectKind.Other, DisconnectKind.Network })
+            Assert.Null(limit.Ended(kind, Start));
+        Assert.Equal(DisconnectKind.ReconnectGaveUp, limit.Ended(DisconnectKind.Network, Start));
+    }
+
+    /// <summary>PS5 kapalıyken açılması, başka cihazda kullanılırken bırakılması beklenir: bunlar sayılmaz.</summary>
+    [Fact]
+    public void WaitingReasonsAreNotCounted()
+    {
+        var limit = new ReconnectLimit();
+        for (var i = 0; i < 20; i++)
+        {
+            Assert.Null(limit.Ended(DisconnectKind.ConsoleAsleep, Start));
+            Assert.Null(limit.Ended(DisconnectKind.InUse, Start));
+        }
+        Assert.Equal(0, limit.NetworkFailures);
+        Assert.Equal(0, limit.ConsoleClosed);
+    }
+
+    /// <summary>Uzun (kararlı) oturumdan sonraki kapatma yeni sayılır; kullanıcı saatler sonra yine hesap değiştirirse bir deneme var.</summary>
+    [Fact]
+    public void StableSessionResetsCounters()
+    {
+        var limit = new ReconnectLimit();
+        Assert.Null(limit.Ended(DisconnectKind.ConsoleClosed, Start));
+        for (var i = 0; i < 5; i++) Assert.Null(limit.Ended(DisconnectKind.Network, Start));
+        limit.Connected(Start);
+        Assert.Null(limit.Ended(DisconnectKind.ConsoleClosed, Start + Stable));
+        Assert.Equal(0, limit.NetworkFailures);
+        Assert.Equal(1, limit.ConsoleClosed);
+    }
+
+    /// <summary>Çeviri yeniden başlayınca, ağ değişince ya da "Yeniden bağlan"a basınca sayaçlar baştan.</summary>
+    [Fact]
+    public void ResetAllowsRetriesAgain()
+    {
+        var limit = new ReconnectLimit();
+        limit.Ended(DisconnectKind.ConsoleClosed, Start);
+        Assert.Equal(DisconnectKind.ConsoleClosedRepeatedly, limit.Ended(DisconnectKind.ConsoleClosed, Start));
+        limit.Reset();
+        Assert.Null(limit.Ended(DisconnectKind.ConsoleClosed, Start));
     }
 }
 

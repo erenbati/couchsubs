@@ -173,9 +173,7 @@ final class SamsungTVTests: XCTestCase {
     }
 
     func testConnectedTVIsRememberedAsInstalled() throws {
-        let suite = "samsung-knowledge-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults.make("samsung-knowledge")
         let knowledge = SamsungAppKnowledge(defaults: defaults)
         XCTAssertFalse(knowledge.isKnown(host: "192.168.1.40"))
         knowledge.mark(host: " 192.168.1.40 ")
@@ -189,12 +187,54 @@ final class SamsungTVTests: XCTestCase {
         XCTAssertFalse(knowledge.takeProbe())
     }
 
+    /// TV'den silinmiş uygulama "kurulu" bilinirse bekçi her 30 sn'de listesiz DEEP_LINK gönderiyor, TV her seferinde
+    /// "Sunucu bakım altında (1544007)" diyordu: listesiz açma, uygulama her bağlandığında bir kez.
+    func testDirectLaunchIsAllowedOncePerAppConnection() {
+        let knowledge = SamsungAppKnowledge(defaults: nil)
+        XCTAssertFalse(knowledge.allowsDirect(host: "192.168.1.40"))
+        knowledge.mark(host: "192.168.1.40")
+        XCTAssertTrue(knowledge.allowsDirect(host: "192.168.1.40"))
+        // Uygulama bağlanmadı: bilgi bayat sayılır, liste belirler.
+        XCTAssertFalse(knowledge.allowsDirect(host: "192.168.1.40"))
+        XCTAssertFalse(knowledge.allowsDirect(host: "192.168.1.40"))
+        XCTAssertTrue(knowledge.isKnown(host: "192.168.1.40"))
+        // Uygulama bağlandı: hak yenilenir.
+        knowledge.mark(host: " 192.168.1.40 ")
+        XCTAssertTrue(knowledge.allowsDirect(host: "192.168.1.40"))
+        XCTAssertTrue(SamsungAppKnowledge.unconfirmedLine(host: "1.2.3.4").contains("kurulu uygulama listesine bakılıyor"))
+    }
+
+    /// Uygulama TV'den silinince (#1158) telefon onu "kurulu" gösteriyor, kurulum adımı önerilmiyordu: bayat bilgide liste
+    /// "CouchSubs yok" derse bilgi kalıcı olarak silinir ve uygulama katmanına bildirilir. Yanıtsız liste silmez.
+    func testMissingListForgetsAStaleInstalledTV() {
+        let defaults = TestDefaults.make("samsung-missing")
+        let knowledge = SamsungAppKnowledge(defaults: defaults)
+        XCTAssertTrue(SamsungAppKnowledge.forgetsOnList(.missing))
+        XCTAssertFalse(SamsungAppKnowledge.forgetsOnList(nil))
+        XCTAssertFalse(SamsungAppKnowledge.forgetsOnList(.installed(appType: 2)))
+        let previous = SamsungAppKnowledge.onMissing
+        defer { SamsungAppKnowledge.onMissing = previous }
+        let reported = MissingHosts()
+        SamsungAppKnowledge.onMissing = { host in reported.append(host) }
+        // Bilinmeyen TV'de silinecek bir şey yok, bildirim de yok.
+        XCTAssertFalse(knowledge.appMissing(host: "192.168.1.40"))
+        knowledge.mark(host: "192.168.1.40")
+        XCTAssertTrue(knowledge.allowsDirect(host: "192.168.1.40"))
+        XCTAssertFalse(knowledge.allowsDirect(host: "192.168.1.40"))
+        XCTAssertTrue(knowledge.appMissing(host: " 192.168.1.40 "))
+        XCTAssertFalse(knowledge.isKnown(host: "192.168.1.40"))
+        XCTAssertFalse(SamsungAppKnowledge(defaults: defaults).isKnown(host: "192.168.1.40"))
+        XCTAssertEqual(reported.value, ["192.168.1.40"])
+        XCTAssertTrue(SamsungAppKnowledge.missingLine(host: "1.2.3.4").contains("TV uygulaması silinmiş"))
+        // Yeniden kurulunca (ya da uygulama bağlanınca) bilgi ve listesiz açma hakkı geri gelir.
+        knowledge.mark(host: "192.168.1.40")
+        XCTAssertTrue(knowledge.allowsDirect(host: "192.168.1.40"))
+    }
+
     /// Modem TV'ye yeni adres verince (TVLocator) kurulu olduğu bilgisi yeni adrese geçer: yoksa bekçi yeni adreste listeye
     /// bakıyor, liste geliştirici moduyla kurulan uygulamayı içermiyorsa uygulamayı hiç açmıyordu.
     func testKnowledgeFollowsTheTVToItsNewAddress() throws {
-        let suite = "samsung-knowledge-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults.make("samsung-knowledge")
         let knowledge = SamsungAppKnowledge(defaults: defaults)
         knowledge.mark(host: "192.168.1.40")
         XCTAssertTrue(SamsungAppKnowledge.checksList(knownInstalled: knowledge.isKnown(host: "192.168.1.57")))
@@ -207,4 +247,12 @@ final class SamsungTVTests: XCTestCase {
         XCTAssertFalse(knowledge.isKnown(host: "192.168.1.91"))
         knowledge.carry(from: "192.168.1.40", to: nil)
     }
+}
+
+/// Bildirim kancasından gelen adresler (kanca başka iş parçacığından çağrılabilir).
+private final class MissingHosts: @unchecked Sendable {
+    private let lock = NSLock()
+    private var hosts: [String] = []
+    func append(_ host: String) { lock.withLock { hosts.append(host) } }
+    var value: [String] { lock.withLock { hosts } }
 }

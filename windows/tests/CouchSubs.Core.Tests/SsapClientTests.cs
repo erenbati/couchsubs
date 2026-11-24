@@ -274,6 +274,88 @@ public class TvKeeperTests
         Assert.Equal(2, control.Launches.Count);
     }
 
+    /// <summary>
+    /// #1055 (LG OLED C4, beta.86): her yeni SSAP bağlantısı açık ve bağlı uygulamaya da açma komutu gönderiyordu; webOS
+    /// uygulamayı yeniden başlatıp HDMI görüntüsünü yeniden kuruyor, ekran kararıyordu. 30 dk boyunca bağlantı 20 sn'de bir
+    /// kopup bekçi her dakika yenilense de (alındı kesintisi) açık ve bağlı uygulamaya tek açma komutu gitmez.
+    /// </summary>
+    [Fact]
+    public async Task OpenConnectedAppGetsNoLaunchFor30MinutesEvenWhenSsapKeepsReconnecting()
+    {
+        var control = new FakeControl(); // önde hep CouchSubs
+        var time = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var keeper = new TvKeeper(() => Task.FromResult<ITvControl>(control), "com.couchsubs.tv",
+            new Dictionary<string, string> { ["server"] = "http://1.2.3.4:8787" }, clock: () => time, tvConnected: () => true);
+        for (var second = 0; second < 30 * 60; second++)
+        {
+            time += TimeSpan.FromSeconds(1);
+            if (second % 20 == 0) control.FailNext = true; // SSAP koptu
+            if (second % 60 == 30) keeper.Reconnect();      // alındı kesildi, bekçi yenilendi
+            await keeper.TickAsync();
+        }
+        Assert.Empty(control.Launches);
+    }
+
+    /// <summary>Uygulama önde ama bağlı değil (yanıtsız): yeniden kurulan bağlantıda geri çekilerek açılır (30 sn, 1, 2, 5 dk),
+    /// her kopuşta değil. İlk açılışta bağlı değilse eskisi gibi hemen açılır.</summary>
+    [Fact]
+    public async Task UnresponsiveAppIsReopenedWithBackoff()
+    {
+        var control = new FakeControl();
+        var time = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        var keeper = new TvKeeper(() => Task.FromResult<ITvControl>(control), "com.couchsubs.tv", new Dictionary<string, string>(),
+            clock: () => time, tvConnected: () => false);
+        await keeper.TickAsync();
+        Assert.Single(control.Launches); // ilk açılış
+        for (var second = 0; second < 10 * 60; second++)
+        {
+            time += TimeSpan.FromSeconds(1);
+            control.FailNext = true; // her saniye kopuyor: her tur yeni bağlantı
+            await keeper.TickAsync();
+            await keeper.TickAsync();
+        }
+        // 10 dk'da: ilk yeniden açma, +30 sn, +60 sn, +120 sn, sonra 5 dk'da bir.
+        Assert.InRange(control.Launches.Count, 1 + 4, 1 + 6);
+    }
+
+    /// <summary>Çeviri başlarken uygulama zaten açık ve bağlıysa açma komutu gitmez; kapalıysa açılır.</summary>
+    [Fact]
+    public async Task FirstOpenSkipsAConnectedAppButOpensAClosedOne()
+    {
+        var open = new FakeControl();
+        var keeperOpen = new TvKeeper(() => Task.FromResult<ITvControl>(open), "com.couchsubs.tv", new Dictionary<string, string>(),
+            tvConnected: () => true);
+        await keeperOpen.TickAsync();
+        await keeperOpen.TickAsync();
+        Assert.Empty(open.Launches);
+
+        var closed = new FakeControl("com.webos.app.hdmi2");
+        var keeperClosed = new TvKeeper(() => Task.FromResult<ITvControl>(closed), "com.couchsubs.tv", new Dictionary<string, string>(),
+            tvConnected: () => false);
+        await keeperClosed.TickAsync();
+        Assert.Single(closed.Launches);
+    }
+
+    /// <summary>
+    /// beta.89: kurulumdan sonra uygulama kapatıldı; sunucu kopan akışı henüz fark etmese de (bağlı görünür) bir kez açılır,
+    /// sonraki bağlantılarda #1055 kuralı sürer (Mac ile aynı).
+    /// </summary>
+    [Fact]
+    public async Task ReopenAfterCloseLaunchesOnceEvenIfTheAppStillLooksConnected()
+    {
+        var control = new FakeControl();
+        var keeper = new TvKeeper(() => Task.FromResult<ITvControl>(control), "com.couchsubs.tv", new Dictionary<string, string>(),
+            tvConnected: () => true);
+        await keeper.TickAsync();
+        Assert.Empty(control.Launches);
+        keeper.ReopenApp();
+        await keeper.TickAsync();
+        Assert.Single(control.Launches);
+        keeper.Reconnect();
+        await keeper.TickAsync();
+        Assert.Single(control.Launches);
+    }
+
     [Fact]
     public async Task PsButtonOnTheConsoleInputIsNeverCountedAsInsisting()
     {

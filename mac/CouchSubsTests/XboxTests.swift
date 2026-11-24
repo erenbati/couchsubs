@@ -336,7 +336,8 @@ final class XboxSessionFlowTests: XCTestCase {
         let states = await run(http) { states in !self.texts(states).isEmpty }
         XCTAssertEqual(texts(states).first, "yeniden:signInRequired")
         try? await Task.sleep(for: .milliseconds(200))
-        XCTAssertEqual(http.calls.filter { $0.url.hasSuffix("/play") }.count, 1)
+        // 401'de hizmet jetonu bir kez yenilenip istek bir kez yinelenir (f9352b47); ikinci 401'de durur, döngüye girmez.
+        XCTAssertEqual(http.calls.filter { $0.url.hasSuffix("/play") }.count, 2)
     }
 
     /// Hazır yayında WebRTC teklifi gerçekten kurulur (Mac'teki libwebrtc ile): dört veri kanalı, ses ve görüntü
