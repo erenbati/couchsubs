@@ -83,19 +83,33 @@ struct TVAppUpdate: Equatable {
 
 /// TV'deki CouchSubs sürümünü sessizce okur (kurmadan, TV'de pencere açmadan). Ulaşılamazsa nil.
 enum TVAppVersionCheck {
+    /// Sessiz denetimin sonucu: sürüm, kesin "TV'de CouchSubs yok" (Samsung'da sdb bağlandı, `vd_applist` okundu,
+    /// CouchSubs yok) ya da bilinmiyor (TV'ye ulaşılamadı, liste okunamadı).
+    enum Outcome: Equatable {
+        case version(String)
+        case missing
+        case unknown
+    }
+
     static func installedVersion(brand: TVBrand, host: String, port: UInt16?) async -> String? {
-        guard !host.isEmpty else { return nil }
-        return await Task.detached(priority: .utility) { () -> String? in
+        if case .version(let version) = await check(brand: brand, host: host, port: port) { return version }
+        return nil
+    }
+
+    static func check(brand: TVBrand, host: String, port: UInt16?) async -> Outcome {
+        guard !host.isEmpty else { return .unknown }
+        return await Task.detached(priority: .utility) { () -> Outcome in
             switch brand {
             case .samsung:
-                guard PosixSocket.isOpen(host: host, port: SdbConnection.port) else { return nil }
-                return try? SamsungInstaller(host: host, signIn: nil).installedVersion()
+                guard PosixSocket.isOpen(host: host, port: SdbConnection.port) else { return .unknown }
+                return (try? SamsungInstaller(host: host, signIn: nil).installedPresence()) ?? .unknown
             case .androidTV:
                 let port = port ?? AdbConnection.defaultPort
-                guard PosixSocket.isOpen(host: host, port: port) else { return nil }
-                return try? AndroidTvInstaller(host: host, port: port).installedVersion()
+                guard PosixSocket.isOpen(host: host, port: port),
+                      let version = try? AndroidTvInstaller(host: host, port: port).installedVersion() else { return .unknown }
+                return .version(version)
             case .lg:
-                return LGPhoneInstall.installedVersion(host: host)
+                return LGPhoneInstall.installedVersion(host: host).map(Outcome.version) ?? .unknown
             }
         }.value
     }

@@ -3,21 +3,17 @@
 namespace CouchSubs.Core;
 
 /// <summary>
-/// Konuşana göre renk (v2): oturum boyunca (çeviri başlayınca sıfırlanır) her kişiye bir renk. Yazı tanımanın yakın
-/// okuması aynı kişidir ("Mattia", "Mattla", "Mattia." aynı renk); yeni kişi, mümkünse başka kişilerin renginden ve renk
-/// ailesinden ayrı bir renk alır (iki mavi tonlu kişi yan yana karışmasın). Kurallar ve ortak test vektörü:
-/// scripts/speaker_colors_ref.py, docs/speaker-colors-vectors.json (Mac/iPhone ve Android aynı sırada aynı rengi verir).
+/// Konuşana göre renk (v3): oturum boyunca (çeviri başlayınca sıfırlanır) her kişiye bir renk. Yazı tanımanın yakın
+/// okuması aynı kişidir ("Mattia", "Mattla", "Mattia." aynı renk). Yeni kişi addan hesaplanan tabanı alır; taban başka
+/// birinin rengiyse ya da tonu onlarınkine <see cref="MinHueGap"/> dereceden yakınsa, kullanılmayan renklerden tonu
+/// kullanılanlara en uzak olan verilir (konuşan iki kişi yan yana karışmasın; ikinci kişi çoğu zaman karşı tonu alır).
+/// Kurallar ve ortak test vektörü: scripts/speaker_colors_ref.py, docs/speaker-colors-vectors.json (Mac/iPhone ve Android
+/// aynı sırada aynı rengi verir).
 /// </summary>
 public sealed class SpeakerColorBook
 {
-    /// <summary>Palet renklerinin aileleri: aynı ailedeki iki renk ekranda birbirine benzer.</summary>
-    public static readonly IReadOnlyDictionary<string, char> Families = new Dictionary<string, char>
-    {
-        ["#FFD54F"] = 'A', ["#FFB74D"] = 'A', ["#FF8A65"] = 'A',
-        ["#4FC3F7"] = 'B', ["#4DD0E1"] = 'B', ["#90CAF9"] = 'B',
-        ["#81C784"] = 'C', ["#AED581"] = 'C',
-        ["#CE93D8"] = 'D', ["#F06292"] = 'D',
-    };
+    /// <summary>Yeni kişinin tabanı, kullanılan renklerin tonlarına en az bu kadar (derece) uzaksa olduğu gibi alınır.</summary>
+    public const int MinHueGap = 72;
 
     private readonly object gate = new();
     private readonly List<(string Key, string Color)> people = [];
@@ -61,16 +57,52 @@ public sealed class SpeakerColorBook
             foreach (var (known, color) in people)
                 if (SamePerson(known, key)) return color;
             var palette = SpeakerColors.Palette;
-            var base0 = (int)(SpeakerColors.Hash(key) % (uint)palette.Count);
-            var used = people.Select(person => person.Color).ToHashSet();
-            var families = used.Where(Families.ContainsKey).Select(color => Families[color]).ToHashSet();
-            var order = Enumerable.Range(0, palette.Count).Select(step => palette[(base0 + step) % palette.Count]).ToList();
-            var pick = order.FirstOrDefault(color => !used.Contains(color) && !families.Contains(Families[color]))
-                       ?? order.FirstOrDefault(color => !used.Contains(color))
-                       ?? palette[base0];
+            var used = people.Select(person => IndexOf(palette, person.Color)).Where(index => index >= 0).ToList();
+            var pick = palette[Pick((int)(SpeakerColors.Hash(key) % (uint)palette.Count), used)];
             people.Add((key, pick));
             return pick;
         }
+    }
+
+    /// <summary>
+    /// Yeni kişinin palet sırası: <paramref name="base0"/> kullanılmıyor ve kullanılan her tondan en az
+    /// <see cref="MinHueGap"/> uzaksa o; değilse kullanılmayanlardan kullanılanlara en uzak tonlu olan (eşitlikte tabandan
+    /// palet sırasıyla ilki); hepsi kullanılıyorsa taban. <paramref name="used"/>: kullanılan renklerin palet sıraları
+    /// (kullanıcının seçtiği palet dışı renk sayılmaz). Mac (SpeakerColorBook.pick) ve Android ile aynı.
+    /// </summary>
+    internal static int Pick(int base0, IReadOnlyList<int> used)
+    {
+        if (used.Count == 0) return base0;
+        if (!used.Contains(base0) && HueGap(base0, used) >= MinHueGap) return base0;
+        var count = SpeakerColors.Palette.Count;
+        int? best = null;
+        for (var step = 0; step < count; step++)
+        {
+            var index = (base0 + step) % count;
+            if (used.Contains(index)) continue;
+            if (best is null || HueGap(index, used) > HueGap(best.Value, used)) best = index;
+        }
+        return best ?? base0;
+    }
+
+    /// <summary><paramref name="index"/> renginin tonunun kullanılan renklerin tonlarına en yakın uzaklığı (derece, çember üzerinde).</summary>
+    internal static int HueGap(int index, IReadOnlyList<int> used)
+    {
+        var hues = SpeakerColors.Hues;
+        var gap = 360;
+        foreach (var other in used)
+        {
+            var difference = Math.Abs(hues[index] - hues[other]);
+            gap = Math.Min(gap, Math.Min(difference, 360 - difference));
+        }
+        return gap;
+    }
+
+    private static int IndexOf(IReadOnlyList<string> palette, string color)
+    {
+        for (var i = 0; i < palette.Count; i++)
+            if (palette[i] == color) return i;
+        return -1;
     }
 
     /// <summary>Çeviri yeniden başladı: kişiler unutulur.</summary>

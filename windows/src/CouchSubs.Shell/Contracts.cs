@@ -263,17 +263,36 @@ public static class AutoScreenTextMigration
 }
 
 /// <summary>
-/// "Bilinen oyunlarda hazır alanları kullan" ve "GTA 6 telefonunu otomatik çevir" bir kerelik göçü (Mac/iPhone
-/// migratingScreenTextExtras, Android aynı kural); <see cref="AutoScreenTextMigration"/>'dan sonra uygulanır. Hazır alanlar
-/// beta.63–68'de varsayılan açık geliyordu ve otomatik ekran yazısı kapalıyken de GTA 6'da menüyü ve bildirimleri
-/// çeviriyordu. İşaret yoksa: otomatik ekran yazısı kapalıysa ikisi de kapatılır; kullanıcı onu açmışsa dokunulmaz. Sonra
-/// işaret konur; kullanıcı ikisini bilerek yeniden açabilir.
+/// "Bilinen oyunlarda hazır alanları kullan" bir kerelik göçü (Mac/iPhone migratingScreenTextExtras, Android aynı kural);
+/// <see cref="AutoScreenTextMigration"/>'dan sonra uygulanır. Hazır alanlar beta.63–68'de varsayılan açık geliyordu ve
+/// otomatik ekran yazısı kapalıyken de GTA 6'da menüyü ve bildirimleri çeviriyordu. İşaret yoksa: otomatik ekran yazısı
+/// kapalıysa hazır alanlar kapatılır; kullanıcı onu açmışsa dokunulmaz. Sonra işaret konur. GTA 6 telefonuna artık
+/// dokunulmaz (<see cref="GamePhoneMigration"/>): bu göç telefonu da kapatıyordu, telefon hiç okunmuyordu (#1202).
 /// </summary>
 public static class ScreenTextExtrasMigration
 {
     public static UserSettings Apply(UserSettings settings) => settings.ScreenTextExtrasReset ? settings
         : settings.AutoScreenText ? settings with { ScreenTextExtrasReset = true }
-        : settings with { GameAreaPresets = false, AutoReadGamePhone = false, ScreenTextExtrasReset = true };
+        : settings with { GameAreaPresets = false, ScreenTextExtrasReset = true };
+}
+
+/// <summary>
+/// "GTA 6 telefonunu otomatik çevir" bir kerelik açılışı (Mac/iPhone migratingGamePhone, Android aynı kural);
+/// <see cref="ScreenTextExtrasMigration"/>'dan sonra uygulanır. Eski göç otomatik ekran yazısı kapalıyken telefonu da
+/// kapatıyordu; GTA 6 oyuncularının telefonu hiç çevrilmiyordu (GitHub #1202, #1197, #1193, #1170). İşaret yoksa telefon
+/// açılır, işaret konur; kullanıcı sonra bilerek kapatabilir. Telefon izleyicisi yalnız GTA 6 seçiliyken çalışır.
+/// </summary>
+public static class GamePhoneMigration
+{
+    public static UserSettings Apply(UserSettings settings) => settings.GamePhoneReenabled ? settings
+        : settings with { AutoReadGamePhone = true, GamePhoneReenabled = true };
+}
+
+/// <summary>"oturum başladı" günlük satırının ekran yazısı kısmı (Mac/iPhone SubtitleLog.areaSummary'nin sonu).</summary>
+public static class SessionSummary
+{
+    public static string ScreenText(UserSettings settings) =>
+        $"otomatik ekran yazısı: {(settings.AutoScreenText ? "açık" : "kapalı")}, telefon: {(settings.ReadsGamePhone ? "açık" : "kapalı")}";
 }
 
 public sealed record UserSettings
@@ -316,8 +335,11 @@ public sealed record UserSettings
     public int CpuTranslationThreads { get; init; } = CpuThreadOptions.Default;
     /// <summary>Değişmeyen altyazı bölgesinde tam OCR okumasını en fazla iki kare yeniden kullan.</summary>
     public bool FastSubtitleDetection { get; init; }
-    /// <summary>GTA 6'da ekrandaki telefon açılınca yazılarını otomatik çevirir (deneysel).</summary>
-    public bool AutoReadGamePhone { get; init; }
+    /// <summary>
+    /// GTA 6'da ekrandaki telefon açılınca yazılarını otomatik çevirir. Varsayılan açık (yalnız GTA 6 seçiliyken çalışır;
+    /// kapalı gelince telefon hiç çevrilmiyordu, #1202).
+    /// </summary>
+    public bool AutoReadGamePhone { get; init; } = true;
     /// <summary>
     /// "GTA 6 Telefon Mesajları": açıkken (Yanda Panel, varsayılan) telefonun mesajları telefonun yanındaki sohbet panelinde
     /// (karşı taraf solda, oyuncu sağda), kapalıyken (Balonların Üstünde) her mesajın çevirisi kendi balonunun üstünde
@@ -344,6 +366,8 @@ public sealed record UserSettings
     /// yoktur (false).
     /// </summary>
     public bool ScreenTextExtrasReset { get; init; }
+    /// <summary>GTA 6 telefonu bir kerelik açıldı (<see cref="GamePhoneMigration"/>). Eski dosyalarda yoktur (false).</summary>
+    public bool GamePhoneReenabled { get; init; }
     /// <summary>
     /// Otomatik ekran yazısında hangi türler çevrilir (bkz. <see cref="ScreenTextKind"/>); yalnız <see cref="AutoScreenText"/>
     /// açıkken geçerli. Eski ayar dosyalarında yoktur; varsayılanla gelir: telefon, görev, yardım/eylemler açık; menüler ve
@@ -757,6 +781,8 @@ public interface IKeeper
     void Start(TimeSpan interval);
     void Stop();
     void Reconnect();
+    /// <summary>LG: uygulama kapatıldı (kurulumdan sonra); bağlı görünse de bir kez açılır (TvKeeper.ReopenApp).</summary>
+    void ReopenApp() => Reconnect();
 }
 
 public enum GameConsoleKind { PlayStation, Xbox }
@@ -851,6 +877,8 @@ public interface IAppServices
     /// önce kaldırılır. Üç markada da (bu ve aşağıdaki iki yük) onay yoksa hiçbir şey silinmez, ForeignApp fırlatılır.
     /// </summary>
     Task InstallTvAppAsync(string host, string devKey, bool replaceForeign) => InstallTvAppAsync(host, devKey);
+    /// <summary>LG: TV'de açık CouchSubs'ı kapatır (eski sürümde çalışıyorsa; kurulum bunu kendisi de yapar).</summary>
+    Task CloseTvAppAsync(string host, string devKey) => Task.CompletedTask;
     /// <summary>LG geliştirici modunun süresini baştan başlatır; kalan saati döner (bilinmiyorsa null).</summary>
     Task<int?> RenewDevSessionAsync(string host, string devKey);
     /// <summary>Samsung ve Android TV için uygulamayla gelen paket (geliştirici derlemesinde olmayabilir).</summary>

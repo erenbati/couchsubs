@@ -120,7 +120,8 @@ internal fun LgInstallScreen(onBack: () -> Unit, onDone: () -> Unit, brandPicker
                         }
                         fun attempt(key: ByteArray): LgInstaller.Result {
                             val installer = LgInstaller(JschShell(at, key), progress, log)
-                            val result = installer.ensureInstalled(ipk, name, version, replaceForeign)
+                            // TV'de açık uygulamanın sürümü: paket güncel ama bu eskiyse uygulama kapatılıp açılır (beta.89).
+                            val result = installer.ensureInstalled(ipk, name, version, replaceForeign, TvAppUpdate.runningVersion)
                             // Masaüstündeki gibi: geliştirici modunun süresi günde bir uzatılır, kullanıcı TV'den uzatmaz.
                             TvAppUpdate.renewLgSessionIfDue(at, installer)
                             return result

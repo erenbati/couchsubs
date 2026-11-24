@@ -130,4 +130,12 @@ final class PromoPolicyTests: XCTestCase {
         XCTAssertNil(PromoPolicy.bundled(Data(#"{"popups":[{"id":"a","image":"a.jpg","link":"http://x.com"}]}"#.utf8)))
         XCTAssertNil(PromoPolicy.bundled(Data(#"{"popups":[]}"#.utf8)))
     }
+
+    /// Reklam şeridi çeviri sürerken (açılan sayfalarda da) ve deneme modunda görünmez; çeviri durunca geri gelir.
+    func testAdBandHiddenWhileTranslating() {
+        XCTAssertTrue(PromoPolicy.adBandVisible(appPage: true, translating: false, demo: false))
+        XCTAssertFalse(PromoPolicy.adBandVisible(appPage: true, translating: true, demo: false))
+        XCTAssertFalse(PromoPolicy.adBandVisible(appPage: true, translating: false, demo: true))
+        XCTAssertFalse(PromoPolicy.adBandVisible(appPage: false, translating: false, demo: false))
+    }
 }

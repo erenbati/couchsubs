@@ -214,6 +214,8 @@ class SubtitlePipeline(
         onLog?.invoke("sahne yazısı: \"$excerpt\" altyazı sayılmadı ($reason)")
     }
     private val mission = MissionLine()
+    /** Düşürülen ya da bekletilen satırın nedeni, sınırlı ve tekrarsız ([DropLog]). */
+    private val drops = DropLog(now)
 
     /**
      * Görev satırının bölgesi değişti (null: görev kalktı). Görev altyazıya girmez; bölgesi "auto-mission" ek alanı olarak
@@ -284,6 +286,8 @@ class SubtitlePipeline(
     @Volatile var skipsTurkish = true
     /** Hiçbir pakette bulunmayan kararlı satır (ortak havuz için). */
     @Volatile var onPackMissed: ((String) -> Unit)? = null
+    /** Altyazı alanında okunan blok sahne yazısı sayılıp atıldı (nedeni; [GamePhoneHint], Mac/iPhone ve Windows ile aynı). */
+    @Volatile var onSceneTextDropped: ((String) -> Unit)? = null
     /** Yeni çeviri gösterilince. */
     @Volatile var onPairShown: ((ShownPair) -> Unit)? = null
     /** Her çeviri denemesinden sonra (başarılıysa null). */
@@ -344,6 +348,9 @@ class SubtitlePipeline(
                 missionChanged = true
                 missionRegion = mission.region
             }
+            for (line in mission.dropped) {
+                drops.note("MissionLine", "${MissionLine.SETTLE_MS / 1000} sn dolmadan kalktı, görev sayılmadı, çevrilmedi", line, onLog)
+            }
             // Bu oturumda altyazının okunduğu yükseklikteki kısa satır tabela sayılmaz; atılan blok günlüğe (GitHub #822).
             val edge = mutableListOf<Reading>()
             val staleTexts = mutableListOf<String>()
@@ -357,6 +364,7 @@ class SubtitlePipeline(
                 darkInk = if (darkInkStyle.isGameStyle) null else darkInk) { block, reason ->
                 if (reason == InkTone.REASON) darkBlocks += block
                 logSceneText(block.text, reason)
+                onSceneTextDropped?.invoke(reason)
             }.also {
                 for (block in darkBlocks) {
                     if (darkInkStyle.observe(block, area)) onLog?.invoke(
@@ -648,7 +656,10 @@ class SubtitlePipeline(
      * kez yazılır. Mac/iPhone (quietDrop) ve Windows (QuietDrop) aynı kuralları uygular.
      */
     private fun quietDrop(source: String, box: TextBox?): Boolean {
-        if (settled.isSettled(source)) return true
+        if (settled.isSettled(source)) {
+            settled.noteSkip(source)?.let { drops.note("SettledText", "karara bağlanmış satırla $it, yeniden işlenmedi", source, onLog) }
+            return true
+        }
         val excerpt = if (source.length > 120) source.take(120) + "…" else source
         val target = skipsTurkish && TurkishText.looksTurkish(source)
         val note = when {

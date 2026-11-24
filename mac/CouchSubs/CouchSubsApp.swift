@@ -22,6 +22,8 @@ struct CouchSubsApp: App {
     @State private var overlay = SubtitleOverlayController()
     /// Yayın programlarının yakaladığı düz zeminli altyazı penceresi (Ayarlar > OBS'ten açılır).
     @State private var stream = StreamWindowController()
+    /// Oyun penceresinin üstünde GTA 6 telefonunun yerinde Türkçe çizimi ("Ekranı yerinde Türkçe çiz").
+    @State private var phoneTwin = PhoneTwinOverlayController()
     #if !APP_STORE
     /// Sparkle: her açılışta ve uygulama açıkken saatte bir GitHub'daki son sürüme bakar; testlerde başlamaz.
     private let updater = SPUStandardUpdaterController(
@@ -55,6 +57,7 @@ struct CouchSubsApp: App {
                 .task {
                     overlay.attach(model)
                     stream.attach(model)
+                    phoneTwin.attach(model)
                     CrashNotice.shared.checkOnce()
                     #if !APP_STORE
                     guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }

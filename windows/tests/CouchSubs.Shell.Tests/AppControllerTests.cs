@@ -313,6 +313,12 @@ internal sealed class FakeServices : IAppServices
         AppOnTv = BundledTvAppVersion;
         return Task.CompletedTask;
     }
+    public int Closes { get; private set; }
+    public Task CloseTvAppAsync(string host, string devKey)
+    {
+        Closes++;
+        return Task.CompletedTask;
+    }
     public int? RenewedHours { get; set; } = 999;
     public int Renewals { get; private set; }
     public Task<int?> RenewDevSessionAsync(string host, string devKey)
@@ -2228,7 +2234,7 @@ public class AppControllerRunTests
             AppController.StatusText(SessionState.Disconnected(DisconnectKind.ConsoleRemotePlayCrashed), true, text));
         Assert.Equal("PS5'teki Uzaktan Oynatma çöktü. PS5'i tamamen kapatıp (bekleme modu değil) açın, sonra yeniden bağlanın.",
             AppController.StatusText(SessionState.Disconnected(DisconnectKind.ConsoleRemotePlayCrashed), true, Localizer.ForLanguage("tr")));
-        Assert.Equal("PS5 not found at 192.168.1.70. Make sure it is on and on the same network. Reconnecting…",
+        Assert.Equal("PS5 not found at 192.168.1.70. Searching the network for it. Make sure it is on and on the same network; if its address changed, use Enter IP Address in Settings > Console. Reconnecting…",
             AppController.StatusText(SessionState.Disconnected(DisconnectKind.NotFound, "192.168.1.70"), true, text));
         Assert.Equal("Reconnecting… (Session Request RP Version Mismatch)",
             AppController.StatusText(SessionState.Disconnected(DisconnectKind.Other, "Session Request RP Version Mismatch"), true, text));
@@ -2676,6 +2682,43 @@ public class TvAppInstallTests
         Assert.Contains("192.168.1.34", text);
         Assert.NotEqual(TvAppMessages.ComputerAddressLine, Localizer.ForLanguage("tr")[TvAppMessages.ComputerAddressLine]);
         Assert.DoesNotContain("192.168.1.34", TvAppMessages.Problem(state, TvBrand.Lg, Localizer.ForLanguage("tr"), "x.log", "192.168.1.34"));
+    }
+
+    /// <summary>"IP hatası" (#1158): metin menüyü, iki ayarı ve bu cihazın adresini tek satırda söyler (Türkçesi de var).</summary>
+    [Fact]
+    public void SamsungUnreachableGivesHostPcStepsWithThisAddress()
+    {
+        var state = new TvAppState(TvAppKind.Failed, Error: DevModeError.Unreachable);
+        var tr = Localizer.ForLanguage("tr");
+        Assert.NotEqual(TvAppMessages.HostPcStepsLine, tr[TvAppMessages.HostPcStepsLine]);
+        Assert.Contains(tr.Format(TvAppMessages.HostPcStepsLine, "192.168.1.34"), TvAppMessages.Problem(state, TvBrand.Samsung, tr, "x.log", "192.168.1.34"));
+        Assert.Contains(tr.Format(TvAppMessages.HostPcStepsLine, "?"), TvAppMessages.Problem(state, TvBrand.Samsung, tr, "x.log"));
+        Assert.Contains("1 2 3 4 5", tr.Format(TvAppMessages.HostPcStepsLine, "192.168.1.34"));
+    }
+
+    /// <summary>
+    /// TV'nin listesi CouchSubs'ın silindiğini söyleyince (#1158) bu bilgisayarın kurduğu sürümün ve "bağlandı" kaydı
+    /// silinir: kart "güncel" göstermez, geliştirici modu kapalıysa kurulum adımları çıkar. Başka TV'nin bildirimi silmez.
+    /// </summary>
+    [Fact]
+    public async Task SamsungAppMissingOnTheTvForgetsTheInstalledVersion()
+    {
+        var services = new FakeServices();
+        services.Bundled[TvBrand.Samsung] = SamsungApp;
+        var store = new MemoryStore();
+        var controller = Make(services, store);
+        await controller.PairAsync(Samsung);
+        store.Save(StoreKeys.TvAppVersion, "0.7.0");
+        store.Save(StoreKeys.TvAppSeen, Samsung.Host);
+        await controller.RefreshTvAppAsync();
+        Assert.Equal(new TvAppState(TvAppKind.UpToDate, "0.7.0"), controller.TvApp);
+        controller.SamsungAppMissing("192.168.1.99");
+        Assert.Equal("0.7.0", store.Load<string>(StoreKeys.TvAppVersion));
+        controller.SamsungAppMissing(" " + Samsung.Host + " ");
+        Assert.Null(store.Load<string>(StoreKeys.TvAppVersion));
+        Assert.Null(store.Load<string>(StoreKeys.TvAppSeen));
+        await controller.RefreshTvAppAsync();
+        Assert.Equal(TvAppKind.DevModeOff, controller.TvApp.Kind);
     }
 
     [Fact]
@@ -3280,6 +3323,42 @@ public class TvAppInstallTests
         services.AppOnTv = app;
         services.InstallLog.Clear();
         return controller;
+    }
+
+    /// <summary>
+    /// beta.89 (LG): kurulumdan sonra açılan uygulama hâlâ eski sürümü bildiriyor. Bir kez daha kapatılıp açılır, yine eskiyse
+    /// ana ekran "TV'de CouchSubs'ı kapatıp yeniden açın" der; yeni sürüm bağlanınca kalkar (Mac ile aynı).
+    /// </summary>
+    [Fact]
+    public async Task OldRunningAppAfterInstallIsRestartedOnceThenReported()
+    {
+        var services = new FakeServices { DevMode = true, AppOnTv = "0.5.0" };
+        var controller = await UpdateScenario(services, key: true);
+        await controller.UpdateTvAppAsync();
+        Assert.Equal(1, services.Installs);
+        controller.TvAppReported("0.5.0");
+        Assert.Equal(1, services.Closes);
+        Assert.False(controller.TvAppStaleRunning);
+        controller.TvAppReported("0.5.0");
+        Assert.True(controller.TvAppStaleRunning);
+        Assert.Equal(new TvAppOutdated("0.5.0", "0.6.1"), controller.TvAppOutdated);
+        Assert.Equal(1, services.Closes);
+        Assert.Equal(1, services.Installs);
+        controller.TvAppReported("0.6.1");
+        Assert.False(controller.TvAppStaleRunning);
+        Assert.Null(controller.TvAppOutdated);
+    }
+
+    [Fact]
+    public async Task FreshInstallRunningTheNewVersionIsNotRestarted()
+    {
+        var services = new FakeServices { DevMode = true, AppOnTv = "0.5.0" };
+        var controller = await UpdateScenario(services, key: true);
+        await controller.UpdateTvAppAsync();
+        controller.TvAppReported("0.6.1");
+        Assert.Equal(0, services.Closes);
+        Assert.False(controller.TvAppStaleRunning);
+        Assert.Null(controller.TvAppOutdated);
     }
 
     [Fact]

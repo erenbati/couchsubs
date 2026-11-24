@@ -1,0 +1,1 @@
+0.9.89: With "Above", the translation no longer overlaps the English subtitle; with "Cover", the text size stays the same from line to line and long translations wrap instead of shrinking.

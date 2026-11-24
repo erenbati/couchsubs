@@ -27,6 +27,34 @@ class SettledTextTest {
         return TextBox(values.getDouble(0), values.getDouble(1), values.getDouble(2), values.getDouble(3))
     }
 
+    /** Atılan satır ekranda durdukça günlüğe nedeniyle bir kez düşer (Mac ve Windows aynı). */
+    @Test fun skippedLineIsNotedOnce() {
+        val settled = SettledText()
+        settled.settle("Yakin zamanda oynananlar", null, target = true, shown = false, time = 0, loose = true)
+        assertEquals("birebir aynı", settled.noteSkip("Yakin zamanda oynananlar"))
+        assertEquals(null, settled.noteSkip("Yakin zamanda oynananlar"))
+        assertEquals("gevşek eşleşme", settled.noteSkip("Yakin zamanda oynananiar"))
+        assertEquals(null, settled.noteSkip("Yakin zamanda oynananiar"))
+        assertEquals(null, settled.noteSkip("Completely different line"))
+        settled.observe(emptyList(), 2000)
+        assertEquals(null, settled.noteSkip("Yakin zamanda oynananlar"))
+        assertEquals("\"Yakin zamanda oynananlar\"", logExcerpt("Yakin zamanda\noynananlar".replace("\n", " ")))
+        assertEquals(42, logExcerpt("x".repeat(60)).length)
+    }
+
+    @Test fun missionLineReportsDroppedLine() {
+        val mission = MissionLine()
+        val line = TextLine("Find the hidden key", TextBox(0.3, 0.8, 0.7, 0.85))
+        val area = TextBox(0.0, 0.0, 1.0, 1.0)
+        mission.observe(listOf(line), area, 0)
+        mission.observe(listOf(line), area, 1000)
+        assertEquals(emptyList<String>(), mission.dropped)
+        mission.observe(emptyList(), area, 3000)
+        assertEquals(listOf("Find the hidden key"), mission.dropped)
+        mission.observe(emptyList(), area, 3100)
+        assertEquals(emptyList<String>(), mission.dropped)
+    }
+
     @Test fun turkishMenuLines() {
         for (vector in objects(root.getJSONArray("turkish"))) {
             val text = vector.getString("text")

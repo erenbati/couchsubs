@@ -20,6 +20,12 @@ struct AdItem: Identifiable, Equatable {
 enum AdCatalog {
     static let home = URL(string: "https://enmera.com.tr")!
 
+    /// Şerit kuralı (METINLER.md › Reklam kuralları; Windows AdBandPolicy, iPhone/Android PromoPolicy ile aynı): yalnız uygulama
+    /// sayfalarında ve reklam varken; çeviri sürerken ve deneme modunda gizli, çeviri durunca geri gelir.
+    static func bandVisible(appPage: Bool, hasAds: Bool, translating: Bool, demo: Bool) -> Bool {
+        appPage && hasAds && !translating && !demo
+    }
+
     private struct File: Decodable {
         struct Ad: Decodable {
             let id: String

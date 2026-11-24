@@ -279,6 +279,18 @@
     return hdmi.flowing || flow.known;
   }
 
+  // 0.9.94 (#1055; LG 65UR91006LA webOS 33.31.75, OLED65C46LA): "hdmi playing rs4 1920x1080 t= fr 0 · rebuilt 1 (resume)
+  // · ev stalled · stall 2 noise". Bu TV'ler kare sayacını veriyor ama hep 0 (fr 0) ve currentTime'ı ilerletmiyor (t=):
+  // sayfa akışı hiç ölçemiyor. Öne gelişin sıkı denetimi "sayaç ilerlemedi" diye sağlam görüntüyü her PS tuşunda yeniden
+  // kuruyor, 'stalled' da çeviri başında kurduruyordu (ekran art arda kararıyordu). Artık böyle bir TV'de görüntü
+  // "oynuyor" (rs>=2, duraklamamış, hata yok) iken ne öne geliş ne 'stalled' kurdurur ("stall <n> blind"); kurma yalnız
+  // <video> hatası/bitmesi/boşalması (gözcü), giriş değişmesi ya da kullanıcının girişi yeniden seçmesiyle olur. Kare
+  // sayacı hiç olmayan (#643) ya da akışı ölçülebilen (#1153) TV'lerde davranış aynı.
+  function flowBlind(video) {
+    return !!video && !flowMeasurable() && frameCount(video) === 0 && !video.error && !video.paused && !video.ended &&
+      (video.readyState >= 2 || video.videoWidth > 0);
+  }
+
   // Görüntünün ilk karesinden bu yana STALL_FRESH_MS geçmedi.
   function freshPicture(now) {
     return !!hdmi.firstFrameAt && now - hdmi.firstFrameAt < STALL_FRESH_MS;
@@ -499,6 +511,17 @@
     readVolume(function (muted) { if (sound.mutedBefore === null) sound.mutedBefore = muted; });
   }
 
+  // 0.9.98 (X, üç bildirim: LG webOS; Hi-Level Android TV + AV yükseltici; Android TV): "TV uygulaması açıkken görüntü
+  // var, ses yok; PS5'in kendi girişine geçince ses geliyor". Bu sayfa <video>'yu kısmıyor (audioText "snd on v100"),
+  // ses adımları varsayılan kapalı (#643). Kök neden doğrulanmadı; tahmin, TV'nin uygulama içindeki HDMI yolunun PS5'in
+  // sıkıştırılmış sesini (Dolby/DTS) ARC/eARC'a geçirmemesi. Ses adımları kapalıyken TV'nin ses çıkışı, dijital ses çıkışı
+  // ve ses düzeyi hiç okunmuyordu, tanı satırında "out/dig/tv" boş kalıyordu. Artık açılışta (HDMI <video>'su yokken)
+  // bir kez okunur: #643'ün şüphelendiği an (görüntü oynarken okuma) değil. <video>'ya ve TV sesine dokunulmaz.
+  function readSoundAtLaunch() {
+    if (soundEnabled()) return;
+    try { readSoundSettings(); } catch (e) {}
+  }
+
   function buildVideo() {
     // Görüntü gelene kadar 0.9.46'daki kurulumun aynısı (ses adımları: soundSoon).
     var video = document.createElement('video');
@@ -573,6 +596,10 @@
     }
     // Denetim zaten bekliyorsa ya da kurma sıradaysa art arda gelen olay onu ertelemez.
     if (hdmi.stallTimer !== null || hdmi.pending !== null || hdmi.building !== null) return;
+    if (flowBlind(video)) {
+      hdmi.stallNote = 'blind';
+      return;
+    }
     var now = nowMs();
     var fresh = freshPicture(now);
     // Bu TV her yeni <video>'da 'stalled' gönderiyor ve görüntü sağlam kalıyordu (0.9.82, öğrenildi): taze olaya dokunulmaz.
@@ -774,7 +801,7 @@
         hdmi.soonTimer = null;
         hdmi.soonStrict = false;
         if (pageHidden() || hdmi.video !== video || hdmi.pending !== null || hdmi.building !== null) return;
-        if (progressedSince(video, before)) return;
+        if (progressedSince(video, before) || flowBlind(video)) return;
         schedule('resume', true);
       }, 1500);
     }, delay);
@@ -834,8 +861,69 @@
     return text;
   }
 
+  // --- Eski sürümde kalan sayfa ---
+  // beta.89 (LG, Mac): TV uygulaması 0.9.81'den 0.9.84'e güncellendi; TV'deki appinfo.json 0.9.84 diyordu, açık uygulama
+  // ise 0.9.81'i gösteriyor ve 0.9.81'in kodunu çalıştırıyordu (LG kararma düzeltmesi devreye girmiyordu). Kurulumdan
+  // sonra çalışan uygulama kapatılmıyordu; bilgisayarın ve telefonun açma komutu açık uygulamayı yalnız öne getirip
+  // webOSRelaunch gönderiyor, sayfa diskten yeniden okunmuyordu. Açılışta ve her webOSRelaunch'ta kurulu paketin sürümü
+  // (appinfo.json, diskten) okunur; bu sayfanın sürümünden yeniyse sayfa yeniden yüklenir. Aynı sürüm çifti için yalnız
+  // bir kez: yeniden yüklenen sayfa yine eskiyse döngüye girilmez (bilgisayar/telefon "kapatıp açın" der).
+  var STALE_RELOAD_KEY = 'couchsubs.staleReload';
+
+  function versionIsNewer(a, b) {
+    var x = String(a).split('.');
+    var y = String(b).split('.');
+    for (var i = 0; i < Math.max(x.length, y.length); i++) {
+      var p = parseInt(x[i], 10) || 0;
+      var q = parseInt(y[i], 10) || 0;
+      if (p !== q) return p > q;
+    }
+    return false;
+  }
+
+  // Kurulu paketin sürümü (appinfo.json); okunamazsa null.
+  function readInstalledVersion(callback) {
+    var done = false;
+    function finish(version) {
+      if (done) return;
+      done = true;
+      callback(version);
+    }
+    var xhr;
+    try {
+      xhr = new XMLHttpRequest();
+      xhr.open('GET', 'appinfo.json?t=' + nowMs(), true);
+    } catch (e) {
+      finish(null);
+      return;
+    }
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+      var version = null;
+      try { version = JSON.parse(xhr.responseText).version; } catch (e) {}
+      finish(typeof version === 'string' && version ? version : null);
+    };
+    try { xhr.send(); } catch (e) { finish(null); }
+  }
+
   window.COUCHSUBS_PLATFORM = {
     backKey: 461,
+
+    // Kurulu paket bu sayfadan yeniyse sayfa bir kez yeniden yüklenir (yukarıdaki açıklama).
+    reloadIfStale: function (pageVersion) {
+      readInstalledVersion(function (installed) {
+        if (!installed || !versionIsNewer(installed, pageVersion)) return;
+        var pair = installed + '>' + pageVersion;
+        try {
+          if (window.localStorage.getItem(STALE_RELOAD_KEY) === pair) return;
+          window.localStorage.setItem(STALE_RELOAD_KEY, pair);
+        } catch (e) {
+          // Kayıt tutulamıyorsa yeniden yüklenmez: döngüye girebilirdi.
+          return;
+        }
+        window.location.reload(true);
+      });
+    },
 
     // HDMI görüntüsü gelmezse app.js nedenini ve giriş seçimini gösterir (Android TV bunu kendi ekranında yapar).
     noPictureHelp: true,
@@ -950,6 +1038,8 @@
       }
 
       try { register(); } catch (e) {}
+      // Ses durumu açılışta, HDMI <video>'su kurulmadan önce bir kez okunur (yalnız tanı; bkz. readSoundAtLaunch).
+      readSoundAtLaunch();
     },
 
     launchParams: function () {

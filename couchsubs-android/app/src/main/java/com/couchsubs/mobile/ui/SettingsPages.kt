@@ -65,6 +65,7 @@ import com.couchsubs.mobile.core.SubtitlePlacement
 import com.couchsubs.mobile.core.SubtitleTextColor
 import com.couchsubs.mobile.core.TranslationPace
 import com.couchsubs.mobile.core.TvDisplayMode
+import com.couchsubs.mobile.remoteplay.ConsoleIpEntry
 import com.couchsubs.mobile.remoteplay.LoginPasscode
 import com.couchsubs.mobile.service.LiveState
 import com.couchsubs.mobile.service.TranslationService
@@ -226,7 +227,7 @@ private fun SubtitlePreview(lines: Int, version: Int = 0) {
             }
             Text(buildAnnotatedString {
                 if (showNames) withStyle(SpanStyle(color = name)) { append("$who: ") }
-                withStyle(SpanStyle(color = text)) { append(line) }
+                withStyle(SpanStyle(color = if (speakerColors && style.nameColorMode == NameColorMode.LINE) name else text)) { append(line) }
             }, style = Tokens.Type.body.copy(fontSize = (display * 0.5f).sp, lineHeight = (display * 0.62f).sp,
                 fontWeight = if (style.bold) FontWeight.Bold else FontWeight.SemiBold,
                 shadow = if (style.background == 0) Shadow(Color.Black.copy(alpha = 0.85f), blurRadius = 3f) else null),
@@ -345,8 +346,9 @@ private fun AppearancePage() {
         // Karakter Adı: Yazıyla Aynı (konuşan rengi kapalı), Tek Renk ya da Karaktere Göre (Mac ve iPhone ile aynı).
         val mode = if (!settings.speakerColors) NameColorMode.TEXT else if (style.nameColorMode == NameColorMode.TEXT) NameColorMode.SPEAKER else style.nameColorMode
         SettingUnit(stringResource(R.string.set_character_name), if (mode == NameColorMode.TEXT) stringResource(R.string.set_name_same_note) else null) {
-            val modes = listOf(NameColorMode.TEXT, NameColorMode.SINGLE, NameColorMode.SPEAKER)
-            Segmented(listOf(stringResource(R.string.set_name_same), stringResource(R.string.set_name_single), stringResource(R.string.set_name_speaker)),
+            val modes = listOf(NameColorMode.TEXT, NameColorMode.SINGLE, NameColorMode.SPEAKER, NameColorMode.LINE)
+            Segmented(listOf(stringResource(R.string.set_name_same), stringResource(R.string.set_name_single), stringResource(R.string.set_name_speaker),
+                stringResource(R.string.set_name_line)),
                 modes.indexOf(mode)) { index ->
                 val chosen = modes[index]
                 look.change {
@@ -362,7 +364,7 @@ private fun AppearancePage() {
                     look.change { nameHex = swatch.hex }
                     test()
                 }
-                NameColorMode.SPEAKER -> CharacterColors(style.characterColors) { key, hex ->
+                NameColorMode.SPEAKER, NameColorMode.LINE -> CharacterColors(style.characterColors) { key, hex ->
                     look.change { characterColors = characterColors + (key to hex) }
                     test()
                 }
@@ -436,10 +438,10 @@ private fun AdvancedPage() {
         WaitSlider(stringResource(R.string.set_partial), stringResource(R.string.set_partial_note), partialWait) { partialWait = it; settings.partialWaitMs = it }
         // Varsayılana Dön: deneysel ayarların hepsi (Mac ile aynı küme).
         SecondaryButton(stringResource(R.string.set_restore)) {
-            autoScreenText = false; gamePhone = false; setTextApart = true; fastReading = false
+            autoScreenText = false; gamePhone = true; setTextApart = true; fastReading = false
             misreadWait = SubtitlePipeline.PACK_WAIT_MS; partialWait = SubtitlePipeline.CLEAN_WAIT_MS
             kindPhone = true; kindMission = true; kindHelp = true; kindMenus = false; kindOther = false
-            settings.autoScreenText = false; settings.autoReadGamePhone = false; settings.setTextApart = true; settings.fastSubtitleDetection = false
+            settings.autoScreenText = false; settings.autoReadGamePhone = true; settings.setTextApart = true; settings.fastSubtitleDetection = false
             settings.misreadWaitMs = misreadWait; settings.partialWaitMs = partialWait
             settings.screenTextPhone = true; settings.screenTextMission = true; settings.screenTextHelp = true
             settings.screenTextMenus = false; settings.screenTextOther = false
@@ -844,6 +846,38 @@ private fun ConsolePage(onPairing: () -> Unit, onPlatform: () -> Unit, onDemo: (
     ))
     XboxSignOutRow()
     PsnSignOutRow()
+    // "IP Adresi Gir": PS5'in ağdaki adresi değişince (modem yeni adres verdi) kayıtlı PS5 yazılan adrese taşınır; çeviri
+    // sürüyorsa yeni adresle yeniden bağlanılır. Eskiden elle adres yalnız ilk kurulumda giriliyordu (Mac, iPhone, Windows ile aynı).
+    val savedConsole = settings.console
+    if (!settings.xbox && savedConsole != null) {
+        var host by remember { mutableStateOf(savedConsole.host) }
+        var entering by remember { mutableStateOf(false) }
+        var typed by remember { mutableStateOf("") }
+        var invalid by remember { mutableStateOf(false) }
+        Tile(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TileLabel(stringResource(R.string.settings_ps5))
+                Spacer(Modifier.weight(1f))
+                Text(host, style = Tokens.Type.caption, color = Tokens.Color.secondary)
+            }
+            SecondaryButton(stringResource(R.string.tv_enter_ip)) { entering = !entering; invalid = false }
+            if (entering) {
+                Field(typed, { typed = it; invalid = false }, stringResource(R.string.tv_enter_ip),
+                    keyboard = KeyboardOptions(keyboardType = KeyboardType.Uri), placeholder = stringResource(R.string.target_ip_hint))
+                if (invalid) Text(stringResource(R.string.address_invalid), style = Tokens.Type.caption, color = Tokens.Color.secondary)
+                PrimaryButton(stringResource(R.string.save), enabled = typed.isNotBlank()) {
+                    val current = settings.console
+                    val moved = current?.let { ConsoleIpEntry.apply(it, typed) }
+                    if (moved == null) { invalid = true; return@PrimaryButton }
+                    settings.console = moved
+                    host = moved.host
+                    typed = ""
+                    entering = false
+                    TranslationService.reconnect()
+                }
+            }
+        }
+    }
     // İkinci hesabın PS5 giriş şifresi: yalnız 4 hane gizli depoya (Keystore) yazılır; silinince kaldırılır.
     if (!settings.xbox) {
         var passcode by remember { mutableStateOf(settings.loginPasscode ?: "") }

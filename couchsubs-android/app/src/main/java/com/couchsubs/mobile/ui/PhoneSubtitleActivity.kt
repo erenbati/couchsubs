@@ -71,8 +71,8 @@ import com.couchsubs.mobile.service.LiveState
 class PhoneSubtitleActivity : ComponentActivity() {
     companion object {
         /** Bölünmüş [display] metni; [enabled] ise yalnız konuşan adları kendi renginde ([source]: bölünmemiş metin). */
-        fun speakerText(display: String, source: String, enabled: Boolean): AnnotatedString {
-            val segments = if (enabled) SpeakerColors.segments(display, source) else emptyList()
+        fun speakerText(display: String, source: String, enabled: Boolean, wholeLine: Boolean = false): AnnotatedString {
+            val segments = if (enabled) SpeakerColors.segments(display, source, wholeLine = wholeLine) else emptyList()
             if (segments.none { it.color != null }) return AnnotatedString(display)
             return buildAnnotatedString {
                 append(display)
@@ -107,6 +107,7 @@ class PhoneSubtitleActivity : ComponentActivity() {
         val stackPrevious = settings.stackPrevious
         // "Konuşan adını renklendir": yalnız ad o konuşanın renginde, cümle "Yazı rengi"nde (TV ile aynı; bkz. SpeakerColors).
         val speakerColors = settings.speakerColors
+        val wholeLine = settings.nameColorMode == com.couchsubs.mobile.core.NameColorMode.LINE
         val setApart = settings.setTextApart
         setContent {
             // Siyah zeminli ekran: Görünüm Açık seçilse de koyu renkler.
@@ -169,13 +170,13 @@ class PhoneSubtitleActivity : ComponentActivity() {
                         // Uzun çeviri en çok 3 satıra dengeli bölünür; sığmazsa yazı biraz küçülür (bkz. SubtitleWrap).
                         if (stackPrevious && previous.isNotEmpty() && status.current.isNotEmpty() && previous != status.current) {
                             val wrapped = SubtitleWrap.fit(previous)
-                            Text(speakerText(wrapped.text, previous, speakerColors),
+                            Text(speakerText(wrapped.text, previous, speakerColors, wholeLine),
                                 style = style.copy(fontSize = style.fontSize * scale * 0.8f * wrapped.scale, lineHeight = style.lineHeight * scale * 0.8f * wrapped.scale),
                                 color = color.copy(alpha = 0.4f), textAlign = TextAlign.Center)
                         }
                         val currentText = status.current.ifEmpty { if (status.running) "" else "CouchSubs" }
                         val current = SubtitleWrap.fit(currentText)
-                        Text(speakerText(current.text, currentText, speakerColors),
+                        Text(speakerText(current.text, currentText, speakerColors, wholeLine),
                             style = style.copy(fontSize = style.fontSize * scale * current.scale, lineHeight = style.lineHeight * scale * current.scale),
                             color = color, textAlign = TextAlign.Center)
                     }

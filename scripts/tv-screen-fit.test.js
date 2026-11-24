@@ -69,7 +69,12 @@ function render(width, height, zoom, shot) {
               right: (b.right - parseFloat(cs.paddingRight)) / z / W, bottom: (b.bottom - parseFloat(cs.paddingBottom)) / z / H },
             // İki piksel pay: kenar payının kesirli pikselleri iki yanda yuvarlanır.
             scroll: el.scrollWidth > el.clientWidth + 2 || el.scrollHeight > el.clientHeight + 2,
-            dims: [el.scrollWidth, el.clientWidth, el.scrollHeight, el.clientHeight] };
+            dims: [el.scrollWidth, el.clientWidth, el.scrollHeight, el.clientHeight],
+            // Yalnız yatay ölçek (scaleX): dönüşüm matrisinin a/d oranı; dönüşüm yoksa 1.
+            squeeze: Array.from(el.querySelectorAll('*')).concat([el]).reduce(function (least, node) {
+              var m = (getComputedStyle(node).transform || '').match(/^matrix\\(([^,]+),[^,]+,[^,]+,([^,]+)/);
+              return m ? Math.min(least, parseFloat(m[1]) / parseFloat(m[2])) : least;
+            }, 1) };
         });
         result.push({ id: frame.id, drawn: drawn, H: H });
       });
@@ -116,7 +121,9 @@ function measure(rendered) {
       const edges = [Math.abs(t.top - box.top), Math.abs(t.bottom - box.bottom)];
       if (align === 'left') edges.push(Math.abs(t.left - box.left) * aspect);
       else if (align === 'right') edges.push(Math.abs(t.right - box.right) * aspect);
-      else edges.push(Math.abs((t.left + t.right) / 2 - (box.left + box.right) / 2) * aspect);
+      // Ortalı yazı daha az sıkışıp alanın izin verdiği yana genişleyebilir: özgün kutu çizilen alanın içinde kalmalı.
+      else edges.push(Math.max(0, t.left - box.left, box.right - t.right) * aspect);
+      out.minSqueeze = Math.min(out.minSqueeze === undefined ? 1 : out.minSqueeze, el.squeeze);
       out.shift = Math.max(out.shift, Math.max(...edges) / line);
       if (process.env.SCREEN_FIT_ITEMS) {
         const f3 = v => v.toFixed(3);
@@ -153,6 +160,8 @@ test('ekranı çevir: çeviri özgün yazının yerinde, boyunda; simge örtmez,
       const at = `${width}x${height} ${m.id}`;
       if (m.shift > 0.10) failures.push(`${at}: konum sapması ${m.shift.toFixed(2)} satır`);
       if (m.minRatio < 0.95 || m.maxRatio > 1.05) failures.push(`${at}: yazı boyu oranı ${m.minRatio.toFixed(2)}–${m.maxRatio.toFixed(2)}`);
+      // Yatay sıkıştırma yalnız hafif (en çok %15); önceden %30'a iniyor, harfler ezik görünüyordu (X, beta.90).
+      if (m.minSqueeze < 0.85 - 1e-3) failures.push(`${at}: yatay sıkıştırma ${m.minSqueeze.toFixed(2)}`);
       if (m.covered.length) failures.push(`${at}: simge/fotoğraf örtülüyor: ${m.covered.join(', ')}`);
       if (m.overlaps) failures.push(`${at}: ${m.overlaps} kutu üst üste`);
       if (m.spill.length) failures.push(`${at}: kutusundan taşan yazı: ${m.spill.join(', ')}`);

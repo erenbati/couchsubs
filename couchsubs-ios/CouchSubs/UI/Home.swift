@@ -175,7 +175,10 @@ struct HomeScreen: View {
                 .buttonStyle(.plain)
                 .bentoWide()
             }
-            if let update = model.tvAppUpdate {
+            if let running = model.tvAppStaleRunning {
+                // LG: paket güncel ama TV eski sürümü çalıştırmayı sürdürüyor (kapatıp açtıktan sonra da).
+                MobileNote(text: String(format: String(localized: "CouchSubs on the TV is still running an old version (%@). On the TV, close CouchSubs and open it again."), running))
+            } else if let update = model.tvAppUpdate {
                 TVAppUpdateTile(update: update) { path.append(.tvUpdate) }
             } else if model.tvAppMissing {
                 Button { path.append(.tvInstall) } label: {
@@ -334,6 +337,14 @@ struct RunningScreen: View {
                     MobileNote(text: String(localized: "Automatic on-screen text translation is experimental; you can turn it on in Settings."),
                                tone: Mobile.Palette.secondary)
                 }
+                // Telefon çevirisi kapalıyken GTA 6'nın telefon listesi altyazı yolunda atıldı (#1202): oturumda bir kez.
+                if model.showsGamePhoneHint {
+                    MobileNote(text: String(localized: "The phone translation is off. Turn it on?"), tone: Mobile.Palette.secondary)
+                    HStack(spacing: Mobile.Space.gap) {
+                        Button("Turn On") { model.enableGamePhone() }.buttonStyle(.mobileSecondary)
+                        Button("No") { model.dismissGamePhoneHint() }.buttonStyle(.mobileSecondary)
+                    }
+                }
                 if model.showsSubtitleOffTip {
                     MobileNote(text: String(localized: "Turn on the game's own subtitles: CouchSubs reads the English subtitles on screen, not the audio."),
                                tone: Mobile.Palette.secondary)
@@ -413,6 +424,16 @@ struct RunningScreen: View {
                     Text(verbatim: model.settings.output.showsOnTV ? model.tvStatusText
                          : model.settings.output == .obs ? String(localized: "OBS only (stream)") : String(localized: "This phone"))
                         .font(Mobile.TypeScale.title).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            // TV uygulaması sürümünü çeviri başında, altyazı akışına bağlanınca bildirir: eskiyse güncelleme önerisi çeviri
+            // ekranında da görünür. Önceden yalnız ana ekrandaydı, çeviri sürerken hiç görülmüyordu; TV'de 0.9.71 kalmıştı
+            // (GitHub #1199). Mac, Windows ve Android ile aynı.
+            if model.settings.output.showsOnTV, !model.demoMode {
+                if let running = model.tvAppStaleRunning {
+                    MobileNote(text: String(format: String(localized: "CouchSubs on the TV is still running an old version (%@). On the TV, close CouchSubs and open it again."), running))
+                } else if let update = model.tvAppUpdate {
+                    TVAppUpdateTile(update: update) { path.append(.tvUpdate) }
                 }
             }
             // TV uygulaması bağlı değil: CouchSubs TV'de nerede bulunur (markaya göre), otomatik açma neden olmadı ve
@@ -553,6 +574,15 @@ struct SubtitleScreen: View {
                         .onAppear { screenHeight = proxy.size.height }
                         .onChange(of: proxy.size.height) { screenHeight = $0 }
                 })
+            // "Arka planda sürdür" açıkken PiP katmanı altyazının arkasında, tam ekran ve neredeyse saydam: kullanıcı
+            // görmez (siyah zeminde %1), iOS ise görünür sayar; bu ekrandan çıkınca görüntü küçük pencerede sürer.
+            if model.backgroundPiP && BackgroundPiP.isSupported {
+                PiPPreview()
+                    .ignoresSafeArea()
+                    .opacity(0.01)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
             VStack(spacing: Mobile.Space.inline) {
                 ForEach(Array(model.phoneLines.enumerated()), id: \.element.id) { index, line in
                     // Uzun çeviri en çok 3 satıra dengeli bölünür; sığmazsa yazı biraz küçülür (bkz. SubtitleWrap).
@@ -561,7 +591,8 @@ struct SubtitleScreen: View {
                     // açıksa güncel satırdaki "Mattia: …" o konuşanın renginde (bkz. SpeakerColors).
                     let previous = index < model.phoneLines.count - 1
                     Self.subtitleText(wrapped.text, colored: model.settings.speakerColors && !previous && !line.paragraphs,
-                                      base: previous ? Mobile.Palette.secondary : textColor, book: model.speakerBook)
+                                      base: previous ? Mobile.Palette.secondary : textColor, book: model.speakerBook,
+                                      wholeLine: model.settings.style.nameColorMode == .line)
                         .font(Mobile.TypeScale.subtitle(landscape: true, scale: scale * CGFloat(wrapped.scale)))
                         .fontWeight(model.settings.style.bold ? .bold : nil)
                         .opacity(line.fading ? 0.4 : 1)
@@ -640,7 +671,7 @@ struct SubtitleScreen: View {
             .allowsHitTesting(false)
             VStack(spacing: Mobile.Space.micro) {
                 Text("Drag the subtitle up or down; pinch to change the text size.")
-                Text("The screen stays on · brightness is lowered automatically")
+                Text("Keep the phone screen on while you play; translation stops when the screen turns off. Keep it plugged in.")
             }
             .font(Mobile.TypeScale.caption)
             .foregroundStyle(Mobile.Palette.tertiary)
@@ -660,13 +691,6 @@ struct SubtitleScreen: View {
                                 .buttonStyle(MobileButtonStyle(kind: .secondary, compact: true))
                         }
                     }
-                }
-                // "Arka planda sürdür" açıkken küçük önizleme: bu ekrandan çıkınca da görüntü küçük pencerede sürer.
-                if model.backgroundPiP && BackgroundPiP.isSupported {
-                    PiPPreview()
-                        .frame(width: 112, height: 63)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .accessibilityHidden(true)
                 }
             }
             .padding(Mobile.Space.screen)
@@ -767,9 +791,11 @@ struct SubtitleScreen: View {
     }
 
     /// Konuşana göre renkli altyazı: adlı satır (bölünmüş devamıyla) konuşanın renginde, diğerleri `base` renginde.
-    private static func subtitleText(_ text: String, colored: Bool, base: Color, book: SpeakerColorBook? = nil) -> Text {
+    /// `wholeLine` (Karakter Adı › Tüm Satır): ad ve cümle o konuşanın renginde.
+    private static func subtitleText(_ text: String, colored: Bool, base: Color, book: SpeakerColorBook? = nil,
+                                     wholeLine: Bool = false) -> Text {
         guard colored else { return Text(verbatim: text).foregroundColor(base) }
-        return SpeakerColors.segments(in: text, book: book).reduce(Text(verbatim: "")) { result, segment in
+        return SpeakerColors.segments(in: text, book: book, wholeLine: wholeLine).reduce(Text(verbatim: "")) { result, segment in
             let rgb = segment.color.flatMap(SpeakerColors.rgb)
             let color = rgb.map { Color(.sRGB, red: $0.red, green: $0.green, blue: $0.blue) } ?? base
             return result + Text(verbatim: segment.text).foregroundColor(color)

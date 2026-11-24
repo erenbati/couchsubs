@@ -21,7 +21,10 @@ class SettledText {
      * "I can do" → "I can't do", yeniden çevrilir).
      */
     private class Entry(val text: String, val top: Double?, val bottom: Double?, val target: Boolean, val shown: Boolean,
-                        val loose: Boolean, var seenAt: Long)
+                        val loose: Boolean, var seenAt: Long) {
+        /** Bu kayıt yüzünden atıldığı günlüğe yazılmış okumalar ([noteSkip]). */
+        val noted = mutableListOf<String>()
+    }
 
     private val entries = mutableListOf<Entry>()
 
@@ -53,6 +56,21 @@ class SettledText {
     }
 
     /**
+     * Karara bağlanmış satır yüzünden sessizce atılan okumanın günlükteki nedeni ("birebir aynı" ya da "gevşek eşleşme").
+     * Aynı okuma, kaydı ekranda durdukça yalnız ilk soruluşunda döner, sonra null (kayıt başına en çok [NOTES_PER_ENTRY]).
+     * Mac/iPhone (noteSkip) ve Windows (NoteSkip) aynıdır.
+     */
+    fun noteSkip(source: String): String? {
+        val text = TextMatch.normalize(source)
+        if (text.length < MIN_LENGTH) return null
+        val entry = entries.lastOrNull { it.text == text }
+            ?: entries.lastOrNull { it.loose && TextMatch.isSimilar(text, it.text, SIMILARITY) } ?: return null
+        if (entry.noted.size >= NOTES_PER_ENTRY || text in entry.noted) return null
+        entry.noted.add(text)
+        return if (entry.text == text) "birebir aynı" else "gevşek eşleşme"
+    }
+
+    /**
      * Satır, aynı yerde duran ve kaynağı zaten hedef dilde olan bir bloğun bozuk okunmuş parçası mı ("One [Ikan Ipufl"
      * ⊂ "e [Ikan Ipuflari Yakin zamanda olu..."). Yerler biliniyorsa dikeyde örtüşmeleri gerekir. Türkçe olduğu burada
      * anlaşılan (loose) bloğun parçası okuma farkıyla biraz uzun da olabilir; çevirmenin aslıyla aynı döndürdüğü bloğun
@@ -74,6 +92,8 @@ class SettledText {
     fun reset() = entries.clear()
 
     companion object {
+        /** Kayıt başına günlüğe yazılan en çok atlanan okuma sayısı. */
+        const val NOTES_PER_ENTRY = 4
         /** Atılan satır bu süre boyunca karede okunmazsa unutulur (yazı tanımanın tek tük kaçırdığı kareler sayılmaz). */
         const val DROPPED_ABSENT_MS = 1500L
         /** Parçanın büyük yazıda kesintisiz geçen en uzun bölümü, parçanın en az bu oranı olmalı. */

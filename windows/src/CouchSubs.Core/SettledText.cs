@@ -35,7 +35,12 @@ public sealed class SettledText
     private sealed record Entry(string Text, double? Top, double? Bottom, bool Target, bool Shown, bool Loose)
     {
         public long SeenAt { get; set; }
+        /// <summary>Bu kayıt yüzünden atlanıp günlüğe yazılan okumalar (<see cref="NoteSkip"/>).</summary>
+        public List<string> Noted { get; } = [];
     }
+
+    /// <summary>Kayıt başına günlüğe yazılan en çok atlanan okuma sayısı.</summary>
+    public const int NotesPerEntry = 4;
 
     private readonly List<Entry> entries = [];
 
@@ -68,6 +73,22 @@ public sealed class SettledText
         var text = TextMatch.Normalize(source);
         if (text.Length < MinLength) return false;
         return entries.Any(entry => entry.Text == text || (entry.Loose && TextMatch.IsSimilar(text, entry.Text, Similarity)));
+    }
+
+    /// <summary>
+    /// Karara bağlanmış satırın atlanma nedeni ("birebir aynı" ya da "gevşek eşleşme"), bu okuma eşleşen kayıt için ilk
+    /// kez soruluyorsa; yoksa null. Satır ekranda durdukça aynı okuma günlüğe bir kez düşer (kayıt başına en çok
+    /// <see cref="NotesPerEntry"/>). Mac/iPhone (noteSkip) ve Android (noteSkip) aynıdır.
+    /// </summary>
+    public string? NoteSkip(string source)
+    {
+        var text = TextMatch.Normalize(source);
+        if (text.Length < MinLength) return null;
+        var entry = entries.FirstOrDefault(entry => entry.Text == text)
+            ?? entries.FirstOrDefault(entry => entry.Loose && TextMatch.IsSimilar(text, entry.Text, Similarity));
+        if (entry is null || entry.Noted.Count >= NotesPerEntry || entry.Noted.Contains(text)) return null;
+        entry.Noted.Add(text);
+        return entry.Text == text ? "birebir aynı" : "gevşek eşleşme";
     }
 
     /// <summary>

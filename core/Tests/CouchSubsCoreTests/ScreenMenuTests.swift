@@ -111,6 +111,18 @@ final class ScreenMenuTests: XCTestCase {
         XCTAssertTrue(detector.inMenu)
     }
 
+    /// #1198: menü durumu süresi dolup bitince menüde bulunan alanların hepsi kalkar (RegionWatcher çevirilerini TV'den
+    /// kaldırır). Eskiden karoları yerinde duran alan menü alanı olarak yaşamaya devam ediyor, çevirisi ekranda kalıyordu.
+    func testExpiredMenuDropsEveryMenuArea() {
+        let detector = ScreenTextDetector()
+        run(detector, 0, 400) { _ in Self.wheel().image }
+        let before = Set(detector.areas.map(\.id))
+        XCTAssertFalse(before.isEmpty)
+        run(detector, 500, 8000) { _ in Self.wheel().image }
+        XCTAssertFalse(detector.inMenu)
+        XCTAssertTrue(detector.areas.allSatisfy { !before.contains($0.id) && !$0.menu }, "\(detector.areas)")
+    }
+
     func testLabelsOnABusyMovingSceneAreNotAMenu() {
         let detector = ScreenTextDetector()
         run(detector, 0, 1000) { time in

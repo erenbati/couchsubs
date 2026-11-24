@@ -159,6 +159,8 @@ final class FakeServices: AppServices {
         if let lgInstallError { throw lgInstallError }
         appOnTV = bundledTVAppVersion
     }
+    var closes = 0
+    func closeTVApp(host: String, devKey: String) async { closes += 1 }
     var renewedHours: Int? = 999
     var renewals = 0
     func renewDevSession(host: String, devKey: String) async -> Int? {
@@ -1188,6 +1190,24 @@ final class AppModelRunTests: XCTestCase {
         XCTAssertEqual(store.load(RegisteredConsole.self, for: StoreKey.console)?.host, "192.168.1.71")
         model.stop()
     }
+
+    /// Ayarlar'da "IP Adresi Gir": PS5'in yeni adresi elle yazılır, kaydedilir ve yeni adresle yeniden bağlanılır.
+    func testEnteredConsoleAddressIsSavedAndReconnects() async throws {
+        let services = FakeServices()
+        let store = MemoryStore()
+        let model = AppModel(services: services, store: store, defaults: .isolated())
+        model.accountId = Data(repeating: 1, count: 8)
+        try await model.register(host: "192.168.1.70", pin: "12345678")
+        model.settings.output = .computer
+        await model.start()
+        XCTAssertFalse(model.enterConsoleAddress("192.168.1.300"))
+        XCTAssertEqual(model.console?.host, "192.168.1.70")
+        XCTAssertTrue(model.enterConsoleAddress("192.168.1.72"))
+        XCTAssertEqual(model.console?.host, "192.168.1.72")
+        XCTAssertEqual(model.console?.name, "PS5-789")
+        XCTAssertEqual(store.load(RegisteredConsole.self, for: StoreKey.console)?.host, "192.168.1.72")
+        model.stop()
+    }
 }
 
 final class LocalizationTests: XCTestCase {
@@ -1445,6 +1465,31 @@ final class TVAppInstallTests: XCTestCase {
         XCTAssertFalse(TVAppCard.message(for: .unreachable, brand: .lg, reason: nil).contains(restart))
     }
 
+    /// "IP hatası" (#1158): Samsung kurulum bağlantısını reddedince metin menüyü, iki ayarı ve bu Mac'in adresini söyler.
+    func testSamsungUnreachableGivesHostPcStepsWithThisAddress() {
+        let text = TVAppCard.message(for: .unreachable, brand: .samsung, reason: nil, address: "192.168.1.34")
+        XCTAssertTrue(text.contains(TVAppCard.hostPcSteps("192.168.1.34")))
+        XCTAssertTrue(text.contains("192.168.1.34"))
+        XCTAssertTrue(text.contains("1 2 3 4 5"))
+        XCTAssertTrue(TVAppCard.hostPcSteps(nil).contains("(?)"))
+        XCTAssertFalse(TVAppCard.message(for: .unreachable, brand: .lg, reason: nil, address: "192.168.1.34").contains("192.168.1.34"))
+    }
+
+    /// TV'nin listesi CouchSubs'ın silindiğini söyleyince (#1158) bu Mac'in kurduğu sürümün kaydı silinir: kart artık
+    /// "güncel" göstermez, kurulum adımları çıkar. Başka TV'nin bildirimi kaydı silmez.
+    func testSamsungAppMissingForgetsTheInstalledVersion() {
+        let services = FakeServices()
+        let store = MemoryStore()
+        let tv = LGTV(name: "Samsung", host: "192.168.1.40", brand: .samsung)
+        store.save(tv, for: StoreKey.tv)
+        store.save("0.9.80", for: StoreKey.tvAppVersion)
+        let model = AppModel(services: services, store: store, defaults: .isolated())
+        model.samsungAppMissing(host: "192.168.1.99")
+        XCTAssertEqual(store.load(String.self, for: StoreKey.tvAppVersion), "0.9.80")
+        model.samsungAppMissing(host: " 192.168.1.40 ")
+        XCTAssertNil(store.load(String.self, for: StoreKey.tvAppVersion))
+    }
+
     func testOlderAppIsUpdatedWithoutAsking() async throws {
         let services = FakeServices()
         services.appOnTV = "0.4.0"
@@ -1566,6 +1611,48 @@ final class TVAppInstallTests: XCTestCase {
         XCTAssertTrue(log.contains("Ana ekrandan") && log.contains("Kurulum tamam."), log)
         model.dismissTVAppUpdate()
         XCTAssertFalse(model.tvAppUpdating)
+    }
+
+    /// beta.89 (LG): TV'de 0.6.1 kurulu ama açık uygulama 0.5.0'ı çalıştırıyor. Yeniden kurulmaz; uygulama kapatılıp açılır,
+    /// yine eskiyse bir kez daha, sonra ana ekran "TV'de CouchSubs'ı kapatıp yeniden açın" der. Yeni sürüm bağlanınca kalkar.
+    func testUpToDatePackageWithAnOldRunningAppIsRestartedThenReported() async throws {
+        let services = FakeServices()
+        services.devMode = true
+        services.appOnTV = "0.6.1"
+        let store = MemoryStore()
+        store.save("dev-key", for: StoreKey.tvDevKey)
+        let model = model(services, store: store)
+        model.tv = tv
+        model.tvClients = 1
+        model.tvAppReported("0.5.0")
+        for _ in 0..<200 where services.closes == 0 { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertEqual(services.closes, 1)
+        XCTAssertEqual(services.installs, 0, "paket güncel: yeniden kurulmaz")
+        model.tvAppReported("0.5.0")
+        for _ in 0..<200 where services.closes == 1 { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertEqual(services.closes, 2)
+        XCTAssertFalse(model.tvAppStaleRunning)
+        model.tvAppReported("0.5.0")
+        XCTAssertTrue(model.tvAppStaleRunning)
+        XCTAssertEqual(model.tvAppOutdated, TVAppOutdated(installed: "0.5.0", bundled: "0.6.1"))
+        XCTAssertEqual(services.closes, 2, "üçüncüde yalnız söylenir")
+        model.tvAppReported("0.6.1")
+        XCTAssertFalse(model.tvAppStaleRunning)
+        XCTAssertNil(model.tvAppOutdated)
+    }
+
+    /// Kurulumdan sonra açılan uygulama yeni sürümü bildirirse kapat-aç tekrarlanmaz.
+    func testFreshInstallIsCheckedAgainstTheRunningVersion() async throws {
+        let services = FakeServices()
+        services.devMode = true
+        services.appOnTV = "0.5.0"
+        let model = try await updateScenario(services, key: true, reported: nil)
+        await model.updateTVApp()
+        XCTAssertEqual(services.installs, 1)
+        model.tvAppReported("0.6.1")
+        XCTAssertFalse(model.tvAppStaleRunning)
+        XCTAssertNil(model.tvAppOutdated)
+        XCTAssertEqual(services.closes, 0, "kapatmayı kurulum yaptı; ayrıca kapatılmaz")
     }
 
     /// Eski + geliştirici modu kapalı: Developer Mode adımları; açılınca kullanıcı bir şey yapmadan kurulum sürer.

@@ -87,6 +87,29 @@ enum PhoneSteady {
         return result
     }
 
+    /// Kaydırma sayılmak için eşleşen balonların her biri en az satır yüksekliğinin bu katı kadar kaymalı.
+    static let scrollShare = 0.5
+
+    /// Telefonda sohbet kaydırıldı mı: önceki okumayla eşleşen balonların (aynı mesaj, `sameReading`) hepsi dikeyde aynı
+    /// yöne, satır yüksekliğinin `scrollShare`'inden fazla kaydı. Kaydırmada bekletme (`holdTurns`) ve konum sabitleme
+    /// (`steadyPositions`, `stableBlocks`) atlanır, görünen yeni balonlar tek istekte çevrilir (#1202, #1170, X: "kaydırınca
+    /// yenilenmiyor"). Üstler ve `lineHeight` telefon bölgesine oranlıdır (telefonun kendisi kıpırdasa da ölçü değişmez).
+    /// Her güncel balon, öncekilerden henüz eşlenmemiş ilk aynı mesajla eşlenir. Windows ve Android aynı kuralı uygular.
+    static func scrolled(previous: [(text: String, top: Double)], current: [(text: String, top: Double)],
+                         lineHeight: Double) -> Bool {
+        guard lineHeight > 0 else { return false }
+        var used = Set<Int>()
+        var shifts: [Double] = []
+        for bubble in current {
+            guard let index = previous.indices.first(where: { !used.contains($0) && sameReading(previous[$0].text, bubble.text) })
+            else { continue }
+            used.insert(index)
+            shifts.append(bubble.top - previous[index].top)
+        }
+        guard !shifts.isEmpty, shifts.allSatisfy({ abs($0) > scrollShare * lineHeight }) else { return false }
+        return shifts.allSatisfy { $0 > 0 } || shifts.allSatisfy { $0 < 0 }
+    }
+
     /// İki yazı rengi zeminin aynı yanında mı (ikisi de zeminden koyu ya da ikisi de açık; algılanan parlaklıkla).
     static func sameInk(_ a: String, _ b: String, on background: String) -> Bool {
         func brightness(_ hex: String) -> Int? {
@@ -131,5 +154,101 @@ enum PhoneSteady {
             if let part = x.panel, part != .card { return true }
             return x.box == y.box
         }
+    }
+}
+
+/// Yanda Panel'in yazı boyu ve yeri oturum boyunca kararlı (#1152, GTA 6: "telefon titreyince sohbet panelinin yazıları
+/// büyüyüp küçülüyor, balonlar yer değiştiriyor"). Panelin yazı boyu her turda telefondaki satır yüksekliklerinin
+/// ortancasından, yeri ve eni telefonun bulunan kutusundan geliyordu; yakın kamerada el titremesi `PhoneSteady.poseSlack`
+/// eşiğini ve telefon boyundaki %3'lük "yakınlaşma" eşiğini her turda aşıyor, panel her turda yeniden diziliyordu.
+/// Artık ilk ölçümde kilitlenir: telefonun yeri ancak telefon belirgin biçimde (boyu `sizeShare`'den, ortası boyunun
+/// `moveShare`'inden fazla) ve kesintisiz `settleMs` boyunca başka yerdeyse, satır yüksekliği ancak ölçülen değer
+/// kilitliden `sizeShare`'den fazla ve kesintisiz `settleMs` boyunca farklıysa yenilenir. Telefon gerçekten yakınlaşınca
+/// (boy `sizeShare`'den fazla değişip yeni yer benimsenince) yazı boyu yeniden ölçülür. Windows (PhoneSteady.cs) ve
+/// Android (PhoneSteady.kt) aynı kuralı, aynı eşikleri kullanır.
+struct PhonePanelSteady: Sendable {
+    /// Bu paydan büyük boy değişimi belirgindir (yakınlaşma/uzaklaşma, yanlış ilk ölçüm).
+    static let sizeShare = 0.25
+    /// Telefonun ortası boyunun bu payından (yatayda eninin iki katı payından) fazla kaydıysa yer değişimi belirgindir.
+    static let moveShare = 0.1
+    /// Belirgin değişim bu kadar (ms) kesintisiz sürmeden benimsenmez; arada eski yere dönen tur sayacı sıfırlar.
+    static let settleMs = 1000
+
+    private(set) var pose: GamePhoneGeometry.Pose?
+    private(set) var line: Double?
+    private var poseSince: Int?
+    private var lineSince: Int?
+
+    init() {}
+
+    /// Panelin dayanacağı telefon yeri. `resized`: telefonun boyu belirgin değişti (ya da ilk yer), balonların görünüşü
+    /// baştan ölçülmeli.
+    mutating func steadyPose(_ found: GamePhoneGeometry.Pose, now: Int) -> (pose: GamePhoneGeometry.Pose, resized: Bool) {
+        guard let locked = pose else {
+            pose = found
+            poseSince = nil
+            return (found, true)
+        }
+        if Self.sameSpot(found, locked) {
+            poseSince = nil
+            return (locked, false)
+        }
+        guard let since = poseSince, now - since >= Self.settleMs else {
+            if poseSince == nil { poseSince = now }
+            return (locked, false)
+        }
+        let resized = Self.resized(found, locked)
+        pose = found
+        poseSince = nil
+        if resized {
+            line = nil
+            lineSince = nil
+        }
+        return (found, resized)
+    }
+
+    /// Panelin satır yüksekliği (kare yüksekliğine oranla; `ScreenPhoneCard.measuredLine`). Ölçüm yoksa kilitli değer.
+    mutating func steadyLine(_ measured: Double?, now: Int) -> Double? {
+        guard let measured, measured > 0 else { return line }
+        guard let locked = line else {
+            line = measured
+            lineSince = nil
+            return measured
+        }
+        if abs(measured / locked - 1) <= Self.sizeShare {
+            lineSince = nil
+            return locked
+        }
+        guard let since = lineSince, now - since >= Self.settleMs else {
+            if lineSince == nil { lineSince = now }
+            return locked
+        }
+        line = measured
+        lineSince = nil
+        return measured
+    }
+
+    /// Telefon kayboldu: sonraki bulunuşta her şey yeniden ölçülür.
+    mutating func reset() {
+        self = PhonePanelSteady()
+    }
+
+    /// İki telefon yeri aynı sayılır mı: kenarlar `PhoneSteady.poseSlack` içinde ya da boy `sizeShare` içinde ve ortası
+    /// boyunun `moveShare`'inden (yatayda eninin `2 * moveShare`'inden) az kaymış.
+    static func sameSpot(_ a: GamePhoneGeometry.Pose, _ b: GamePhoneGeometry.Pose) -> Bool {
+        let x = a.bounds, y = b.bounds
+        if abs(x.left - y.left) <= PhoneSteady.poseSlack && abs(x.right - y.right) <= PhoneSteady.poseSlack
+            && abs(x.top - y.top) <= PhoneSteady.poseSlack && abs(x.bottom - y.bottom) <= PhoneSteady.poseSlack { return true }
+        let height = y.bottom - y.top, width = y.right - y.left
+        guard height > 0, width > 0, !resized(a, b) else { return false }
+        return abs((x.top + x.bottom) - (y.top + y.bottom)) / 2 <= moveShare * height
+            && abs((x.left + x.right) - (y.left + y.right)) / 2 <= 2 * moveShare * width
+    }
+
+    /// Telefonun boyu belirgin değişti mi.
+    static func resized(_ a: GamePhoneGeometry.Pose, _ b: GamePhoneGeometry.Pose) -> Bool {
+        let x = a.bounds.bottom - a.bounds.top, y = b.bounds.bottom - b.bounds.top
+        guard y > 0 else { return true }
+        return abs(x / y - 1) > sizeShare
     }
 }

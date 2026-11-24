@@ -58,6 +58,11 @@ fun DubbingTile() {
                 settings.dubbingOutput = output
                 Services.dubberIfCreated?.stop()
             }
+            // Adından kadın mı erkek mi olduğu anlaşılmayan karakterin sesi (iPhone, Mac, Windows'ta aynı seçim).
+            TileLabel(stringResource(R.string.dubbing_unknown))
+            Segmented(listOf(stringResource(R.string.dubbing_man), stringResource(R.string.dubbing_woman)),
+                if (cast.unknownFemale) 1 else 0) { index -> save(cast.also { it.setUnknownGender(index == 1) }) }
+            Caption(stringResource(R.string.dubbing_unknown_hint))
             VoiceRow(stringResource(R.string.dubbing_narrator), cast.narrator) { save(cast.also { c -> c.narrator = it }) }
             VoiceRow(stringResource(R.string.dubbing_partner), cast.partner) { save(cast.also { c -> c.partner = it }) }
             val names = cast.assignments.keys.sorted()

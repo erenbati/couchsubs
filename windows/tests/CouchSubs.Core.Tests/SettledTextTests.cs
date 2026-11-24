@@ -42,6 +42,36 @@ public class SettledTextTests
         }
     }
 
+    /// <summary>Atılan satır ekranda durdukça günlüğe nedeniyle bir kez düşer (Mac ve Android aynı).</summary>
+    [Fact]
+    public void SkippedLineIsNotedOnce()
+    {
+        var settled = new SettledText();
+        settled.Settle("Yakin zamanda oynananlar", null, target: true, shown: false, 0, loose: true);
+        Assert.Equal("birebir aynı", settled.NoteSkip("Yakin zamanda oynananlar"));
+        Assert.Null(settled.NoteSkip("Yakin zamanda oynananlar"));
+        Assert.Equal("gevşek eşleşme", settled.NoteSkip("Yakin zamanda oynananiar"));
+        Assert.Null(settled.NoteSkip("Yakin zamanda oynananiar"));
+        Assert.Null(settled.NoteSkip("Completely different line"));
+        settled.Observe([], 2000);
+        Assert.Null(settled.NoteSkip("Yakin zamanda oynananlar"));
+    }
+
+    [Fact]
+    public void MissionLineReportsDroppedLine()
+    {
+        var mission = new MissionLine();
+        var line = new TextLine("Find the hidden key", new TextBox(0.3, 0.8, 0.7, 0.85));
+        var area = new TextBox(0, 0, 1, 1);
+        mission.Observe([line], area, 0);
+        mission.Observe([line], area, 1000);
+        Assert.Empty(mission.Dropped);
+        mission.Observe([], area, 3000);
+        Assert.Equal(["Find the hidden key"], mission.Dropped);
+        mission.Observe([], area, 3100);
+        Assert.Empty(mission.Dropped);
+    }
+
     [Fact]
     public void FragmentsOfTargetLanguageBlock()
     {

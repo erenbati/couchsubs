@@ -321,7 +321,8 @@ struct SubtitleOverlayView: View {
                 // altyazı yeridir (beta.63: oyunun her yerindeki yazılar altyazının üstüne yığılıyordu). Yayın penceresinde ve
                 // TV'de kendi yerinde çizilirler.
                 ForEach(model.overlayRegions.filter { $0.items == nil }) { regionBox($0) }
-                if model.overlayPhoneItems.isEmpty {
+                // Yerinde Türkçe çizimde telefon oyunun üstünde çizilir (PhoneTwinOverlay), burada gösterilmez.
+                if model.overlayPhoneItems.isEmpty || model.drawsPhoneInPlace {
                     Spacer(minLength: 0)
                 } else {
                     GamePhoneBlocks(items: model.overlayPhoneItems,
@@ -427,7 +428,7 @@ struct SubtitleOverlayView: View {
             ? model.overlayCover : nil
         let cover: CGSize? = coverLine.flatMap { OverlayCover.size(of: $0.box, screen: geometry.screen, scale: scale) }
         // Uzun çeviri en çok 3 satıra dengeli bölünür; 3 satıra sığmazsa yazı biraz küçülür (bkz. SubtitleWrap). "Örtsün"de
-        // yazı seçilen boyda kalır, en çok bir kademe küçülür ve satırdan satıra zıplamaz (CoverFontScale).
+        // yazı seçilen boyda kalır, hiç küçülmez; sığmazsa daha çok satıra bölünür (CoverFontScale).
         let wrapped = coverLine.map { SubtitleWrap.fit(line.text, scale: $0.scale) } ?? line.wrapped
         let size = CGFloat(style.fontSize) * scale * (current ? 1 : 0.8) * CGFloat(wrapped.scale)
         let alpha = Double(max(0, min(100, style.background))) / 100 * (current ? 1 : 0.83)
@@ -446,7 +447,7 @@ struct SubtitleOverlayView: View {
         let shown: Double = line.fading ? 0 : opacity
         let colored = model.settings.speakerColors && !line.paragraphs
         let text = Self.subtitleText(wrapped.text, colored: colored, base: Self.textColor(style), book: model.speakerBook,
-                                     nameOnly: style.nameOnly)
+                                     nameOnly: style.nameOnly, wholeLine: style.nameColorMode == .line)
             .font(.system(size: size, weight: weight))
         let padded = text
             .multilineTextAlignment(alignment)
@@ -512,12 +513,14 @@ struct SubtitleOverlayView: View {
 
     /// Altyazı yazısı. Konuşana göre renk açıksa "Mattia: …" satırı (bölünmüş devamıyla) o konuşanın renginde
     /// (bkz. `SpeakerColors`); adsız satırlar ve görev paneli gibi paragraflar `base` renginde kalır.
-    static func subtitleText(_ text: String, colored: Bool, base: Color, book: SpeakerColorBook? = nil, nameOnly: Bool = false) -> Text {
+    /// `wholeLine` (Karakter Adı › Tüm Satır): ad ve cümle o konuşanın renginde.
+    static func subtitleText(_ text: String, colored: Bool, base: Color, book: SpeakerColorBook? = nil, nameOnly: Bool = false,
+                             wholeLine: Bool = false) -> Text {
         guard colored else { return Text(verbatim: text).foregroundColor(base) }
-        return SpeakerColors.segments(in: text, book: book).reduce(Text(verbatim: "")) { result, segment in
+        return SpeakerColors.segments(in: text, book: book, wholeLine: wholeLine).reduce(Text(verbatim: "")) { result, segment in
             let color = segment.color.flatMap(speakerColor) ?? base
             // Yeni arayüz (style.nameOnly): yalnız ad ve iki nokta renkli, cümle yazı renginde (TV uygulamasıyla aynı).
-            if nameOnly, segment.color != nil, let colon = segment.text.firstIndex(where: { $0 == ":" || $0 == "\u{FF1A}" }) {
+            if nameOnly, !wholeLine, segment.color != nil, let colon = segment.text.firstIndex(where: { $0 == ":" || $0 == "\u{FF1A}" }) {
                 let name = segment.text[...colon]
                 let rest = segment.text[segment.text.index(after: colon)...]
                 return result + Text(verbatim: String(name)).foregroundColor(color) + Text(verbatim: String(rest)).foregroundColor(base)

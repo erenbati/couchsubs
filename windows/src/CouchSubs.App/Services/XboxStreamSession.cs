@@ -44,6 +44,15 @@ internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, 
     private DispatcherTimer? pictureTimer;
     private long pictureCallbacks;
 
+    /// <summary>
+    /// Kare sıklığı (<see cref="FrameCadence"/>): oynatıcı her kareyi JPEG'e çevirip gönderir (1080p'de işlemciyi en çok yoran
+    /// iş); "frameDone" ile bir sonraki kareye kadar beklenecek süre gider (işlemci doluysa ve okuma yavaşsa uzar).
+    /// </summary>
+    private FrameCadence cadence = new();
+    private readonly SystemCpuLoad cpu = new();
+
+    public void UseCadence(FrameCadence value) => cadence = value;
+
     public event Action<Frame>? FrameReceived;
     public event Action<SessionState>? StateChanged;
     public event Action<RegisteredConsole>? ConsoleMoved { add { } remove { } }
@@ -559,9 +568,11 @@ internal sealed class XboxStreamSession(XboxBridge bridge, XboxConsole console, 
             finally
             {
                 Volatile.Write(ref frameBusy, 0);
+                cpu.Report(cadence);
+                var next = cadence.IntervalMs;
                 view?.Dispatcher.InvokeAsync(() =>
                 {
-                    try { if (browser == view) view.CoreWebView2?.PostWebMessageAsJson("{\"kind\":\"frameDone\"}"); }
+                    try { if (browser == view) view.CoreWebView2?.PostWebMessageAsJson($"{{\"kind\":\"frameDone\",\"nextMs\":{next}}}"); }
                     catch { /* Oynatıcı bu arada kapandı. */ }
                 });
             }

@@ -169,10 +169,14 @@ object ConsoleDiscovery {
      * varsa adına bakılmadan o seçiliyordu; aynı evde iki PS5 varken uygulama diğerine geçiyordu (GitHub #425).
      */
     fun pickMoved(found: List<ConsoleInfo>, name: String): ConsoleInfo? =
-        found.filter { it.name == name }.singleOrNull()
+        found.filter { isRegistered(it, name) }.singleOrNull()
 
-    /** Aramaya yanıt veren PS5 kayıtlı PS5 mi (ad eşleşmesi; kayıtta ad yoksa her yanıt kabul edilir). */
-    fun isRegistered(info: ConsoleInfo, name: String): Boolean = name.isEmpty() || info.name == name
+    /**
+     * Aramaya yanıt veren PS5 kayıtlı PS5 mi (ad eşleşmesi, boşluk ve harf büyüklüğü gözetilmez; eskiden harf farkında PS5
+     * yeni adreste bulunamıyordu; kayıtta ad yoksa her yanıt kabul edilir, Windows ve Mac ile aynı).
+     */
+    fun isRegistered(info: ConsoleInfo, name: String): Boolean =
+        name.isBlank() || info.name.trim().equals(name.trim(), ignoreCase = true)
 
     /** Telefonun Wi-Fi ya da Ethernet adresinin /24 ağındaki diğer adresler. */
     fun subnetAddresses(): List<String> {

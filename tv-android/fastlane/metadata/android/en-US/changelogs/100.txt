@@ -1,0 +1,1 @@
+0.9.97: With the Dark background, every subtitle box (previous lines included) is fully opaque pure black; it no longer looks grey on OLED TVs in dark scenes.

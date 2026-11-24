@@ -179,8 +179,8 @@ object ScreenFit {
     /** Bir çevirinin çizimi: satırları, yalnız yatay ölçeği (en az [MIN_SQUEEZE]) ve yazının alanının yeri (piksel). */
     data class Lines(val lines: List<String>, val squeeze: Double, val left: Double, val width: Double)
 
-    const val FIRST_SQUEEZE = 0.8
-    const val MIN_SQUEEZE = 0.7
+    const val FIRST_SQUEEZE = 0.9
+    const val MIN_SQUEEZE = 0.85
 
     /**
      * Çeviriyi özgün yazının alanına yerleştirir; yazı boyu hiç değişmez. [measure]: yazının çizicinin kendi yazı tipiyle,

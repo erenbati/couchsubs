@@ -91,7 +91,7 @@ struct TVAppCard: View {
                 }
             case .failed(let error, let reason):
                 Card(title: "CouchSubs TV app") {
-                    ErrorText(error: Self.message(for: error, brand: brand, reason: reason))
+                    ErrorText(error: Self.message(for: error, brand: brand, reason: reason, address: model.computerAddress))
                     // TV bu Mac'i kabul etmediyse Host PC IP'ye yazılacak adres de görünür (#343).
                     if brand == .samsung, error == .unreachable {
                         HintText(text: "This computer's address (Host PC IP): \(model.computerAddress ?? "?")")
@@ -261,11 +261,15 @@ struct TVAppCard: View {
     /// `reason`: TV'nin verdiği sebep; varsa mesajın altına eklenir. Samsung'da ayrıntı (TV'nin kurulum çıktısı,
     /// Samsung'un yanıtı) da yazılır: hiçbir hata genel mesajda kalmasın. Gönderilecek günlük dosyası üç markada da
     /// yazılır (önceden yalnız Samsung'da).
-    static func message(for error: DevModeError, brand: TVBrand, reason: String?) -> String {
+    /// `address`: TV'nin göreceği bu Mac'in adresi; Samsung "TV kabul etmedi" hatasındaki adım satırına yazılır.
+    static func message(for error: DevModeError, brand: TVBrand, reason: String?, address: String? = nil) -> String {
         // Soru penceresinin metni; "Vazgeç"ten sonra kartta da bu kalır ("Yeniden dene" yine sorar).
         if error == .foreignApp { return message(for: error, brand: brand) }
         var text = message(for: error, brand: brand, hasReason: reason != nil)
         let samsung = brand == .samsung
+        // Kurulum bağlantısı reddedildi ("IP hatası", #1158): menü, iki ayar ve bu cihazın adresi tek satırda (iPhone,
+        // Windows ve Android ile aynı).
+        if samsung, error == .unreachable { text += "\n\n" + hostPcSteps(address) }
         if let reason {
             let label = samsung ? String(localized: "Details:") : String(localized: "TV says:")
             text += "\n\n" + label + " " + reason
@@ -293,6 +297,12 @@ struct TVAppCard: View {
             text += "\n\n" + String(localized: "If the TV keeps switching to HDMI 1 or another source while the CouchSubs TV app is open, turn off Anynet+ (HDMI-CEC) and Auto Source Switching on the TV: Settings › All Settings › Connection › External Device Manager.")
         }
         return text + "\n\n" + send
+    }
+
+    /// Samsung'da Host PC IP'nin nerede ve neye ayarlanacağı; adres bilinmiyorsa "?".
+    static func hostPcSteps(_ address: String?) -> String {
+        String(format: String(localized: "On the TV: Apps › press 1 2 3 4 5 › Developer mode On, Host PC IP = this device's IP (%@), then restart the TV."),
+               address ?? "?")
     }
 
     static func message(for error: DevModeError, brand: TVBrand, hasReason: Bool = false) -> String {

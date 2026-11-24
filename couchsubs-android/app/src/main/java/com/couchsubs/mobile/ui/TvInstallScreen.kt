@@ -159,6 +159,13 @@ internal fun tvAppSummary(): String? {
 @Composable
 internal fun TvAppUpdateCard(onUpdate: (InstalledTv) -> Unit) {
     val status by TvAppUpdate.status.collectAsState()
+    (status as? TvAppStatus.RunningStale)?.let { stale ->
+        // LG: paket güncel ama TV eski sürümü çalıştırmayı sürdürüyor (kapatıp açtıktan sonra da).
+        Tile(Modifier.fillMaxWidth(), style = TileStyle.ACTIVE) {
+            Text(stringResource(R.string.tvapp_stale_running, stale.running), style = Tokens.Type.body, color = Tokens.Color.text)
+        }
+        return
+    }
     val outdated = status as? TvAppStatus.Outdated ?: return
     Tile(Modifier.fillMaxWidth(), style = TileStyle.ACTIVE) {
         Text(stringResource(R.string.tvapp_update_title), style = Tokens.Type.headline, color = Tokens.Color.text)
@@ -538,6 +545,8 @@ private fun failureText(failure: InstallState.Failed, phoneIp: String?): String 
         SamsungInstallError.INSTALL_FAILED, null -> context.getString(R.string.tvinstall_err_failed)
     }
     var text = advice
+    // Kurulum bağlantısı reddedildi ("IP hatası", #1158): hangi menüde ne yapılacağı bu cihazın adresiyle tek satırda.
+    if (failure.error == SamsungInstallError.UNREACHABLE) text += "\n\n" + context.getString(R.string.tvinstall_host_pc_steps, phoneIp ?: "?")
     failure.detail?.takeIf { it.isNotBlank() }?.let { text += "\n\n" + context.getString(R.string.tvinstall_details, it) }
     if (failure.error == SamsungInstallError.INSTALL_FAILED || failure.error == SamsungInstallError.CERTIFICATE_REJECTED)
         text += "\n\n" + context.getString(R.string.tvinstall_maintenance)

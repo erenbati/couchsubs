@@ -149,7 +149,7 @@ public sealed class AspectBox : Decorator
 /// Perde (Mac HomePerde): oyunun son karesi (yoksa sıcak sahne), alttan hafif kararma, durağan projeksiyon ışığı, okunan alan
 /// (kesikli amber, "Okunan Alan" etiketi; durağan), son çeviri altyazı plakasında (konuşan adı amber; okunan alanın ortasında),
 /// sağ üstte cam haplar (CANLI nabız + kare hızı). Kart çerçevesi yok; 20 köşe, ince beyaz kıl çizgi, altına düşen yumuşak
-/// amber yansıma. Kare saniyede en çok 4 kez çizilir (WriteableBitmap yeniden kullanılır).
+/// amber yansıma. Kare saniyede en çok 4 kez (pencere arka plandayken 1 kez) çizilir (WriteableBitmap yeniden kullanılır).
 /// </summary>
 public sealed class GamePreview : ContentControl
 {
@@ -271,7 +271,8 @@ public sealed class GamePreview : ContentControl
             return;
         }
         var now = Environment.TickCount64;
-        if (now - lastDraw < 250 && image.Source is not null) return;
+        // Oyun oynanırken (pencere arka planda) saniyede bir; önde saniyede dört (hareket kapısıyla aynı kural).
+        if (now - lastDraw < PreviewCadence.IntervalMs(MotionGate.WindowActive) && image.Source is not null) return;
         lastDraw = now;
         if (bitmap is null || bitmap.PixelWidth != frame.Width || bitmap.PixelHeight != frame.Height)
             bitmap = new WriteableBitmap(frame.Width, frame.Height, 96, 96, PixelFormats.Bgr32, null);

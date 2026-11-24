@@ -492,6 +492,34 @@ test('webOS HDMI #643: ses adımları varsayılanda hiç yapılmaz; ses ayarı/s
   assert.match(tv.platform.diagnostics(), /^hdmi playing rs4 1920x1080 t= · snd on v100 tr0\/1 sx no · webOS/);
 });
 
+// 0.9.98 (X: LG ve Android TV'de "TV uygulaması açıkken ses yok, PS5'in kendi girişinde var"): ses adımları kapalıyken
+// TV'nin ses çıkışı tanı satırına hiç yazılmıyordu. Açılışta, <video> yokken bir kez okunur; görüntü oynarken okunmaz.
+test('webOS HDMI: ses çıkışı ve ses düzeyi açılışta bir kez okunur, görüntü oynarken okunmaz', () => {
+  const tv = startTv({ mediaFocus: true, luna: (uri, params) => {
+    if (uri.indexOf('settingsservice') >= 0) {
+      const key = params.keys[0];
+      return { returnValue: true, settings: { [key]: key === 'soundOutput' ? 'external_arc' : 'passThrough' } };
+    }
+    if (uri.indexOf('com.webos.audio/getVolume') >= 0) return { returnValue: true, volumeStatus: { volume: 12, muteStatus: false } };
+    return null;
+  } });
+  tv.platform.init();
+  assert.strictEqual(lunaCalls(tv, 'settingsservice').length, 2, 'soundOutput ve soundOutputDigital');
+  assert.strictEqual(lunaCalls(tv, 'com.webos.audio/getVolume').length, 1);
+  const before = lunaCalls(tv, 'com.webos.audio').length + lunaCalls(tv, 'settingsservice').length;
+  tv.show(2);
+  const video = tv.video;
+  const touched = watchSound(video);
+  video.start();
+  tv.advance(10 * 60000);
+  assert.deepStrictEqual(touched, [], '<video>\'nun ses özelliklerine dokunulmaz');
+  assert.strictEqual(lunaCalls(tv, 'com.webos.audio').length + lunaCalls(tv, 'settingsservice').length, before,
+    'görüntü oynarken ses okunmaz');
+  assert.strictEqual(lunaCalls(tv, 'setMuted').length, 0);
+  assert.strictEqual(video.webosMediaFocus, false);
+  assert.match(tv.platform.diagnostics(), / · snd on v100 tr0\/1 out external_arc dig passThrough tv 12 sx no · webOS/);
+});
+
 test('webOS HDMI #643: görüntü gelip stalled olursa <video> eski yolla yeniden kurulur, ses adımı yok', () => {
   const tv = startTv({ luna: () => ({ returnValue: false }) });
   tv.show(2);
@@ -823,6 +851,36 @@ test('webOS HDMI 0.9.87: kare sayacı duran görüntü (siyah ekran) gözcü tar
   tv.advance(30000);
   assert.strictEqual(tv.videos.length, 2);
   assert.match(tv.platform.diagnostics(), /rebuilt 1 \(stalled\)/);
+});
+
+test('webOS HDMI 0.9.94 (#1055): kare sayacı hep 0 olan TV\'de (t= fr 0) çeviri başında ve PS tuşundan dönüşte görüntü yeniden kurulmaz', () => {
+  // LG 65UR91006LA webOS 33.31.75: getVideoPlaybackQuality var ama totalVideoFrames hep 0, currentTime hep 0.
+  const tv = startTv({ storage: {} });
+  tv.show(2);
+  tv.video.webkitDecodedFrameCount = 0;
+  tv.video.start();
+  tv.advance(3000);
+  tv.video.fire('stalled');
+  tv.advance(30000);
+  assert.strictEqual(tv.videos.length, 1, 'taze stalled kurdurmadı');
+  for (let press = 0; press < 3; press++) {
+    tv.hide();
+    tv.advance(8000);
+    tv.unhide();
+    tv.document.fire('webOSRelaunch');
+    tv.focus();
+    tv.video.fire('stalled');
+    tv.advance(60000);
+  }
+  assert.strictEqual(tv.videos.length, 1, 'PS tuşundan dönüşte (resume) kurulmadı');
+  assert.match(tv.platform.diagnostics(), /hdmi playing rs4 1920x1080 t= fr 0 · ev stalled · stall \d+ blind/);
+  assert.doesNotMatch(tv.platform.diagnostics(), /rebuilt/);
+
+  // Gerçek hata olunca yine kurulur.
+  tv.video.error = { code: 4 };
+  tv.video.fire('error');
+  tv.advance(5000);
+  assert.strictEqual(tv.videos.length, 2, 'hata verince kuruldu');
 });
 
 test('webOS HDMI #643: ses adımları açıkken stalled olursa adımlar kapanır, yeni <video>\'ya dokunulmaz', () => {

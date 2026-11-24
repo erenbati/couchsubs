@@ -226,6 +226,20 @@ public struct DevModeInstaller: Sendable {
         "/usr/bin/luna-send-pub -n 1 'luna://com.webos.appInstallService/dev/remove' '{\"id\":\"com.couchsubs.tv\",\"subscribe\":false}'; " +
         "i=0; while [ -f \(appInfoPath) ] && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done"
 
+    /// TV'de açık com.couchsubs.tv'yi kapatır (ares-launch --close'un luna çağrısı) ve webOS'un süreci bırakması için kısa
+    /// bekler. beta.89 (LG, Mac): 0.9.81'den 0.9.84'e güncellenen TV'de appinfo.json 0.9.84 diyordu, açık uygulama ise
+    /// 0.9.81'in kodunu çalıştırmayı sürdürüyordu: kurulumdan sonra uygulama kapatılmıyordu, açma komutu açık uygulamayı
+    /// yalnız öne getiriyor (webOSRelaunch), sayfa diskten yeniden okunmuyordu. Kurulumdan sonra ve çalışan sürüm kurulu
+    /// sürümden eskiyse uygulama önce kapatılır, sonra açılır. iPhone, Android ve Windows'taki komutla aynı.
+    public static let closeCommand =
+        "/usr/bin/luna-send-pub -n 1 'luna://com.webos.applicationManager/closeByAppId' '{\"id\":\"com.couchsubs.tv\"}'; sleep 2"
+
+    /// Uygulamayı kapatır; açık değilse ya da TV reddederse kurulum yine başarılıdır. TV'nin yanıtını döner (günlük için).
+    @discardableResult
+    public func closeApp() async -> String {
+        ((try? await ssh(Self.closeCommand).output) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// - Returns: TV'nin yanıtı (günlük için).
     @discardableResult
     public func removeApp() async throws -> String {
@@ -260,6 +274,8 @@ public struct DevModeInstaller: Sendable {
         while true {
             if try await installedVersion() == version {
                 _ = try? await ssh("rm -f '\(remote)'")
+                // Açık (eski) uygulama kapatılır; sonra açılan uygulama yeni sürümü diskten yükler (bkz. closeCommand).
+                await closeApp()
                 return
             }
             if ContinuousClock.now >= end { break }

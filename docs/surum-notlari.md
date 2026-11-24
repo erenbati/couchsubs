@@ -6,13 +6,18 @@ CouchSubs'ın yeni deneme sürümü. Türkçe dil desteği olmayan PS5 oyunları
 
 **Bu sürümde yeni**
 
-- **LG'de kararma:** Çeviri başlarken ve PS tuşundan dönünce ekranın 2 sn aralıkla kararması giderildi (TV uygulaması 0.9.82).
-- **Android TV'de çökme:** Bazı Android TV'lerde altyazı katmanı çizilirken uygulama çöküyorsa bir sonraki açılışta daha güvenli çizime geçiyor (TV uygulaması 0.9.83).
-- **Android TV'de "Uygulama içinde":** Görüntü modu "Uygulama içinde" seçiliyse TV uygulaması kendiliğinden katmana geçmiyor (TV uygulaması 0.9.84).
-- **LG'de "TV bağlantıyı reddetti":** TV bağlantıyı reddettiğinde "TV yanıt vermedi" yerine TV'yi yeniden başlatma önerisi ve webOS Hub uyarısı çıkıyor.
-- **Xbox'ta oyun seçimi:** Oyun tanınmazsa son seçtiğiniz oyun kullanılıyor; GTA 6 telefonu seçilince hemen açılıyor.
-- **Açık zeminde koyu yazı:** Duvardaki kâğıt ilan gibi açık zemin üstündeki koyu yazılar da okunup çevriliyor (#1124).
-- **Eksik Türkçe metinler** tamamlandı.
+- **GTA 6 telefonu:** Oyun içi telefonun otomatik çevirisi artık varsayılan açık; daha önce kapalı kalmışsa bir kez açılıyor. Telefonda mesajları kaydırınca çeviri yenileniyor, ek alan çevirisi tek karelik ıskada silinmiyor (Windows, Mac, iPhone, Android).
+- **Kalan ekran yazısı çevirisi:** Menü, tabela ve yardım kutusu yazısı oyundan kalkınca çevirisi de TV'den ve ekrandan kalkıyor, oyunun önünde asılı kalmıyor (Windows, Mac, iPhone, Android; TV uygulaması 0.9.96).
+- **Eski TV uygulaması:** TV'deki uygulama eskiyse telefonda güncelleme önerisi çeviri ekranında da çıkıyor ve tek dokunuşla kuruluyor; TV'deki panelde "TV uygulaması eski" uyarısı görünüyor (iPhone, Android; TV uygulaması 0.9.95).
+- **Altyazı günlüğü:** Bir satır gösterilmeyip düşürülünce ya da bekletilince nedeni altyazı günlüğüne yazılıyor; sorun bildiriminde nedeni bulmayı kolaylaştırıyor.
+
+**beta.92'de gelenler:** Karakter Adı "Tüm Satır" (TV uygulaması 0.9.93), kare sayacı olmayan LG'lerde kararma (TV uygulaması 0.9.94), telefonda "Çevirileri kaldır", Windows hata pencereleri.
+
+**beta.91'de gelenler:** "Üstünde"de çevirinin İngilizce satıra binmemesi (TV uygulaması 0.9.89–0.9.91), ekran yazısı çevirisinin oturum boyunca aynı boy ve renkte kalması, Windows yayın penceresinde yerinde çizim, oyun takılması, Samsung'da silinen TV uygulaması, PS5'in IP'si değişince bulunması, sıkışık altyazı, reklam şeridi, Windows'ta PS5/Xbox akışı.
+
+**beta.90'da gelenler:** ekran yazısı çevirisinin özgün yazının yerinde çizilmesi (TV uygulaması 0.9.85), TV'nin adresi değişince yeniden bulunması, LG'de güncellemeden sonra eski sürüm (TV uygulaması 0.9.88) ve ilk oturumda kararma (TV uygulaması 0.9.87), PS5 Türkçe menü yazıları, açık mavi kâğıttaki ilan, GTA 6 telefon paneli, dublajda ses cinsiyeti.
+
+**beta.89'da gelenler:** LG'de 2 sn aralıkla kararma (TV uygulaması 0.9.82), Android TV'de çökme ve "Uygulama içinde" modu, LG "TV bağlantıyı reddetti" uyarısı, Xbox'ta oyun seçimi, açık zeminde koyu yazı, eksik Türkçe metinler.
 
 **beta.88'de gelenler:** yeni tasarım (Mac, Windows), Xbox'ta "Uzaktan yürütme başlatıldı / durdu" döngüsü, PS5'te bağlan-kop döngüsü, Windows'ta nadir çökmeye karşı önlem.
 

@@ -257,6 +257,19 @@ public sealed class LiveServices : IAppServices
         }
     }
 
+    public async Task CloseTvAppAsync(string host, string devKey)
+    {
+        try
+        {
+            var reply = await WithKeyFileAsync(devKey, file => Installer(host, file).CloseAppAsync());
+            WriteTvInstallLog($"LG: TV'deki CouchSubs kapatıldı: {reply}");
+        }
+        catch (DevModeException error)
+        {
+            WriteTvInstallLog($"LG: TV'deki CouchSubs kapatılamadı: {error.Message}");
+        }
+    }
+
     public async Task<int?> RenewDevSessionAsync(string host, string devKey)
     {
         try
@@ -500,6 +513,7 @@ public sealed class LiveServices : IAppServices
         public void Start(TimeSpan interval) => keeper.Start(interval);
         public void Stop() => keeper.Stop();
         public void Reconnect() => keeper.Reconnect();
+        public void ReopenApp() => keeper.ReopenApp();
     }
 
     private sealed class AndroidKeeper(AndroidTvKeeper keeper) : IKeeper

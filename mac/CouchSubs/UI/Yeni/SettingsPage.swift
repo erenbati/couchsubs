@@ -370,7 +370,9 @@ struct SubtitlePreviewBox: View {
     /// Tek örnek satır: ad (ayarın renginde) + metin, zemin rengi ve koyuluğu; zeminsizken okunurluk gölgesi.
     private func sample(_ line: (who: String, text: String), index: Int, style: SubtitleStyle, size: CGFloat) -> some View {
         let name = Text(verbatim: model.settings.showSpeakerNames ? line.who + ": " : "").foregroundColor(nameColor(line.who, index: index, style: style))
-        let textColor: Color = SubtitlePalette.color(SubtitlePalette.textHex(style)) ?? .white
+        let textColor: Color = model.settings.speakerColors && style.nameColorMode == .line
+            ? nameColor(line.who, index: index, style: style)
+            : SubtitlePalette.color(SubtitlePalette.textHex(style)) ?? .white
         let body = Text(verbatim: line.text).foregroundColor(textColor)
         let plate: Color = (SubtitlePalette.color(style.backgroundColor) ?? .black).opacity(Double(style.background) / 100)
         let bare = style.background == 0
@@ -387,7 +389,7 @@ struct SubtitlePreviewBox: View {
         switch style.nameColorMode {
         case .text: return SubtitlePalette.color(SubtitlePalette.textHex(style)) ?? .white
         case .single: return SubtitlePalette.color(style.nameHex ?? SubtitlePalette.names[0].hex) ?? .dsAmber
-        case .speaker:
+        case .speaker, .line:
             let hex = style.characterColors[who.lowercased()] ?? SubtitlePalette.names[(index + 1) % SubtitlePalette.names.count].hex
             return SubtitlePalette.color(hex) ?? .dsAmber
         }
@@ -513,7 +515,7 @@ private struct SubtitleLookSettings: View {
         return DSUnit(title: "Character Name",
                       hint: mode.wrappedValue == .text ? "The character name is shown in the same color as the text." : nil) {
             VStack(alignment: .leading, spacing: DS.space("s")) {
-                DSTabs(selection: mode, items: [(NameColorMode.text, "Same as Text"), (.single, "Single Color"), (.speaker, "By Character")])
+                DSTabs(selection: mode, items: [(NameColorMode.text, "Same as Text"), (.single, "Single Color"), (.speaker, "By Character"), (.line, "Whole Line")])
                 switch mode.wrappedValue {
                 case .text:
                     EmptyView()
@@ -523,7 +525,7 @@ private struct SubtitleLookSettings: View {
                         model.sendTestSubtitle()
                     }
                     .padding(.leading, -DS.space("xxs"))
-                case .speaker:
+                case .speaker, .line:
                     CharacterColors()
                 }
             }
@@ -741,6 +743,10 @@ private struct AreaSettings: View {
                 DSUnit(hint: "Side Panel: the chat is shown next to the phone, the other person on the left and you on the right. On the Bubbles: each message is translated on top of its own bubble.") {
                     DSTabs(selection: $model.settings.phoneMessagesPanel, items: [(true, "Side Panel"), (false, "On the Bubbles")])
                 }
+                // Önce yalnız Mac'te deneniyor (Sinan Bey kararı, 24 Kas); varsayılan açık.
+                DSSwitchRow(title: "Redraw the Screen in Turkish in Place (Experimental)",
+                            subtitle: "GTA 6 phone: the original text is erased and the translation is drawn in its place, right on the phone in the game window, and it moves with the phone. Works when the picture is read from a window on this Mac (Remote Play, chiaki-ng or OBS).",
+                            isOn: $model.settings.drawScreenInPlace, divider: false)
             }
             // Kısayol başlıkta değil, açıklamada (diğer kart başlıkları gibi yalnız ad).
             DSCard(scrolls: false) {

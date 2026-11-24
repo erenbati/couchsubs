@@ -8,6 +8,9 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
+import android.media.AudioAttributes;
+import android.media.AudioDeviceInfo;
+import android.media.AudioManager;
 import android.media.tv.TvContract;
 import android.media.tv.TvInputManager;
 import android.media.tv.TvTrackInfo;
@@ -107,6 +110,9 @@ public class MainActivity extends Activity implements TvPage.Host {
     private boolean inAppRetuned;
     /** Bilgi panelindeki TvView durumu; sayfanın iş parçacığından okunur. */
     private volatile String tvState = "idle";
+    /** Bilgi panelinin ses tanısı (bkz. AudioState): TvView'in bildirdiği ses parçası sayısı (-1: henüz yok), seçili mi. */
+    private volatile int audioTracks = -1;
+    private volatile boolean audioSelected;
     /**
      * Giriş bırakılınca kısa süre sonra bir kez daha bırakılır: oturum o anda kuruluyorsa ilk bırakma onu kaçırabilir ve
      * aynı HDMI'yı tek oturuma veren TV'lerde (Philips, Thomson) TV'nin kendi giriş ekranı siyah kalır (#643, #453).
@@ -252,7 +258,12 @@ public class MainActivity extends Activity implements TvPage.Host {
                     if (resumed) reclaim.videoSize(SystemClock.elapsedRealtime(), watch.tunedAt(), width, height);
                 }
                 @Override public void onTracksChanged(String inputId, List<TvTrackInfo> tracks) {
+                    audioTracks = audioTrackCount(tracks);
                     if (resumed) reclaim.videoTracks(SystemClock.elapsedRealtime(), watch.tunedAt(), videoSignature(tracks));
+                }
+                // Yalnız tanı (bkz. AudioState): TvView ses parçası seçti mi.
+                @Override public void onTrackSelected(String inputId, int type, String trackId) {
+                    if (type == TvTrackInfo.TYPE_AUDIO) audioSelected = trackId != null;
                 }
             });
             // HDMI sesi tam sesle açılır. Android'in HDMI ses yolu (TvInputHardwareManager) uygulama ses düzeyi
@@ -766,7 +777,48 @@ public class MainActivity extends Activity implements TvPage.Host {
     @Override
     public String diagnostics() {
         int retunes = outage.retunes();
-        return "mode inApp · tv " + tvState + (retunes > 0 ? " · retune " + retunes : "");
+        String sound = audioDiagnostics();
+        return "mode inApp · tv " + tvState + (retunes > 0 ? " · retune " + retunes : "")
+                + (sound.isEmpty() ? "" : " · " + sound);
+    }
+
+    /** Ses tanısı (yalnız okunur; sesi, odağı, ses parçasını değiştirmez). Okunamazsa boş. */
+    private String audioDiagnostics() {
+        try {
+            AudioManager audio = (AudioManager) getSystemService(AUDIO_SERVICE);
+            if (audio == null) return "";
+            int volume = audio.getStreamVolume(AudioManager.STREAM_MUSIC);
+            int max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+            boolean muted = Build.VERSION.SDK_INT >= 23 && audio.isStreamMute(AudioManager.STREAM_MUSIC);
+            int[] outputs = types(audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS));
+            int[] routed = null;
+            if (Build.VERSION.SDK_INT >= 33) {
+                try {
+                    AudioAttributes media = new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA).build();
+                    routed = types(audio.getAudioDevicesForAttributes(media).toArray(new AudioDeviceInfo[0]));
+                } catch (RuntimeException e) {
+                    routed = null;
+                }
+            }
+            return AudioState.text(volume, max, muted, outputs, routed, audioTracks, audioSelected);
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    private static int[] types(AudioDeviceInfo[] devices) {
+        if (devices == null) return new int[0];
+        int[] out = new int[devices.length];
+        for (int i = 0; i < devices.length; i++) out[i] = devices[i].getType();
+        return out;
+    }
+
+    private static int audioTrackCount(List<TvTrackInfo> tracks) {
+        int count = 0;
+        if (tracks == null) return 0;
+        for (TvTrackInfo track : tracks) if (track != null && track.getType() == TvTrackInfo.TYPE_AUDIO) count++;
+        return count;
     }
 
     @Override
@@ -996,6 +1048,8 @@ public class MainActivity extends Activity implements TvPage.Host {
         // Bekleyen gecikmeli bırakma bu yeni oturumu kapatmasın.
         releaseGeneration++;
         tvState = "tuning";
+        audioTracks = -1;
+        audioSelected = false;
         watch.tuned(SystemClock.elapsedRealtime());
         // Yeni oturum: görüntü boyu/izleri yeniden öğrenilir; girişi açtıran tuş (seçicide 1-4) TV'nin hemen ardından
         // gelen devralmasını kullanıcının işi saydırmasın (#42: TV girişi 1-2 sn sonra kendi oynatıcısında açar).

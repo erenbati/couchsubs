@@ -174,8 +174,8 @@ public static class ScreenFit
     /// <summary>Bir çevirinin çizimi: satırları, yalnız yatay ölçeği ve yazının alanının yeri (piksel).</summary>
     public sealed record Lines(IReadOnlyList<string> Rows, double Squeeze, double Left, double Width);
 
-    public const double FirstSqueeze = 0.8;
-    public const double MinSqueeze = 0.7;
+    public const double FirstSqueeze = 0.9;
+    public const double MinSqueeze = 0.85;
 
     /// <summary>
     /// Çeviriyi özgün yazının alanına yerleştirir; yazı boyu hiç değişmez. <paramref name="measure"/>: yazının çizicinin

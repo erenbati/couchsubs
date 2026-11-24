@@ -739,7 +739,32 @@ object AiRequest {
      * Kullanıcı iletisi: önceki satırlar (yalnız bağlam) ve çevrilecek cümleler. [names]: konuşan etiketlerinden öğrenilip
      * cümlelerde geçen adlar; model "Price"ı "Fiyat" diye çevirmesin diye adıyla söylenir (#287).
      */
-    fun userMessage(sentences: List<String>, context: List<ContextLine>, game: String? = null, names: List<String> = emptyList()): String {
+    /**
+     * Ekran çevirisinde her yazının en çok karakter sayısı: özgün uzunluğun %15 fazlası (en az 4); çeviri özgün yazının
+     * yerine, aynı boyda sığsın diye kısa söyleyiş istenir (Mac ve Windows ile aynı).
+     */
+    fun screenLimits(sentences: List<String>): List<Int> = sentences.map { maxOf(4, kotlin.math.ceil(it.length * 1.15).toInt()) }
+
+    /**
+     * Ekran çevirisinin günlüğe yazılacak sorunu ([com.couchsubs.mobile.core.DropLog]): boş döndü, aslıyla aynı döndü
+     * (İngilizce kaldı) ya da [screenLimits] sınırını aştı. Sorun yoksa null. Mac/iPhone (AIRequest.screenIssue) ve
+     * Windows (AiRequest.ScreenIssue) aynı.
+     */
+    fun screenIssue(source: String, translation: String, limit: Int): String? {
+        val trimmed = translation.trim()
+        if (trimmed.isEmpty()) return "motor boş çeviri döndü"
+        if (trimmed.lowercase() == source.trim().lowercase() && source.any { it.isLetter() }) {
+            return "çeviri aslıyla aynı döndü, İngilizce kaldı"
+        }
+        if (trimmed.length > limit) return "%115 sınırını aştı (${trimmed.length}/$limit)"
+        return null
+    }
+
+    /** Karakter sınırlarının istemdeki açıklaması (küfür kuralı: sansür ve yumuşatma yok). */
+    const val LIMITS_NOTE = "On-screen texts (menus, objectives, labels): each Turkish translation must fit in the place of the English text. Use at most the number of characters given for it in this JSON array, in the same order; choose shorter Turkish wording, but keep the meaning and never censor or soften profanity."
+
+    fun userMessage(sentences: List<String>, context: List<ContextLine>, game: String? = null, names: List<String> = emptyList(),
+                    limits: List<Int>? = null): String {
         val parts = mutableListOf<String>()
         if (!game.isNullOrEmpty()) parts.add("Game: $game")
         if (names.isNotEmpty()) parts.add("Character names (keep them exactly as written, do not translate them): ${names.joinToString(", ")}")
@@ -751,6 +776,7 @@ object AiRequest {
             }
             parts.add(lines.joinToString("\n"))
         }
+        if (limits != null && limits.size == sentences.size) parts.add(LIMITS_NOTE + "\n[" + limits.joinToString(",") + "]")
         val list = JSONArray(sentences).toString()
         parts.add("Translate each string in this JSON array into Turkish. Reply with only a JSON array of ${sentences.size} " +
             "Turkish strings in the same order.\n$list")
@@ -765,9 +791,11 @@ object AiRequest {
         // Yerel model sunucusu (yalnız LOCAL); [thinkingOff]: Ollama'da düşünmeyi kapatan alanlar gitsin mi.
         server: LocalAiServer? = null,
         thinkingOff: Boolean = true,
+        // Ekran çevirisinin yazı başına karakter sınırları ([screenLimits]); altyazıda yok.
+        limits: List<Int>? = null,
     ): AiHttpRequest {
         val trimmed = key.trim()
-        val user = userMessage(sentences, context, game, names)
+        val user = userMessage(sentences, context, game, names, limits)
         val system = systemPrompt(instruction)
         return when (provider) {
             AiProvider.GEMINI -> {
@@ -1036,6 +1064,9 @@ class AiTranslator(
 
     override val logName: String get() = provider.id
 
+    /** Ekran çevirisinin boş, aslıyla aynı ya da sınırı aşan yanıtı altyazı günlüğüne ([com.couchsubs.mobile.core.DropLog]). */
+    private val drops = com.couchsubs.mobile.core.DropLog()
+
     /** Tek çeviri çağrısında istek ve tüm önbellek işlemleri aynı talimat anlık görüntüsünü kullanır. */
     override fun translate(text: String): String {
         val previous = enterInstructionScope()
@@ -1082,12 +1113,15 @@ class AiTranslator(
             countRequest()
             try {
                 val request = AiRequest.build(provider, key, model, sentences, emptyList(), AiRequest.SCREEN_OUTPUT_TOKENS, game,
-                    instruction = scope.instruction, server = server, thinkingOff = thinkingOff)
+                    instruction = scope.instruction, server = server, thinkingOff = thinkingOff, limits = AiRequest.screenLimits(sentences))
                 val (status, body) = http.send("POST", request.url, request.headers, request.body, SCREEN_TIMEOUT_MS)
                 if (status !in 200..299) throw AiRequest.error(status, body)
                 val translated = AiRequest.translations(AiRequest.text(provider, body), sentences.size)
                 succeeded()
-                for ((index, translation) in chunk.zip(translated)) {
+                val limits = AiRequest.screenLimits(sentences)
+                for ((offset, pair) in chunk.zip(translated).withIndex()) {
+                    val (index, translation) = pair
+                    AiRequest.screenIssue(texts[index], translation, limits[offset])?.let { drops.note("translateAll", it, texts[index]) }
                     results[index] = translation
                     cache.store(cacheKey(texts[index], game), translation)
                 }
