@@ -40,12 +40,29 @@ public static partial class SpeakerPrefix
         if (!match.Success) return null;
         var name = match.Groups[1].Value;
         var body = trimmed[match.Length..].Trim();
-        if (name.Length > MaxNameLength) return null;
-        // "İpucu": büyük noktalı İ, sistem dilinden bağımsız küçük i sayılır.
-        if (!name.Contains(' ') && NotNames.Contains(name.Replace('İ', 'i').ToLowerInvariant())) return null;
+        if (!IsName(name)) return null;
         if (!body.Any(char.IsLetter) || body.StartsWith('/')) return null;
         return new Split(name, body);
     }
+
+    /// <summary>
+    /// Tek başına okunan konuşan adı ("Lucia:", "JASON :"): ardında cümle yok; ad değilse ("Note:", "10:") null. Yazı
+    /// tanıma renkli adı cümleden ayrı satır okuyabiliyor; ad cümleye katılmazsa düşüyordu (<see cref="Reading.JoiningRows"/>).
+    /// Mac (SpeakerPrefix.nameOnly) ve Android (SpeakerPrefix.nameOnly) ile aynı.
+    /// </summary>
+    public static string? NameOnly(string text)
+    {
+        var trimmed = text.Trim();
+        var match = Pattern().Match(trimmed);
+        if (!match.Success || match.Length != trimmed.Length) return null;
+        var name = match.Groups[1].Value;
+        return IsName(name) ? name : null;
+    }
+
+    /// <summary>Ad uzunluğu aşılmamış ve tek sözcükse oyun başlığı ("Note", "Objective") değil.</summary>
+    private static bool IsName(string name) =>
+        // "İpucu": büyük noktalı İ, sistem dilinden bağımsız küçük i sayılır.
+        name.Length <= MaxNameLength && (name.Contains(' ') || !NotNames.Contains(name.Replace('İ', 'i').ToLowerInvariant()));
 
     /// <summary>
     /// Gösterilecek metin: çeviri <paramref name="source"/>'un baştaki adıyla başlar ("ARTHUR: Gitmeliyiz.");

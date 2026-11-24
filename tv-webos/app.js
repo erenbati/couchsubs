@@ -6,7 +6,7 @@
   'use strict';
 
   // TV uygulamasının sürümü: appinfo.json, tv-tizen/config.xml ve tv-android/app/build.gradle ile aynı tutulur.
-  var APP_VERSION = '0.9.81';
+  var APP_VERSION = '0.9.98';
   var t = window.t;
   var config = window.COUCHSUBS_CONFIG || {};
   var platform = window.COUCHSUBS_PLATFORM;
@@ -73,10 +73,38 @@
 
   function $(id) { return document.getElementById(id); }
 
+  // Bağlı bilgisayar/telefon `link` olayında kendi paketindeki TV uygulamasının sürümünü (`latest`) bildirir. Bu
+  // sürümden eskiyse panel "TV uygulaması eski" der: kullanıcı TV'deki eski uygulamayı panelin fotoğrafından da görür
+  // (GitHub #1199: LG'de 0.9.71 kalmıştı, düzeltme 0.9.94'teydi). Eski bilgisayar/telefon `latest` göndermez.
+  var senderLatest = '';
+
+  // Sürüm karşılaştırması (0.9.100 > 0.9.99); yalnız rakam ve nokta.
+  function versionNewer(a, b) {
+    var x = String(a).split('.'), y = String(b).split('.');
+    for (var i = 0; i < Math.max(x.length, y.length); i++) {
+      var p = parseInt(x[i] || '0', 10) || 0, q = parseInt(y[i] || '0', 10) || 0;
+      if (p !== q) return p > q;
+    }
+    return false;
+  }
+
+  function outdatedText() {
+    return senderLatest && versionNewer(senderLatest, APP_VERSION) ? t('appOutdated').replace('%1', senderLatest) : '';
+  }
+
+  function renderVersion() {
+    var el = $('app-version');
+    if (!el) return;
+    var outdated = outdatedText();
+    el.textContent = APP_VERSION + (outdated ? ' · ' + outdated : '');
+    el.className = outdated ? 'bad' : 'muted';
+  }
+
   function renderDiag() {
     var el = $('st-diag');
     if (!el) return;
-    el.textContent = 'sub ' + diag.subtitles + ' · clear ' + diag.clears + ' · drop ' + diag.drops +
+    var outdated = outdatedText();
+    el.textContent = (outdated ? outdated + ' · ' : '') + 'sub ' + diag.subtitles + ' · clear ' + diag.clears + ' · drop ' + diag.drops +
       ' · bg ' + diag.backgrounded + (diag.revived ? ' · revived ' + diag.revived : '') + ' · hide ' + diag.lastHide + ' · ' + diag.place +
       (window.__screenSaverStatus ? ' · saver ' + window.__screenSaverStatus : '') +
       (diag.error ? ' · err ' + diag.error : '');
@@ -606,11 +634,14 @@
   // Metnin parçaları: [{text, color}] (renksiz parçada color null). Ad yalnız satır başında aranır ve yalnız "Ad:"
   // boyanır; cümle ve bölünmüş devam satırları kullanıcının yazı renginde kalır (TV 0.9.79; önceden bütün satır
   // boyanıyor, "Yazı rengi" beyazken altyazı renkli görünüyordu).
-  function speakerSegments(text, map) {
+  // wholeLine (Karakter Adı › "Tüm Satır", style.wholeLine): ad ve cümle, devam satırlarıyla birlikte sonraki konuşanın
+  // adına dek o konuşanın renginde (Mac, iPhone, Windows ve Android ile aynı).
+  function speakerSegments(text, map, wholeLine) {
     if (!map) return [{ text: text, color: null }];
     var segments = [];
     var start = 0;
     var lineStart = 0;
+    var running = null;
     while (lineStart <= text.length) {
       var found = null;
       var end = 0;
@@ -626,24 +657,31 @@
         }
       }
       if (found) {
-        if (lineStart > start) segments.push({ text: text.slice(start, lineStart), color: null });
-        segments.push({ text: text.slice(lineStart, end), color: map[found] });
-        start = end;
+        if (lineStart > start) segments.push({ text: text.slice(start, lineStart), color: running });
+        if (wholeLine) {
+          running = map[found];
+          start = lineStart;
+        } else {
+          segments.push({ text: text.slice(lineStart, end), color: map[found] });
+          start = end;
+        }
       }
       var next = text.indexOf('\n', lineStart);
       if (next < 0) break;
       lineStart = next + 1;
     }
-    if (start < text.length || !segments.length) segments.push({ text: text.slice(start), color: null });
+    if (start < text.length || !segments.length) segments.push({ text: text.slice(start), color: running });
     return segments;
   }
 
   // Yeni arayüzdeki "Karakter Adı" rengi yalnız adı boyar (style.nameOnly). 0.9.79'dan beri speakerSegments zaten
   // yalnız "Ad:" bölümünü renkli verir; bu ayrım yeni arayüzle uyum için kalıyor (cümle hiçbir durumda boyanmaz).
   var speakerNameOnly = false;
+  // Karakter Adı › Tüm Satır (style.wholeLine): cümle de konuşanın renginde. Alanı göndermeyen bilgisayarda yalnız ad.
+  var speakerWholeLine = false;
 
   function paintSpeakers(el, text, map) {
-    var segments = speakerSegments(text, map);
+    var segments = speakerSegments(text, map, speakerWholeLine);
     if (segments.length === 1 && !segments[0].color) return;
     el.textContent = '';
     for (var i = 0; i < segments.length; i++) {
@@ -653,7 +691,7 @@
       }
       var colored = segments[i].text;
       var rest = '';
-      if (speakerNameOnly) {
+      if (speakerNameOnly && !speakerWholeLine) {
         var colon = colored.search(/[:：]/);
         if (colon >= 0) {
           rest = colored.slice(colon + 1);
@@ -662,7 +700,8 @@
       }
       var span = document.createElement('span');
       span.className = 'speaker';
-      span.style.color = segments[i].color;
+      span.baseColor = segments[i].color;
+      span.style.color = dimmedColor(el.id, segments[i].color);
       span.textContent = colored;
       el.appendChild(span);
       if (rest) el.appendChild(document.createTextNode(rest));
@@ -676,7 +715,7 @@
   // Android ve OBS (SubtitleWrap) hâlâ 42 karakter kuralını uygular.
   var WRAP_MAX_CHARS = 42;
   var WRAP_MAX_LINES = 3;
-  var WRAP_MIN_SCALE = 0.75;
+  var WRAP_MIN_SCALE = 1;
   var fontBase = 46;
 
   function wrapTokens(text) {
@@ -802,56 +841,35 @@
     return { text: candidate, scale: Math.max(WRAP_MIN_SCALE, Math.min(1, room / widest)) };
   }
 
-  // "Örtsün"de yazı boyu kararlıdır (Mac/Windows: CoverFontScale, OBS katmanı: coverWrap). Kullanıcının seçtiği boy
-  // kullanılır, örtü çeviriye göre genişler; yazı ancak 3 satıra sığmıyorsa bir kademe küçülür (seçilen boyun %80'i), asla
-  // büyütülmez ve daha fazla küçülmez. Küçülen boy yazı boyu ayarı değişene dek kalır: ardışık satırlarda boy bir büyük bir
-  // küçük zıplamasın (eskiden her satır kendi genişliğine göre %75'e kadar ve piksel piksel küçülüyordu).
-  var COVER_STEP = 0.8;
-  var coverScale = 1;
-  var coverFont = null;
+  // "Örtsün"de yazı boyu sabittir (Mac/Windows: CoverFontScale, OBS katmanı: coverWrap): her satır kullanıcının seçtiği
+  // boyda, örtü çeviriye göre genişler. Yazı 3 satıra sığmıyorsa küçülmez: 3 dengeli satıra bölünür, tarayıcı daha uzun
+  // satırı kendisi böler ve örtü onunla büyür. X'te bildirildi (beta.89, TV 0.9.84; "Örtsün" + "Yazı kadar"): eskiden
+  // 3 satıra sığmayan tek bir satır yazıyı %80'e indiriyor, boy ayarı değişene dek öyle bırakıyordu; TV'de yazı boyu
+  // satırdan satıra değişiyor, çeviri sıkışıyordu.
 
-  // Sabit çarpanla 42 karakter kuralı (ölçüm yapılamayan tarayıcıda): satır başına 42 / çarpan karakter, en çok 3 satır.
-  function wrapAt(text, scale) {
-    var cap = Math.floor(WRAP_MAX_CHARS / scale);
+  // Sabit boyda 42 karakter kuralı (ölçüm yapılamayan tarayıcıda): satır başına 42 karakter, en çok 3 satır.
+  function wrapAt(text) {
     var length = Array.from ? Array.from(text).length : text.length;
-    if (length <= cap || text.indexOf('\n') >= 0) return { text: text, scale: scale };
+    if (length <= WRAP_MAX_CHARS || text.indexOf('\n') >= 0) return { text: text, scale: 1 };
     var words = wrapTokens(text);
-    if (words.length < 2) return { text: text, scale: scale };
-    var lines = Math.min(WRAP_MAX_LINES, Math.max(2, Math.ceil(length / cap)));
-    return { text: wrapBalance(words, Math.min(lines, words.length)), scale: scale };
+    if (words.length < 2) return { text: text, scale: 1 };
+    var lines = Math.min(WRAP_MAX_LINES, Math.max(2, Math.ceil(length / WRAP_MAX_CHARS)));
+    return { text: wrapBalance(words, Math.min(lines, words.length)), scale: 1 };
   }
 
-  // Örtü modunda satırın bölünmesi ve yazı boyu çarpanı (1 ya da COVER_STEP). shrink: satır bu boyda ekrana sığmadı
-  // (setLineText yükseklik sınırını aşınca çağırır).
-  function coverWrap(text, el, base, cover, shrink) {
-    if (coverFont !== base) {
-      coverFont = base;
-      coverScale = 1;
-    }
-    if (shrink) coverScale = COVER_STEP;
-    if (text.indexOf('\n') >= 0) return { text: text, scale: coverScale };
+  // Örtü modunda satırın bölünmesi; yazı boyu çarpanı hep 1.
+  function coverWrap(text, el, base, cover) {
+    if (text.indexOf('\n') >= 0) return { text: text, scale: 1 };
     var words = wrapTokens(text);
-    function attempt(scale) {
-      var size = Math.round(base * scale);
-      var viewport = (document.documentElement.clientWidth || window.innerWidth || 1920) / (window.COUCHSUBS_ZOOM || 1);
-      var room = viewport * WRAP_WIDTH - size;
-      var width = lineWidths(el, text, size);
-      if (!width || room <= 0) return null;
-      if (words.length < 2) return { text: text, fits: width <= room };
-      var shaped = wrapToCover(text, words, el, size, room, cover);
-      return shaped ? { text: shaped.text, fits: true }
-        : { text: wrapBalance(words, Math.min(WRAP_MAX_LINES, words.length)), fits: false };
-    }
-    var result = attempt(coverScale);
-    if (!result) {
-      if (coverScale === 1 && wrapSubtitle(text).scale < 1) coverScale = COVER_STEP;
-      return wrapAt(text, coverScale);
-    }
-    if (!result.fits && coverScale === 1) {
-      coverScale = COVER_STEP;
-      result = attempt(coverScale) || result;
-    }
-    return { text: result.text, scale: coverScale };
+    var viewport = (document.documentElement.clientWidth || window.innerWidth || 1920) / (window.COUCHSUBS_ZOOM || 1);
+    var room = viewport * WRAP_WIDTH - base;
+    var width = lineWidths(el, text, base);
+    if (!width || room <= 0) return wrapAt(text);
+    if (words.length < 2) return { text: text, scale: 1 };
+    var shaped = wrapToCover(text, words, el, base, room, cover);
+    if (shaped) return shaped;
+    // 3 satıra sığmadı: aynı boyda 3 dengeli satır, tarayıcı uzun satırı kendisi böler.
+    return { text: wrapBalance(words, Math.min(WRAP_MAX_LINES, words.length)), scale: 1 };
   }
 
   function wrapSubtitle(text, el, size, cover) {
@@ -877,7 +895,7 @@
     // Sabit yazı boyu "Örtsün" ve "Yazı kadar" zeminde (Mac, Windows ve OBS katmanı ile aynı); bant eskisi gibi bölünür.
     var cover = paragraphs ? null : coverSize(textId);
     var stable = cover && !bandShape;
-    var wrapped = paragraphs ? { text: text, scale: 1 } : stable ? coverWrap(text, el, baseSize, cover, false)
+    var wrapped = paragraphs ? { text: text, scale: 1 } : stable ? coverWrap(text, el, baseSize, cover)
       : wrapSubtitle(text, el, baseSize, cover);
     el.rawText = text;
     el.speakers = speakers || null;
@@ -886,27 +904,9 @@
     el.style.whiteSpace = 'pre-line';
     var size = Math.round(baseSize * wrapped.scale);
     el.style.fontSize = size + 'px';
-    // Altyazı kutusu ekranın alt dörtte birini geçmez ve dengeli bölünmüş satırlar korunur: 3 satıra bölünüp %75'e
-    // küçültülse de genişliğe sığmayan yazıda tarayıcı kendiliğinden yeni satır açıyordu. Yazı, hem yükseklik sınırına
-    // hem bölünmüş satır sayısına sığana dek küçülür. Görev paneli gibi satır satır yazılar bu sınırın dışındadır.
-    // Gizli satır (display: none) ölçülemez, 0 yüksekliğiyle döngüye girmez.
     if (paragraphs) return fitBox(el);
-    var limit = (document.documentElement.clientHeight || window.innerHeight || 1080) / (window.COUCHSUBS_ZOOM || 1) * SUBTITLE_MAX_HEIGHT;
-    var lines = wrapped.text.split('\n').length;
-    // Örtü: yazı piksel piksel küçülmez; sığmazsa bir kez kademeye iner ve orada kalır (bkz. coverWrap).
-    if (stable) {
-      if (coverScale === 1 && (el.offsetHeight > limit || extraLines(el, lines))) {
-        wrapped = coverWrap(text, el, baseSize, cover, true);
-        el.textContent = wrapped.text;
-        paintSpeakers(el, wrapped.text, el.speakers);
-        el.style.fontSize = Math.round(baseSize * wrapped.scale) + 'px';
-      }
-      return fitBox(el);
-    }
-    while (size > SUBTITLE_MIN_FONT && (el.offsetHeight > limit || extraLines(el, lines))) {
-      size -= 1;
-      el.style.fontSize = size + 'px';
-    }
+    // Konuşma altyazısı hiçbir modda küçülmez ve sıkıştırılmaz (TV uygulaması 0.9.92): uzun satır bölünür, kutu büyür.
+    // Önceden "Üstünde" ve bantta sığmayan satır %75'e, yükseklik sınırına göre daha da küçülüyordu.
     fitBox(el);
   }
 
@@ -977,8 +977,10 @@
     shownParagraphs = !!paragraphs;
     holdUntil = shownAt + Math.min(HOLD_MAX_MS, 2000 + text.length * 60);
     currentBox = validBox(box);
-    // "Örtsün": oyundaki altyazının yeri gelmezse son bilinen yer örtülür (Mac, Windows ve OBS katmanı ile aynı).
-    if (!currentBox && placement === 'cover' && !paragraphs) currentBox = lastCoverBox;
+    // Oyundaki altyazının yeri gelmezse son bilinen yer kullanılır (Mac, Windows ve OBS katmanı ile aynı): "Örtsün"de orası
+    // örtülür, "Üstünde"/"Altında"da çeviri onun üstünde/altında kalır. Eskiden "Üstünde"de yeri gelmeyen satır sabit
+    // yüksekliğe (alttan %7) iniyor, alttaki İngilizce satırın üstüne biniyordu (X, beta.89, TCL Android TV).
+    if (!currentBox && placement !== 'fixed' && !paragraphs) currentBox = lastCoverBox;
     if (currentBox && !paragraphs) lastCoverBox = currentBox;
     setLineText('subtitle-text', text, paragraphs, fontBase, speakers);
     $('subtitle-text').style.textAlign = paragraphs ? 'left' : '';
@@ -1386,6 +1388,16 @@
       // küçük boyda da sığmıyorsa satır kırılır.
       var singleOriginal = boxHeight <= line * 1.6 + 2 * pad * height;
       var bubble = styled && item.bubble === true;
+      if (styled && !bubble) {
+        // Özgün görünüşlü çeviri özgün yazının birebir yerinde ve boyunda (fitStyled).
+        if (reuse) {
+          kept.push(el);
+          if (host.children[order] !== el) host.insertBefore(el, host.children[order] || null);
+          order++;
+        } else host.appendChild(el);
+        fitStyled(el, item, box, width, height, pad, line);
+        continue;
+      }
       var label = styled && !bubble && item.text.indexOf('\n') < 0 && (item.text.split(/\s+/).length <= 2 || singleOriginal);
       if (styled) floor = Math.max(label ? 10 : SCREEN_MIN_FONT, Math.round(size * (label ? STYLED_LABEL_MIN_SCALE : STYLED_MIN_SCALE)));
       if (bubble) {
@@ -1437,6 +1449,127 @@
     }
   }
 
+  // Özgün görünüşlü çeviri ("Ekranı çevir", otomatik ekran yazısı) özgün yazının birebir yerinde ve boyunda (TV uygulaması
+  // 0.9.85): yazı boyu özgün satır yüksekliğinden gelir ve hiç küçülmez; yazının alanı özgün yazının kutusudur, kenar payı
+  // onun dışındadır. Türkçe uzunsa önce yazı yalnız yatayda %20'ye kadar sıkıştırılır (harf yüksekliği aynı kalır), sığmazsa
+  // kutu bilgisayarın verdiği alana (room: simgelere, fotoğrafa ve komşu yazıya kadar) hizasının tersine doğru genişler, yine
+  // sığmazsa sıkıştırma %30'a iner; o da yetmezse son çare olarak etiket yana, paragraf aşağı uzar. Kenar payı alanın dışına
+  // taşmaz: simgeyi örtmez.
+  // Önceden sığmayan sekme %60'a kadar küçülüyor (şerit iki ayrı boyda), kenar payı ve genişleme tuş simgesinin üstüne
+  // biniyordu (#859, #860). Satır aralığı özgün satırlarınki (rows): iki satırlık açıklama iki satırda kalır.
+  // Yatay sıkıştırma yalnız tek satırlık kısa etikette (menü sekmesi, düğme) ve en çok %10 (TV uygulaması 0.9.92). Çok
+  // satırlı ya da uzun yazı (görev açıklaması, oyunun konuşma altyazısı) hiç sıkıştırılmaz: satır kırılır, yazı boyu aynı
+  // kalır, kutu aşağı uzar. Önceden paragraf da %30'a kadar sıkışıyor, altyazının harfleri yatayda ezik görünüyordu (X, beta.90).
+  var FIT_FIRST_SQUEEZE = 0.9;
+  var FIT_MIN_SQUEEZE = 0.85;
+  var FIT_SQUEEZE_STEP = 0.05;
+
+  function fitStyled(el, item, box, width, height, pad, line) {
+    var label = item.text.indexOf('\n') < 0 && !(item.rows > 1);
+    var x0 = box.left * width, x1 = box.right * width, y0 = box.top * height, y1 = box.bottom * height;
+    var room = validBox(item.room);
+    // Alanı göndermeyen bilgisayarda: kısa etiket (en çok iki sözcük) her yana kendi genişliği kadar, uzun yazı yalnız
+    // kenar payı kadar.
+    var words = item.text.split(/\s+/).length;
+    var spare = label && words <= 2 ? x1 - x0 : pad * width;
+    var r0 = room ? Math.min(x0, room.left * width) : Math.max(0, x0 - spare);
+    var r1 = room ? Math.max(x1, room.right * width) : Math.min(width, x1 + spare);
+    var padX = pad * width, padY = pad * height;
+    var rows = label ? 1 : (item.rows > 1 ? item.rows : Math.max(1, Math.round((y1 - y0) / Math.max(1, line))));
+    var size = Math.max(10, Math.min(96 * height / 1080, Math.round(line * 0.95)));
+    var align = item.style && item.style.align;
+    if (align !== 'center' && align !== 'right') align = 'left';
+    var inner = document.createElement('span');
+    while (el.firstChild) inner.appendChild(el.firstChild);
+    el.appendChild(inner);
+    var pitch = Math.max(1, (y1 - y0) / rows) + 'px';
+    inner.style.display = 'block';
+    inner.style.whiteSpace = label ? 'nowrap' : (item.paragraphs === true ? 'pre-line' : 'normal');
+    el.style.whiteSpace = label ? 'nowrap' : '';
+    inner.style.lineHeight = pitch;
+    el.style.fontSize = size + 'px';
+    el.style.lineHeight = pitch;
+    el.style.top = (y0 - padY) + 'px';
+    el.style.minHeight = '';
+    // Sıkıştırılan yazının kutusu sağ kenarı yerinde kalarak sola doğru genişletilir ve sağ kenarından ölçeklenir: görünen
+    // yeri yazının alanıdır, sığmayan yarı sola taşar (kaydırma payına girmez; eski Chromium dönüşümü saymıyordu).
+    inner.style.transformOrigin = '100% 50%';
+    inner.style.webkitTransformOrigin = '100% 50%';
+    var a = x0, b = x1, squeeze = 1;
+    function place() {
+      var pl = Math.min(padX, Math.max(0, a - r0)), pr = Math.min(padX, Math.max(0, r1 - b));
+      el.style.left = (a - pl) + 'px';
+      el.style.width = (b - a + pl + pr) + 'px';
+      el.style.padding = padY + 'px ' + pr + 'px ' + padY + 'px ' + pl + 'px';
+      // Yükseklik en az özgün kutununki; kesirli piksel yuvarlaması yazıyı kutudan taşırmasın diye sabit değil.
+      el.style.minHeight = (y1 - y0 + 2 * padY) + 'px';
+      inner.style.width = ((b - a) / squeeze) + 'px';
+      var scale = squeeze === 1 ? '' : 'scaleX(' + squeeze + ')';
+      inner.style.transform = scale;
+      inner.style.webkitTransform = scale;
+      inner.style.marginLeft = ((b - a) - (b - a) / squeeze) + 'px';
+    }
+    function fits() {
+      return label ? inner.scrollWidth <= (b - a) / squeeze + 1 : inner.scrollHeight <= (y1 - y0) + 1;
+    }
+    // Genişleme: önce hizanın tersine (sola yaslı sağa, sağa yaslı sola, ortalı iki yana), alan bitince öbür yana.
+    function widen(extra) {
+      var left = 0, right = 0;
+      if (align === 'left') right = extra;
+      else if (align === 'right') left = extra;
+      else { left = extra / 2; right = extra / 2; }
+      var freeLeft = Math.max(0, a - r0), freeRight = Math.max(0, r1 - b);
+      var overRight = Math.max(0, right - freeRight), overLeft = Math.max(0, left - freeLeft);
+      right = Math.min(freeRight, right + overLeft);
+      left = Math.min(freeLeft, left + overRight);
+      a -= left;
+      b += right;
+    }
+    place();
+    // Önce yalnız yatay sıkıştırma (GTA 6 gibi oyunların yazısı zaten dar), sonra alanın içinde genişleme, en son daha
+    // çok sıkıştırma: çeviri olabildiğince özgün yazının kendi kutusunda kalır.
+    function squeezeTo(least) {
+      while (!fits() && squeeze > least + 1e-6) {
+        squeeze = Math.max(least, Math.round((squeeze - FIT_SQUEEZE_STEP) * 100) / 100);
+        place();
+      }
+    }
+    squeezeTo(FIT_FIRST_SQUEEZE);
+    if (!fits()) {
+      if (label) {
+        widen(inner.scrollWidth * squeeze - (b - a) + 1);
+        place();
+      } else {
+        var step = Math.max(4, (x1 - x0) * 0.1);
+        // Paragraf yalnız hizasının tersine genişler: satırların başladığı kenar özgün yazınınkiyle aynı kalır.
+        while (!fits() && (align === 'right' ? a > r0 + 0.5 : align === 'left' ? b < r1 - 0.5 : a > r0 + 0.5 && b < r1 - 0.5)) {
+          if (align === 'left') b = Math.min(r1, b + step);
+          else if (align === 'right') a = Math.max(r0, a - step);
+          else { a = Math.max(r0, a - step / 2); b = Math.min(r1, b + step / 2); }
+          place();
+        }
+      }
+    }
+    squeezeTo(FIT_MIN_SQUEEZE);
+    if (fits()) return;
+    // Son çare (yazı kesilmez, küçülmez): kısa etiket (en çok iki sözcük) ekran içinde yana, uzun yazı aşağı uzar.
+    if (label && words > 2) {
+      label = false;
+      inner.style.whiteSpace = 'normal';
+      el.style.whiteSpace = '';
+      // Satıra inen yazı sıkıştırılmaz.
+      squeeze = 1;
+      place();
+    }
+    if (label) {
+      r0 = 0;
+      r1 = width;
+      widen(inner.scrollWidth * squeeze - (b - a) + 1);
+      place();
+    }
+    // Uzun yazıda kutunun yüksekliği sabit değil (en az özgün kutununki): yazı sığana kadar aşağı uzar.
+  }
+
   function showScreen(items, duration) {
     var host = $('screen');
     // "Ekran çevriliyor…" yazısı sonuçların üstünde kalmasın.
@@ -1465,6 +1598,11 @@
   // hepsini kaldırır. Ana altyazıya dokunulmaz.
 
   var regionBoxes = {};
+  // Güvenlik ağı (#1198): telefon kartı dışındaki alan, gönderici REGION_LIFE_MS boyunca ne yeniler ne temizlerse
+  // kendiliğinden kalkar. Gönderici gösterdiği alanları her 5 sn'de bir "keep" bayrağıyla yeniden gönderir (Mac, iPhone:
+  // SubtitleServer.refreshRegions, Windows: RefreshRegions, Android: refreshRegions); kaçan temizleme komutu yüzünden
+  // oyundan kalkmış yazının çevirisi TV'de sonsuza dek kalmaz. Eski göndericiler yenilemez: alan 15 sn'de kalkar.
+  var REGION_LIFE_MS = 15000;
   var REGION_PAD = 0.004;
   var REGION_MIN_FONT = 18;
   var REGION_MAX_FONT = 44;
@@ -1480,11 +1618,19 @@
     var blocks = Array.isArray(data.blocks) ? data.blocks : null;
     var kind = blocks && blocks.length ? 'region-blocks' : 'region';
     var el = regionBoxes[id];
+    var now = Date.now();
+    // Göndericinin yenilemesi (keep): aynı alan yeniden çizilmez, katmanların sırası değişmez; yalnız ömrü uzar.
+    var raw = JSON.stringify([data.text, data.box, data.line || 0, data.icons || null, data.blocks || null]);
+    if (data.keep === true && el && el.couchsubsRaw === raw) {
+      el.couchsubsSeen = now;
+      return;
+    }
     // Oyun telefonunun aynı gönderisi yeniden çizilmez; değişen gönderi yerinde güncellenir (placeItems, placePanel).
     var phoneBlocks = id === 'game-phone' && kind === 'region-blocks';
     var payload = phoneBlocks ? JSON.stringify(blocks) + JSON.stringify(box) : null;
     if (phoneBlocks && el && el.className === kind && el.couchsubsPayload === payload) {
       el.couchsubsStamp = ++regionStamp;
+      el.couchsubsSeen = now;
       return;
     }
     // Bloklar her olayda baştan dizilir; tek kutudan bloklara (ya da tersine) geçen alanın eski kutusu kalkar.
@@ -1499,6 +1645,8 @@
       regionBoxes[id] = el;
     }
     $('regions').className = '';
+    el.couchsubsRaw = raw;
+    el.couchsubsSeen = now;
     // En son gelen alan, kendisiyle aynı yeri çizen eski alanın önüne geçer (resolveLayers).
     el.couchsubsStamp = ++regionStamp;
     el.couchsubsBox = box;
@@ -1716,6 +1864,29 @@
     else if (sub.bottom + down <= height) setSubtitleShift(0, down);
   }
 
+  // Ömrü dolan alanları kaldırır (telefon kartı hariç: onu gönderici kendisi kaldırır). Kaldırılanların kimlikleri döner.
+  function expireRegions(now) {
+    var gone = [];
+    for (var id in regionBoxes) {
+      if (!Object.prototype.hasOwnProperty.call(regionBoxes, id) || id === 'game-phone') continue;
+      if (now - (regionBoxes[id].couchsubsSeen || 0) >= REGION_LIFE_MS) gone.push(id);
+    }
+    for (var i = 0; i < gone.length; i++) hideRegion(gone[i]);
+    return gone;
+  }
+
+  // TV yeniden bağlandı: gönderici o an gösterdiği alanların kimliklerini yollar ("region-sync"), ardından her birini
+  // "keep" ile yeniden gönderir. Listede olmayan alan (kopukken kaçan temizleme komutu) kalkar.
+  function syncRegions(data) {
+    var ids = data && Array.isArray(data.ids) ? data.ids : [];
+    var gone = [];
+    for (var id in regionBoxes) {
+      if (Object.prototype.hasOwnProperty.call(regionBoxes, id) && ids.indexOf(id) < 0) gone.push(id);
+    }
+    for (var i = 0; i < gone.length; i++) hideRegion(gone[i]);
+    return gone;
+  }
+
   function hideRegions() {
     for (var id in regionBoxes) {
       if (Object.prototype.hasOwnProperty.call(regionBoxes, id)) $('regions').removeChild(regionBoxes[id]);
@@ -1742,6 +1913,7 @@
   }
 
   var SIDE_MIN = 0.05;
+  var PLACE_GAP = 0.024;
 
   // Altyazıyı seçilen yerleşime göre konumlar. İngilizce altyazının yeri bilinmiyorsa sabit yükseklik kullanılır.
   function layout() {
@@ -1759,7 +1931,10 @@
     if (!box || el.className === 'hidden') return avoidRegions();
 
     var height = (document.documentElement.clientHeight || window.innerHeight || 1080) / (window.COUCHSUBS_ZOOM || 1);
-    var gap = Math.round(height * 0.012);
+    // "Üstünde"/"Altında": çevirinin kutusu ile İngilizce satır arasında ekran yüksekliğinin %2,4'ü (1080'de 26 piksel,
+    // 46 piksellik yazıda satır yüksekliğinin ~%45'i) boşluk. Eskiden %1,2 (13 piksel) idi; oyunun bildirdiği kutu harflere
+    // sıkı oturduğundan çevirinin zemini İngilizce yazıya değiyormuş gibi görünüyordu (X, beta.90). OBS katmanı ile aynı.
+    var gap = Math.round(height * PLACE_GAP);
     var mode = placement;
     // Ekranın kenarında yer yoksa öbür yana geçilir.
     if (mode === 'below' && box.bottom > 0.88) mode = 'above';
@@ -1779,10 +1954,11 @@
       // Zemini örtü verir; çevirinin kendi yarı saydam zemini örtünün üstünde ikinci bir kutu gibi görünmesin.
       $('subtitle-text').style.background = 'transparent';
     } else if (mode === 'above') {
-      el.style.bottom = Math.round((1 - box.top) * height + gap) + 'px';
+      // Katmanda TV resmi büyütüp büyütmediği bilinmez (OVERLAY_ZOOM): iki yerin de üstünde kalınır, çakışma olmaz.
+      el.style.bottom = Math.round((1 - Math.min(box.top, currentBox.top)) * height + gap) + 'px';
     } else {
       el.style.bottom = 'auto';
-      el.style.top = Math.round(box.bottom * height + gap) + 'px';
+      el.style.top = Math.round(Math.max(box.bottom, currentBox.bottom) * height + gap) + 'px';
     }
     keepOnScreen(el, cover);
     avoidRegions();
@@ -1882,6 +2058,47 @@
   // Bilgisayardaki "Yazı rengi" seçimi; bilinmeyen değer gelirse renk değişmez.
   var TEXT_COLORS = { white: '#FFFFFF', yellow: '#FFE135' };
 
+  // Zemin "Koyu" (%100) mü ve rengi ne. Koyu zeminde önceki satırların kutusu da tam opaktır; soluklaştırma yalnız
+  // yazıya uygulanır (aşağıda dimmedColor). Eskiden kutunun kendisi %75/%60 saydamlaşıyor (style.css, #subtitle-prev
+  // opacity) ve zemin ayrıca %83'e iniyordu: OLED'de karanlık sahnede önceki satırlar gri kutu gibi görünüyordu.
+  var solidBackground = false;
+  var backgroundRgb = [0, 0, 0];
+  var textColorValue = '#FFFFFF';
+  // Önceki satırların soluklukları (style.css'teki #subtitle-prev / #subtitle-prev2 opaklığıyla aynı).
+  var PREVIOUS_DIM = { 'subtitle-prev-text': 0.75, 'subtitle-prev2-text': 0.6 };
+
+  // Siyah seçeneği (#101014) ve eski varsayılan (#0c0e12) TV'de saf siyah (#000) çizilir. OLED'de piksel kapanır;
+  // 16/16/20 gibi "neredeyse siyah" ise karanlık sahnede ve HDR'de oyunun gerçek siyahının üstünde gri kalkıyordu.
+  // Lacivert, koyu gri gibi renkli seçenekler olduğu gibi kalır.
+  function tvBackgroundRgb(rgb) {
+    return Math.max(rgb[0], rgb[1], rgb[2]) <= 24 ? [0, 0, 0] : rgb;
+  }
+
+  // Koyu zeminde önceki satırın yazı rengi: kutu opak kaldığı için soluklaştırma, rengin zemine doğru karıştırılmasıyla
+  // yapılır (opak zeminde opaklıkla aynı sonuç). Koyu değilse ya da renk "#RRGGBB" değilse renk olduğu gibi kalır;
+  // o zaman soluklaştırmayı style.css'teki opaklık yapar.
+  function dimmedColor(id, color) {
+    var factor = PREVIOUS_DIM[id];
+    var rgb = hexRgb(color);
+    if (!solidBackground || !factor || !rgb) return color;
+    var mixed = [];
+    for (var i = 0; i < 3; i++) mixed.push(Math.round(backgroundRgb[i] + (rgb[i] - backgroundRgb[i]) * factor));
+    return 'rgb(' + mixed.join(', ') + ')';
+  }
+
+  // Önceki satırların yazı ve konuşan adı renklerini güncel zemine göre yeniden boyar (ayar değişince).
+  function paintPreviousColors() {
+    for (var id in PREVIOUS_DIM) {
+      if (!PREVIOUS_DIM.hasOwnProperty(id)) continue;
+      var el = $(id);
+      el.style.color = dimmedColor(id, textColorValue);
+      var spans = el.getElementsByTagName('span');
+      for (var i = 0; i < spans.length; i++) {
+        if (spans[i].baseColor) spans[i].style.color = dimmedColor(id, spans[i].baseColor);
+      }
+    }
+  }
+
   // "#RRGGBB" → [r, g, b]; geçersizse null.
   function hexRgb(hex) {
     if (typeof hex !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(hex)) return null;
@@ -1905,17 +2122,23 @@
       var alpha = Math.max(0, Math.min(100, style.background)) / 100;
       // Zemin saydamsa yazıya sert kontur eklenir (style.css, body.thin-bg).
       setBodyClass('thin-bg', alpha < 0.5);
-      // Saf siyah değil, hafif mavimsi siyah (#0c0e12): oyun görüntüsünün üstünde daha yumuşak durur. Yeni arayüz
-      // zemin rengini gönderir (style.backgroundColor, "#RRGGBB"); göndermeyen bilgisayarda eski renk.
-      var rgb = hexRgb(style.backgroundColor) || [12, 14, 18];
+      // Yeni arayüz zemin rengini gönderir (style.backgroundColor, "#RRGGBB"); göndermeyen bilgisayarda siyah.
+      // Siyah seçeneği saf siyah çizilir (tvBackgroundRgb).
+      var rgb = tvBackgroundRgb(hexRgb(style.backgroundColor) || [0, 0, 0]);
       var base = rgb[0] + ', ' + rgb[1] + ', ' + rgb[2];
-      textBackground = 'rgba(' + base + ', ' + alpha + ')';
-      coverBackground = style.background >= 100 ? 'rgb(' + base + ')' : textBackground;
+      backgroundRgb = rgb;
+      // "Koyu" (%100): bütün kutular (önceki satırlar ve örtü dahil) tam opak; yarı saydam katman kalmaz.
+      solidBackground = style.background >= 100;
+      setBodyClass('solid-bg', solidBackground);
+      textBackground = solidBackground ? 'rgb(' + base + ')' : 'rgba(' + base + ', ' + alpha + ')';
+      coverBackground = textBackground;
+      var previousBackground = solidBackground ? textBackground : 'rgba(' + base + ', ' + (alpha * 0.83).toFixed(2) + ')';
       $('subtitle-text').style.background = textBackground;
-      $('subtitle-prev-text').style.background = 'rgba(' + base + ', ' + (alpha * 0.83).toFixed(2) + ')';
-      $('subtitle-prev2-text').style.background = 'rgba(' + base + ', ' + (alpha * 0.83).toFixed(2) + ')';
+      $('subtitle-prev-text').style.background = previousBackground;
+      $('subtitle-prev2-text').style.background = previousBackground;
     }
     speakerNameOnly = style.nameOnly === true;
+    speakerWholeLine = style.wholeLine === true;
     // Ayarı göndermeyen bilgisayar (eski Windows sürümü, Mac) eski davranışı bekler: önceki satırlar üstte kalır.
     // Yoksa bir kez kapatılan ayar başka bilgisayara bağlanınca da kapalı kalırdı.
     stackPrevious = typeof style.stackPrevious === 'boolean' ? style.stackPrevious : true;
@@ -1929,10 +2152,10 @@
     // Yeni arayüzün yazı rengi (style.textHex) eski beyaz/sarı seçiminin önüne geçer.
     var textColor = hexRgb(style.textHex) ? style.textHex : TEXT_COLORS[style.textColor];
     if (textColor) {
+      textColorValue = textColor;
       $('subtitle-text').style.color = textColor;
-      $('subtitle-prev-text').style.color = textColor;
-      $('subtitle-prev2-text').style.color = textColor;
     }
+    paintPreviousColors();
     // Ekrandaki yazı yeni ayarlarla yeniden bölünür: yazı boyu, kalınlık, yerleşim ve bant bölmeyi değiştirir.
     var shown = rawText('subtitle-text');
     if ($('subtitle-text').rawText !== undefined && shown) setLineText('subtitle-text', shown, !!shownParagraphs, fontBase, $('subtitle-text').speakers);
@@ -2205,6 +2428,9 @@
     // Yeni bilgisayar/telefon akışın kimliğini bildirir; TV her ping'de alındı gönderir (bkz. sendAck).
     onEvent('link', function (data) {
       linkId = /^[A-Za-z0-9]{1,64}$/.test(data.id || '') ? data.id : null;
+      senderLatest = /^[0-9.]{1,20}$/.test(data.latest || '') ? data.latest : '';
+      renderVersion();
+      renderDiag();
       sendAck();
     });
     onEvent('subtitle', function (data) {
@@ -2226,6 +2452,7 @@
     onEvent('screen-clear', hideScreen);
     onEvent('region', showRegion);
     onEvent('region-clear', hideRegions);
+    onEvent('region-sync', syncRegions);
     onEvent('exit', function () { leaving = true; platform.exit(); });
     onEvent('style', applyStyle);
     onEvent('speech', function (data) { if (data.url && data.url.charAt(0) === '/' && data.url.charAt(1) !== '/') playSpeech(authenticatedUrl(server, data.url)); });
@@ -2254,6 +2481,7 @@
   }
 
   setInterval(watchConnection, 10000);
+  setInterval(function () { expireRegions(Date.now()); }, 1000);
 
   // --- Alındı ---
   // Ping yalnız bilgisayardan/telefondan TV'ye gidiyordu: TV uygulaması arka plana düşüp askıya alınınca (LG, Android TV)
@@ -3090,19 +3318,22 @@
   // Uygulama zaten açıkken yeniden başlatılırsa (ör. CouchSubs onu öne getirdiğinde) parametreler burada gelir.
   // Aynı adresle yeniden açılış (bekçi PS tuşundan sonra uygulamayı öne getirdi): bağlantı açık değilse hemen kurulur.
   platform.onRelaunch(function (raw) {
+    // LG: kurulumdan sonra webOS eski sayfayı tuttuysa öne gelişte diskteki yeni sürüm yüklenir (tv-webos/platform.js).
+    if (platform.reloadIfStale) platform.reloadIfStale(APP_VERSION);
     var before = connectionGeneration;
     applyParams(parseParams(raw));
     if (connectionGeneration === before && !document.hidden) reviveStream();
   });
 
   platform.init();
+  if (platform.reloadIfStale) platform.reloadIfStale(APP_VERSION);
   window.applyI18n();
   formatKeys();
   var savedBottom = load('bottom') || load('appBottom');
   if (savedBottom) setBottom(Number(savedBottom));
   startHdmi();
 
-  $('app-version').textContent = APP_VERSION;
+  renderVersion();
   watchPictureWindow();
   renderDiag();
   renderWaitingStatus();

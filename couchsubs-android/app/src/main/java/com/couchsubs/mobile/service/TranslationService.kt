@@ -439,6 +439,8 @@ class TranslationService : Service() {
     @Volatile private var subtitlePhone: com.couchsubs.mobile.core.ScreenPhoneCard.Handset? = null
     private var subtitlePhoneAt = Long.MIN_VALUE / 2
     @Volatile private var playsGta6 = false
+    /** "Telefon çevirisi kapalı, açmak ister misiniz?" ipucu (oturumda bir kez; [com.couchsubs.mobile.core.GamePhoneHint]). */
+    private val gamePhoneHint = com.couchsubs.mobile.core.GamePhoneHint()
     @Volatile private var phoneTracking = false
     @Volatile private var phoneOpen = false
 
@@ -557,6 +559,9 @@ class TranslationService : Service() {
         super.onCreate()
         settings = AppSettings(this)
         current = this
+        // Kendi günlüğü olmayan bileşenlerin (ScreenPresence, translateAll) düşen satır notları logcat'e (Mac/iPhone
+        // ve Windows'ta altyazı günlüğü); "Günlükleri paylaş" bunları da toplar.
+        com.couchsubs.mobile.core.DropLog.sink = { Log.i(TAG, it) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -624,6 +629,9 @@ class TranslationService : Service() {
         settings.lastHealth = null
         settings.translating = true
         Backend.breadcrumb("çeviri: başlıyor (${settings.target.name}, ${settings.engine.name}, paketler ${settings.packsEnabled})")
+        // Oturum başı ayar özeti: telefon okuyucusunun açık mı kapalı mı olduğu günlükte görünsün (#1202).
+        Log.i(TAG, "oturum başladı: " + com.couchsubs.mobile.settings.SessionLogSummary.of(settings.autoScreenText, settings.readsGamePhone))
+        gamePhoneHint.reset()
         // Çevrimiçi motor satırı ücretsiz çeviriye bıraktığında nedeni günlüğe gider (Mac/Windows ile aynı).
         com.couchsubs.mobile.translation.SentenceTranslator.fallbackLog = Backend::breadcrumb
         startedAt = System.currentTimeMillis()
@@ -676,6 +684,13 @@ class TranslationService : Service() {
             runCatching { com.couchsubs.mobile.tv.TvAppUpdate.reported(applicationContext, version) }
                 .onFailure { Log.w(TAG, "TV uygulaması sürümü işlenemedi: ${it.message}") }
         }
+        // Telefondaki TV paketinin sürümü `link` olayıyla TV'ye gider; TV daha eskiyse paneli "TV uygulaması eski" der
+        // (GitHub #1199). TV seçilmemişse LG paketi (sürümler aynı). Windows, Mac ve iPhone ile aynı.
+        subtitleServer.latestTvAppVersion = runCatching {
+            val tvApps = com.couchsubs.mobile.tv.TvAppUpdate
+            tvApps.bundledVersion(applicationContext, settings.installedTv?.brand ?: com.couchsubs.mobile.tv.TvBrand.LG)
+                ?: tvApps.bundledVersion(applicationContext, com.couchsubs.mobile.tv.TvBrand.LG)
+        }.getOrNull()
         subtitleServer.sendsToTv = settings.target.showsOnTv
         subtitleServer.speakerColors = settings.speakerColors
         subtitleServer.setApart = settings.setTextApart
@@ -697,6 +712,7 @@ class TranslationService : Service() {
                 tvReconnecting = if (count > 0) false else it.tvReconnecting) }
             if (count > 0) tvReconnectTimer?.cancel(false)
             else if (before > 0 && LiveState.status.value.running && settings.target.showsOnTv) markTvReconnecting()
+            if (count == 0) com.couchsubs.mobile.tv.TvAppUpdate.disconnected()
             if (before == 0 && count > 0) Telemetry.event(Telemetry.TV_CONNECTED, "count" to count)
             // TV uygulaması bağlandı: bu Samsung TV'de kurulu olduğu artık biliniyor (liste "yok" demiş olsa da).
             if (count > 0) settings.installedTv?.takeIf { it.brand == com.couchsubs.mobile.tv.TvBrand.SAMSUNG }
@@ -784,6 +800,13 @@ class TranslationService : Service() {
             noticeAreas = emptyList()
             onNoticesChanged = { areas -> noticeAreas = areas }
             onPackMissed = { text -> linePool.offer(text) }
+            // Telefon ayarı kapalıyken GTA 6 telefonunun listesi altyazı yolunda sahne yazısı sayılırsa oturumda bir kez ipucu.
+            onSceneTextDropped = { reason ->
+                if (gamePhoneHint.observe(reason, settings.readsGamePhone, playedGame)) {
+                    Log.i(TAG, "telefon çevirisi kapalı: telefon listesi altyazı sayılmadı ($reason), ipucu gösterildi")
+                    LiveState.update { it.copy(gamePhoneHint = true) }
+                }
+            }
             // Altyazı alanında okunup sahne yazısı sayılan bloklar nedeniyle günlüğe (GitHub #822).
             onLog = { Log.i(TAG, it) }
             onPairShown = { pair ->
@@ -816,6 +839,8 @@ class TranslationService : Service() {
             readPhone = { flat -> areaReader.read(RegionPixels(flat.nv21, flat.width, flat.height, 0L)) }).apply {
             prefetchesTranslations = earlyTranslator != null
             subtitleEcho = com.couchsubs.mobile.core.SubtitleEcho.shared
+            // Ek alanda (telefon mesajı, görev, bildirim) okunup çevrilmeyen yazının nedeni altyazı günlüğüne.
+            onLog = { Log.i(TAG, it) }
             // Ayarlar'daki ekran yazısı türleri (telefon, görev, yardım/eylemler, menüler, diğer).
             allows = { kind -> settings.screenTextAllows(kind) }
             // "GTA 6 Telefon Mesajları: Yanda Panel / Balonların Üstünde"; panelin yazısı altyazı boyutuyla (Mac ile aynı).
@@ -867,6 +892,18 @@ class TranslationService : Service() {
             if (screenRequested.compareAndSet(true, false)) startScreen(frame)
             else if (screenRefreshRequested.compareAndSet(true, false)) startScreen(frame, refresh = true)
             else followTick(frame, now)
+            // Çevirisi gösterilen ekran yazıları hâlâ yerinde mi: özgün yazı kalkınca çevirisi de bu karede kalkar
+            // (ScreenPresence; Mac/iPhone/Windows aynı). Parlaklık karenin Y düzleminden okunur.
+            server?.let { live ->
+                val buffer = frame.buffer
+                val limit = buffer.capacity()
+                live.observe { box ->
+                    com.couchsubs.mobile.core.ScreenPresence.patch(box, frame.width, frame.height) { x, y ->
+                        val index = y * frame.rowStride + x
+                        if (index < limit) buffer.get(index).toInt() and 0xFF else 0
+                    }
+                }
+            }
             // Menü açıkken (tekerlek, duraklatma menüsü) altyazı okunmaz: menünün alt ortadaki etiketleri altyazı sanılmasın.
             val inMenu = detector.menu
             if (inMenu != loggedMenu) {
@@ -964,7 +1001,11 @@ class TranslationService : Service() {
                     }
                 }
             }
-            PlayedGame.start(xboxConsole?.name?.ifEmpty { "Xbox" } ?: console!!.name.ifEmpty { console.host }, settings, startedAt)
+            // Xbox çalışan oyunu bildirmez: Xbox için son seçilen oyun kendiliğinden kullanılır; yoksa Oyun satırı vurgulanır
+            // ve günlükte tek satır (Windows, Mac, iPhone ile aynı).
+            PlayedGame.log = { Log.i(TAG, it) }
+            PlayedGame.start(xboxConsole?.name?.ifEmpty { "Xbox" } ?: console!!.name.ifEmpty { console.host }, settings, startedAt,
+                xbox = xboxConsole != null)
             // Oyun iki dakikada tanınmazsa kart açılır (ayar ve ortak havuz açıksa, oturumda bir kez).
             background.scheduleWithFixedDelay({ PlayedGame.checkAsk(System.currentTimeMillis()) }, 15, 15, TimeUnit.SECONDS)
             // Bağlıyken iki dakikada bir PS5'e çalışan oyun sorulur (Xbox'ta bu soru yok; oyun paketten tanınır).
@@ -1071,13 +1112,14 @@ class TranslationService : Service() {
     @Volatile private var screenReader: SubtitleReader? = null
 
     /**
-     * Çeviri sürerken basmak onu durdurur. Sonuçlar ekrandayken basınca kare yine okunur: ekran değiştiyse (telefonda
-     * başka sohbet) yenisi çevrilir, değişmediyse sonuçlar kalkar (Mac/iPhone ve Windows ile aynı).
+     * Çeviri sürerken ya da sonuçlar ekrandayken basmak ("Çevirileri kaldır") çeviriyi hemen kapatır: kare yeniden
+     * okunmaz, önbellekten yeniden çizilmez (iPhone ile aynı). Önceden sonuçlar ekrandayken basınca kare yine okunuyor,
+     * oyunda yazılar biraz değişince ekran baştan çevriliyordu: "kapat"a basınca kapanmıyor, yazılar üst üste
+     * biniyordu (#1182). Telefonda başka sohbete geçince kart kendiliğinden yenilenir ([followTick]).
      */
     private fun toggleScreen() {
         val server = server ?: return
-        val state = LiveState.status.value.screenState
-        if (state == LiveStatus.ScreenState.WORKING) {
+        if (LiveState.status.value.screenState != LiveStatus.ScreenState.IDLE) {
             hideScreen()
             return
         }
@@ -1085,23 +1127,17 @@ class TranslationService : Service() {
             server.sendSubtitle(getString(R.string.screen_no_picture), 4000)
             return
         }
-        val shown = state == LiveStatus.ScreenState.SHOWN
         // Düğmeye basıldı: süren telefon izlemesi bırakılır; yeni çeviri telefonu yeniden izlemeye başlar.
         screenFollow = null
         screenRefreshRequested.set(false)
-        screenRecheck = shown
         // Yeni kuşak: önceki sonuçların süresi dolup yeni okumayı kesmez.
         screenGeneration.incrementAndGet()
         LiveState.update { it.copy(screenState = LiveStatus.ScreenState.WORKING) }
         server.sendStyle(settings.style)
-        if (!shown) server.sendSubtitle(getString(R.string.screen_translating), 2500)
+        server.sendSubtitle(getString(R.string.screen_translating), 2500)
         screenRequested.set(true)
     }
 
-    /** Sonuçlar ekrandayken basıldı: okunan kare öncekiyle aynıysa sonuçlar kalkar. */
-    @Volatile private var screenRecheck = false
-    /** Ekrandaki sonuçların okunduğu karenin yazı izi ([ScreenTranslation.fingerprint]). */
-    @Volatile private var screenFingerprint = ""
     /** Ekrandaki son sonuçlar ve kalkacakları an (ms): telefon kartı izlenirken süre bunlarla uzatılır. */
     @Volatile private var screenShown: List<ScreenTranslation.Item> = emptyList()
     @Volatile private var screenShownUntil = 0L
@@ -1215,8 +1251,6 @@ class TranslationService : Service() {
         screenFollow = null
         screenShown = emptyList()
         screenShownUntil = 0L
-        screenRecheck = false
-        screenFingerprint = ""
         screenTask?.cancel(true)
         screenTask = null
         server?.clearScreen()
@@ -1255,18 +1289,6 @@ class TranslationService : Service() {
                 // Altyazı zaten kendi yerinde çevriliyor: ekran çevirisinde ikinci kez çizilmez (bkz. SubtitleEcho).
                 val echo = com.couchsubs.mobile.core.SubtitleEcho.shared
                 val reading = echo.filter(read, geometry = echo.hasRecent)
-                val fingerprint = ScreenTranslation.fingerprint(reading)
-                if (screenRecheck && !refresh) {
-                    if (screenGeneration.get() != generation) return@Runnable
-                    if (ScreenTranslation.isSameScreen(fingerprint, screenFingerprint)) {
-                        hideScreen()
-                        return@Runnable
-                    }
-                    server.sendSubtitle(getString(R.string.screen_translating), 2500)
-                }
-                val wasShown = screenRecheck && !refresh
-                if (!refresh) screenRecheck = false
-                screenFingerprint = fingerprint
                 // Yapay zekâda ekranın bütün yazıları tek istekte gider (bkz. AiTranslator.translateAll).
                 val translator = engineTranslator(free.separate())
                 // Yazıların içindeki kumanda simgeleri okunan kareden kesilir (ButtonIcons). Çeviriler özgün yazının
@@ -1287,7 +1309,7 @@ class TranslationService : Service() {
                 if (!refresh) server.clear()
                 if (items.isEmpty()) {
                     // Yeni karede yazı yok: önceki ekranın sonuçları da kalkar.
-                    if (wasShown || refresh) hideScreen()
+                    if (refresh) hideScreen()
                     LiveState.update { it.copy(screenState = LiveStatus.ScreenState.IDLE) }
                     if (!refresh) server.sendSubtitle(getString(R.string.screen_none), 2500)
                 } else {
@@ -1331,7 +1353,8 @@ class TranslationService : Service() {
             lastOcrMs = ocrMs
             current.process(result, area.box,
                 com.couchsubs.mobile.core.RegionSignature.of(pixels.nv21, pixels.width, pixels.height),
-                capturedAt, ocrMs, phone, reused = reused)
+                capturedAt, ocrMs, phone, reused = reused,
+                darkInk = com.couchsubs.mobile.core.InkTone.sampler(pixels.gray))
         } catch (error: java.util.concurrent.TimeoutException) {
             pipeline?.noteReadFailure(error)
             // Okuma süresinde bitmedi: takılan tanıyıcı bırakılır, sonraki kare yenisiyle okunur (yoksa yeni okuma da

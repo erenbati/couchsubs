@@ -116,31 +116,49 @@ public sealed class Reading
     /// tanıma cümleden ayrı okuyabiliyor; parçalar yalnız üst kenarlarına göre dizilince ad cümlenin sonuna düşüyor ya da
     /// ayrı blok sayılıp atılıyordu. Yatayda aralarında en çok <see cref="RowGap"/> (alan genişliğine oranla) olan
     /// parçalar birleşir; uzaktaki köşe yazısı ayrı kalır (Mac: Reading.joiningRows, Android: Reading.joiningRows).
+    ///
+    /// Tek başına okunan konuşan adı ("Lucia:", <see cref="SpeakerPrefix.NameOnly"/>) cümlesine katılır: aynı satırdaysa
+    /// daha gevşek ölçüyle (renkli adın kutusu cümleninkinden kaymış ya da biraz uzak okunabiliyor; <see cref="NameRowOverlap"/>,
+    /// <see cref="NameRowGap"/>), cümlenin hemen üstündeyse (<see cref="NameAboveGap"/>) altındaki satırın başına. Kullanıcı
+    /// bildirimi (X): konuşan adı diyalogların yalnız ~%20'sinde görünüyordu. Ayrı satır kalan ad, aynı kişi konuşmayı
+    /// sürdürdükçe değişmeden durduğu için görev/HUD satırı sayılıp (<see cref="StickyRows"/>) atılıyor, ad yalnız konuşan
+    /// değişince görünüyordu; aynı satırda ama ayrı okunan ad ise ayrı blok sayılıp hiç gösterilmiyordu. Yerleri
+    /// bilinmeyen satırlarda ad alttaki satıra katılır.
     /// </summary>
     public Reading JoiningRows()
     {
-        if (Lines.Count < 2 || Lines.Any(line => line.Box is null)) return this;
+        if (Lines.Count < 2) return this;
+        if (Lines.Any(line => line.Box is null)) return JoiningSpeakerNames();
         var rows = new List<TextLine>();
         foreach (var line in Lines.OrderBy(line => line.Box!.Value.Left))
         {
             var box = line.Box!.Value;
-            var index = rows.FindIndex(row => SameRow(box, row.Box!.Value));
+            var index = rows.FindIndex(row =>
+                SameRow(box, row.Box!.Value) || (SpeakerPrefix.NameOnly(row.Text) is not null && NameRow(box, row.Box!.Value)));
             if (index >= 0)
             {
                 var row = rows[index];
-                double? confidence = row.Confidence is { } a && line.Confidence is { } b ? Math.Min(a, b) : row.Confidence ?? line.Confidence;
-                rows[index] = new TextLine(row.Text + " " + line.Text, row.Box!.Value.Union(box), confidence);
+                rows[index] = new TextLine(row.Text + " " + line.Text, row.Box!.Value.Union(box), MinConfidence(row, line));
             }
             else
             {
                 rows.Add(line);
             }
         }
-        return new Reading(rows.OrderBy(row => row.Box!.Value.Top));
+        return new Reading(rows.OrderBy(row => row.Box!.Value.Top)).JoiningSpeakerNames();
     }
 
     /// <summary><see cref="JoiningRows"/>: aynı satırdaki iki parça arasındaki en büyük boşluk (alan genişliğine oranla).</summary>
     public const double RowGap = 0.05;
+    /// <summary>Tek başına okunan adın sağındaki cümle aynı satırda sayılır: dikeyde küçük yüksekliğin en az bu kadarı örtüşür,</summary>
+    public const double NameRowOverlap = 0.3;
+    /// <summary>ve aralarındaki boşluk en çok bu kadar (alan genişliğine oranla).</summary>
+    public const double NameRowGap = 0.12;
+    /// <summary>Tek başına okunan adın altındaki cümle ona aittir: aradaki boşluk en çok satır yüksekliğinin bu katı.</summary>
+    public const double NameAboveGap = 1.5;
+
+    private static double? MinConfidence(TextLine a, TextLine b) =>
+        a.Confidence is { } x && b.Confidence is { } y ? Math.Min(x, y) : a.Confidence ?? b.Confidence;
 
     private static bool SameRow(TextBox next, TextBox row)
     {
@@ -148,6 +166,68 @@ public sealed class Reading
         var smaller = Math.Min(next.Bottom - next.Top, row.Bottom - row.Top);
         if (smaller <= 0 || overlap < smaller * 0.6) return false;
         return next.Left - row.Right <= RowGap;
+    }
+
+    /// <summary><paramref name="next"/>, solundaki tek başına ad (<paramref name="name"/>) ile aynı satırda mı.</summary>
+    private static bool NameRow(TextBox next, TextBox name)
+    {
+        var overlap = Math.Min(next.Bottom, name.Bottom) - Math.Max(next.Top, name.Top);
+        var smaller = Math.Min(next.Bottom - next.Top, name.Bottom - name.Top);
+        if (smaller <= 0 || overlap < smaller * NameRowOverlap) return false;
+        return next.Left - name.Right <= NameRowGap;
+    }
+
+    /// <summary>
+    /// Tek başına okunan ad, altındaki cümle satırının başına katılır (bkz. <see cref="JoiningRows"/>). Satırın kutusu
+    /// cümleninkidir, yatayda adı da kapsar: yükseklik cümle satırınınki kalır, blok ayırma ve yazı boyu karşılaştırması bozulmaz.
+    /// </summary>
+    private Reading JoiningSpeakerNames()
+    {
+        var result = Lines.ToList();
+        var index = 0;
+        while (index < result.Count)
+        {
+            if (SpeakerPrefix.NameOnly(result[index].Text) is not { } name || SentenceBelow(index, result) is not { } partner)
+            {
+                index++;
+                continue;
+            }
+            var line = result[partner];
+            var label = result[index];
+            var box = line.Box;
+            if (line.Box is { } own && label.Box is { } named)
+                box = new TextBox(Math.Min(own.Left, named.Left), own.Top, Math.Max(own.Right, named.Right), own.Bottom);
+            result[partner] = new TextLine(name + ": " + line.Text.Trim(), box, MinConfidence(label, line));
+            result.RemoveAt(index);
+        }
+        return result.Count == Lines.Count ? this : new Reading(result);
+    }
+
+    /// <summary>
+    /// <paramref name="index"/>teki tek başına adın cümlesi: altındaki (üst kenarı adın ortasının altında), aradaki boşluğu
+    /// satır yüksekliğinin en çok <see cref="NameAboveGap"/> katı olan, yatayda adla örtüşen en yakın satır. Satır kendisi
+    /// adla başlamaz, harf taşır. Yerler bilinmiyorsa hemen sonraki satır.
+    /// </summary>
+    private static int? SentenceBelow(int index, List<TextLine> lines)
+    {
+        static bool Sentence(string text) =>
+            text.Any(char.IsLetter) && SpeakerPrefix.NameOnly(text) is null && SpeakerPrefix.Parse(text) is null;
+        if (lines[index].Box is not { } name)
+        {
+            var next = index + 1;
+            return next < lines.Count && lines[next].Box is null && Sentence(lines[next].Text) ? next : null;
+        }
+        var height = name.Bottom - name.Top;
+        int? best = null;
+        for (var other = index + 1; other < lines.Count; other++)
+        {
+            if (lines[other].Box is not { } box || !Sentence(lines[other].Text)) continue;
+            var gap = box.Top - name.Bottom;
+            if (box.Top < name.Top + height / 2 || gap > NameAboveGap * Math.Max(height, box.Bottom - box.Top)) continue;
+            if (Math.Min(box.Right, name.Right) - Math.Max(box.Left, name.Left) <= 0) continue;
+            if (best is null || box.Top < lines[best.Value].Box!.Value.Top) best = other;
+        }
+        return best;
     }
 
     /// <summary>
@@ -164,11 +244,12 @@ public sealed class Reading
     /// çevrilir. Önceden ortalanmış blok yokken altyazı seçilip ekranın ortasında çiziliyordu. <paramref name="age"/>:
     /// satırın ne kadar süredir değişmeden okunduğu (<see cref="StickyRows.UnchangedMs"/>); verilirse
     /// <see cref="StaleMs"/>'dir değişmeyen ortalı blok, yanında yeni beliren ortalı blok varken seçilmez, atlanan blok
-    /// <paramref name="stale"/> ile bildirilir.
+    /// <paramref name="stale"/> ile bildirilir. <paramref name="darkInk"/>: satır kutusu açık zeminde koyu yazı mı
+    /// (<see cref="InkTone.Sampler"/>; kâğıt ilan sahne yazısıdır, GitHub #1124); verilmezse renge bakılmaz.
     /// </summary>
     public Reading SubtitleBlock(TextBox area, SubtitleBand? band = null, Action<Reading, string>? dropped = null,
                                  Action<Reading>? notices = null, Func<string, long?>? age = null,
-                                 Action<Reading>? stale = null)
+                                 Action<Reading>? stale = null, Func<TextBox, bool>? darkInk = null)
     {
         if (Lines.Count == 0 || Lines.Any(line => line.Box is null)) return IsActionLabel ? Empty : this;
         var blocks = new List<List<TextLine>>();
@@ -183,7 +264,7 @@ public sealed class Reading
         var candidates = blocks.SelectMany(WithoutSignLines).Select(block => new Reading(block)).Where(reading =>
         {
             if (reading.IsMenu || reading.IsActionLabel) return false;
-            if (SceneText.Reason(reading, area, band) is not { } reason) return true;
+            if (SceneText.Reason(reading, area, band, darkInk) is not { } reason) return true;
             dropped?.Invoke(reading, reason);
             return false;
         }).Where(reading =>

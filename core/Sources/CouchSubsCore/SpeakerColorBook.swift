@@ -2,18 +2,15 @@
 
 import Foundation
 
-/// Konuşana göre renk (v2): oturum boyunca (çeviri başlayınca sıfırlanır) her kişiye bir renk. Yazı tanımanın yakın
-/// okuması aynı kişidir ("Mattia", "Mattla", "Mattia." aynı renk); yeni kişi, mümkünse başka kişilerin renginden ve renk
-/// ailesinden ayrı bir renk alır (iki mavi tonlu kişi yan yana karışmasın). Kurallar ve ortak test vektörü:
-/// scripts/speaker_colors_ref.py, docs/speaker-colors-vectors.json (Windows ve Android aynı sırada aynı rengi verir).
+/// Konuşana göre renk (v3): oturum boyunca (çeviri başlayınca sıfırlanır) her kişiye bir renk. Yazı tanımanın yakın
+/// okuması aynı kişidir ("Mattia", "Mattla", "Mattia." aynı renk). Yeni kişi addan hesaplanan tabanı alır; taban başka
+/// birinin rengiyse ya da tonu onlarınkine `minHueGap` dereceden yakınsa, kullanılmayan renklerden tonu kullanılanlara en
+/// uzak olan verilir (konuşan iki kişi yan yana karışmasın; ikinci kişi çoğu zaman karşı tonu alır). Kurallar ve ortak
+/// test vektörü: scripts/speaker_colors_ref.py, docs/speaker-colors-vectors.json (Windows ve Android aynı sırada aynı
+/// rengi verir).
 public final class SpeakerColorBook: @unchecked Sendable {
-    /// Palet renklerinin aileleri: aynı ailedeki iki renk ekranda birbirine benzer.
-    public static let families: [String: Character] = [
-        "#FFD54F": "A", "#FFB74D": "A", "#FF8A65": "A",
-        "#4FC3F7": "B", "#4DD0E1": "B", "#90CAF9": "B",
-        "#81C784": "C", "#AED581": "C",
-        "#CE93D8": "D", "#F06292": "D",
-    ]
+    /// Yeni kişinin tabanı, kullanılan renklerin tonlarına en az bu kadar (derece) uzaksa olduğu gibi alınır.
+    public static let minHueGap = 72
 
     private let lock = NSLock()
     private var people: [(key: String, color: String)] = []
@@ -48,15 +45,36 @@ public final class SpeakerColorBook: @unchecked Sendable {
             }
             if let known = people.first(where: { Self.samePerson($0.key, key) }) { return known.color }
             let palette = SpeakerColors.palette
-            let base = Int(SpeakerColors.hash(key) % UInt32(palette.count))
-            let used = Set(people.map(\.color))
-            let usedFamilies = Set(used.compactMap { Self.families[$0] })
-            let order = (0..<palette.count).map { palette[(base + $0) % palette.count] }
-            let pick = order.first { !used.contains($0) && !usedFamilies.contains(Self.families[$0]!) }
-                ?? order.first { !used.contains($0) } ?? palette[base]
+            let pick = palette[Self.pick(base: Int(SpeakerColors.hash(key) % UInt32(palette.count)),
+                                         used: people.compactMap { palette.firstIndex(of: $0.color) })]
             people.append((key, pick))
             return pick
         }
+    }
+
+    /// Yeni kişinin palet sırası: `base` kullanılmıyor ve kullanılan her tondan en az `minHueGap` uzaksa `base`; değilse
+    /// kullanılmayanlardan kullanılanlara en uzak tonlu olan (eşitlikte `base`'den palet sırasıyla ilki); hepsi
+    /// kullanılıyorsa `base`. `used`: kullanılan renklerin palet sıraları (kullanıcının seçtiği palet dışı renk sayılmaz).
+    static func pick(base: Int, used: [Int]) -> Int {
+        guard !used.isEmpty else { return base }
+        if !used.contains(base), hueGap(base, used) >= minHueGap { return base }
+        let count = SpeakerColors.palette.count
+        var best: Int?
+        for step in 0..<count {
+            let index = (base + step) % count
+            guard !used.contains(index) else { continue }
+            if best == nil || hueGap(index, used) > hueGap(best!, used) { best = index }
+        }
+        return best ?? base
+    }
+
+    /// `index` renginin tonunun kullanılan renklerin tonlarına en yakın uzaklığı (derece, çember üzerinde).
+    static func hueGap(_ index: Int, _ used: [Int]) -> Int {
+        let hues = SpeakerColors.hues
+        return used.map { other in
+            let difference = abs(hues[index] - hues[other])
+            return min(difference, 360 - difference)
+        }.min() ?? 360
     }
 
     /// Çeviri yeniden başladı: kişiler unutulur.

@@ -10,7 +10,7 @@ package com.couchsubs.mobile.core
 object SubtitleWrap {
     const val MAX_CHARS = 42
     const val MAX_LINES = 3
-    const val MIN_SCALE = 0.75
+    const val MIN_SCALE = 1.0
 
     data class Result(val text: String, val scale: Float)
 

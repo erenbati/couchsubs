@@ -9,7 +9,7 @@ import Foundation
 public enum SubtitleWrap {
     public static let maxChars = 42
     public static let maxLines = 3
-    public static let minScale = 0.75
+    public static let minScale = 1.0
 
     public struct Result: Equatable, Sendable {
         public var text: String

@@ -78,6 +78,15 @@ class Reading(lines: List<TextLine>) {
         /** [joiningRows]: aynı satırdaki iki parça arasındaki en büyük boşluk (alan genişliğine oranla). */
         const val ROW_GAP = 0.05
 
+        /** Tek başına okunan adın sağındaki cümle aynı satırda sayılır: dikeyde küçük yüksekliğin en az bu kadarı örtüşür, */
+        const val NAME_ROW_OVERLAP = 0.3
+
+        /** ve aralarındaki boşluk en çok bu kadar (alan genişliğine oranla). */
+        const val NAME_ROW_GAP = 0.12
+
+        /** Tek başına okunan adın altındaki cümle ona aittir: aradaki boşluk en çok satır yüksekliğinin bu katı. */
+        const val NAME_ABOVE_GAP = 1.5
+
         /**
          * Aynı bloğun satırları arasındaki en büyük boşluk (satır yüksekliğine oranla). GTA 6 gibi geniş satır aralıklı
          * altyazılarda 0,6 eşiği iki satırlı altyazıyı iki bloğa bölüyor, yalnız biri çevriliyordu (GitHub #822); 0,8 geri
@@ -154,13 +163,21 @@ class Reading(lines: List<TextLine>) {
      * tanıma cümleden ayrı okuyabiliyor; parçalar yalnız üst kenarlarına göre dizilince ad cümlenin sonuna düşüyor ya da
      * ayrı blok sayılıp atılıyordu. Yatayda aralarında en çok [ROW_GAP] (alan genişliğine oranla) olan parçalar
      * birleşir; uzaktaki köşe yazısı ayrı kalır (Mac: Reading.joiningRows, Windows: Reading.JoiningRows).
+     *
+     * Tek başına okunan konuşan adı ("Lucia:", [SpeakerPrefix.nameOnly]) cümlesine katılır: aynı satırdaysa daha gevşek
+     * ölçüyle (renkli adın kutusu cümleninkinden kaymış ya da biraz uzak okunabiliyor; [NAME_ROW_OVERLAP], [NAME_ROW_GAP]),
+     * cümlenin hemen üstündeyse ([NAME_ABOVE_GAP]) altındaki satırın başına. Kullanıcı bildirimi (X): konuşan adı
+     * diyalogların yalnız ~%20'sinde görünüyordu. Ayrı satır kalan ad, aynı kişi konuşmayı sürdürdükçe değişmeden durduğu
+     * için görev/HUD satırı sayılıp ([StickyRows]) atılıyor, ad yalnız konuşan değişince görünüyordu; aynı satırda ama ayrı
+     * okunan ad ise ayrı blok sayılıp hiç gösterilmiyordu. Yerleri bilinmeyen satırlarda ad alttaki satıra katılır.
      */
     fun joiningRows(): Reading {
-        if (lines.size < 2 || lines.any { it.box == null }) return this
+        if (lines.size < 2) return this
+        if (lines.any { it.box == null }) return joiningSpeakerNames()
         val rows = mutableListOf<TextLine>()
         for (line in lines.sortedBy { it.box!!.left }) {
             val box = line.box!!
-            val index = rows.indexOfFirst { sameRow(box, it.box!!) }
+            val index = rows.indexOfFirst { sameRow(box, it.box!!) || (SpeakerPrefix.nameOnly(it.text) != null && nameRow(box, it.box!!)) }
             if (index >= 0) {
                 val row = rows[index]
                 rows[index] = TextLine(row.text + " " + line.text, row.box!!.union(box))
@@ -168,7 +185,7 @@ class Reading(lines: List<TextLine>) {
                 rows.add(line)
             }
         }
-        return Reading(rows.sortedBy { it.box!!.top })
+        return Reading(rows.sortedBy { it.box!!.top }).joiningSpeakerNames()
     }
 
     private fun sameRow(next: TextBox, row: TextBox): Boolean {
@@ -176,6 +193,66 @@ class Reading(lines: List<TextLine>) {
         val smaller = minOf(next.bottom - next.top, row.bottom - row.top)
         if (smaller <= 0 || overlap < smaller * 0.6) return false
         return next.left - row.right <= ROW_GAP
+    }
+
+    /** [next], solundaki tek başına ad ([name]) ile aynı satırda mı ([NAME_ROW_OVERLAP], [NAME_ROW_GAP]). */
+    private fun nameRow(next: TextBox, name: TextBox): Boolean {
+        val overlap = minOf(next.bottom, name.bottom) - maxOf(next.top, name.top)
+        val smaller = minOf(next.bottom - next.top, name.bottom - name.top)
+        if (smaller <= 0 || overlap < smaller * NAME_ROW_OVERLAP) return false
+        return next.left - name.right <= NAME_ROW_GAP
+    }
+
+    /**
+     * Tek başına okunan ad, altındaki cümle satırının başına katılır (bkz. [joiningRows]). Satırın kutusu cümleninkidir,
+     * yatayda adı da kapsar: yükseklik cümle satırınınki kalır, blok ayırma ve yazı boyu karşılaştırması bozulmaz.
+     */
+    private fun joiningSpeakerNames(): Reading {
+        val result = lines.toMutableList()
+        var index = 0
+        while (index < result.size) {
+            val name = SpeakerPrefix.nameOnly(result[index].text)
+            val partner = if (name != null) sentenceBelow(index, result) else null
+            if (name == null || partner == null) {
+                index++
+                continue
+            }
+            val line = result[partner]
+            val label = result[index]
+            val own = line.box
+            val named = label.box
+            val box = if (own != null && named != null) {
+                TextBox(minOf(own.left, named.left), own.top, maxOf(own.right, named.right), own.bottom)
+            } else {
+                own
+            }
+            val confidence = listOfNotNull(label.confidence, line.confidence).minOrNull()
+            result[partner] = TextLine("$name: ${line.text.trim()}", box, confidence = confidence)
+            result.removeAt(index)
+        }
+        return if (result.size == lines.size) this else Reading(result)
+    }
+
+    /**
+     * [index]teki tek başına adın cümlesi: altındaki (üst kenarı adın ortasının altında), aradaki boşluğu satır
+     * yüksekliğinin en çok [NAME_ABOVE_GAP] katı olan, yatayda adla örtüşen en yakın satır. Satır kendisi adla başlamaz,
+     * harf taşır. Yerler bilinmiyorsa hemen sonraki satır.
+     */
+    private fun sentenceBelow(index: Int, lines: List<TextLine>): Int? {
+        fun sentence(text: String) =
+            text.any { it.isLetter() } && SpeakerPrefix.nameOnly(text) == null && SpeakerPrefix.split(text) == null
+        val name = lines[index].box
+        if (name == null) {
+            val next = index + 1
+            return if (next < lines.size && lines[next].box == null && sentence(lines[next].text)) next else null
+        }
+        val height = name.bottom - name.top
+        return (index + 1 until lines.size).filter { other ->
+            val box = lines[other].box
+            box != null && sentence(lines[other].text) && box.top >= name.top + height / 2 &&
+                box.top - name.bottom <= NAME_ABOVE_GAP * maxOf(height, box.bottom - box.top) &&
+                minOf(box.right, name.right) - maxOf(box.left, name.left) > 0
+        }.minByOrNull { lines[it].box!!.top }
     }
 
     /**
@@ -188,11 +265,13 @@ class Reading(lines: List<TextLine>) {
      * altyazı bloğu sayılmaz, [notices] ile bildirilir (satır kutuları alana oranlı); kendi yerinde çevrilir. Önceden
      * ortalanmış blok yokken altyazı seçilip ekranın ortasında çiziliyordu. [age]: satırın ne kadar süredir değişmeden
      * okunduğu ([StickyRows.unchangedMs]); verilirse [STALE_MS]'dir değişmeyen ortalı blok, yanında yeni beliren ortalı
-     * blok varken seçilmez, atlanan blok [stale] ile bildirilir.
+     * blok varken seçilmez, atlanan blok [stale] ile bildirilir. [darkInk]: satır kutusu açık zeminde koyu yazı mı
+     * ([InkTone.sampler]; kâğıt ilan sahne yazısıdır, GitHub #1124); verilmezse renge bakılmaz.
      */
     fun subtitleBlock(
         area: TextBox, band: SubtitleBand? = null, notices: ((Reading) -> Unit)? = null,
         age: ((String) -> Long?)? = null, stale: ((Reading) -> Unit)? = null,
+        darkInk: ((TextBox) -> Boolean)? = null,
         dropped: ((Reading, String) -> Unit)? = null,
     ): Reading {
         if (lines.isEmpty() || lines.any { it.box == null }) return if (isActionLabel) Empty else this
@@ -205,7 +284,7 @@ class Reading(lines: List<TextLine>) {
         // Tabela, tişört, plaka gibi sahne yazısı ([SceneText]) altyazı alanına düşse de altyazı değildir.
         val candidates = blocks.flatMap { withoutSignLines(it) }.map { Reading(it) }.filter { block ->
             if (block.isMenu || block.isActionLabel) return@filter false
-            val reason = SceneText.reason(block, area, band) ?: return@filter true
+            val reason = SceneText.reason(block, area, band, darkInk) ?: return@filter true
             dropped?.invoke(block, reason)
             false
         }.filter { block ->

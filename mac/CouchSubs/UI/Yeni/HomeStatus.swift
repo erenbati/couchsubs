@@ -203,6 +203,8 @@ private struct FixRow: View {
 /// üstünde, en çok 240 yükseklikte kendi içinde kayar.
 struct HomeNotices: View {
     @EnvironmentObject private var model: AppModel
+    /// Xbox'ta oyun seçilmediyse "oyunu seçin" notu (seçilince kalkar).
+    @ObservedObject var choice: GameChoice
 
     var body: some View {
         let items = notices
@@ -218,7 +220,8 @@ struct HomeNotices: View {
     }
 
     private enum Notice: Hashable {
-        case crash, tvUpdate, tvOutdated, tvReinstall, testNotConnected, mainAccount, autoScreenText, usage, online, areas, setup
+        case crash, tvUpdate, tvOutdated, tvReinstall, testNotConnected, mainAccount, xboxGame, autoScreenText, gamePhone, usage, online,
+             areas, setup
     }
 
     private var notices: [Notice] {
@@ -232,9 +235,11 @@ struct HomeNotices: View {
                                                        hasSubtitle: !model.lastTranslation.isEmpty, streaming: model.sessionState == .streaming) {
             list.append(.mainAccount)
         }
+        if choice.xboxNeedsGame && !choice.asking { list.append(.xboxGame) }
         if model.gameAreas.offeredGame != nil { list.append(.areas) }
         if model.isRunning, model.onlineIssue != nil { list.append(.online) }
         if model.showsAutoScreenTextNotice { list.append(.autoScreenText) }
+        if model.showsGamePhoneHint { list.append(.gamePhone) }
         if model.showsUsageNotice { list.append(.usage) }
         if !model.canStart && !model.isRunning && !model.demoMode { list.append(.setup) }
         return list
@@ -252,8 +257,12 @@ struct HomeNotices: View {
             }
             .noticeCard()
         case .tvOutdated:
-            NoticeCard(text: String(format: String(localized: "TV app is out of date (%@ → %@)"),
-                                    model.tvAppOutdated?.installed ?? "", model.tvAppOutdated?.bundled ?? "")) {
+            // LG: paket güncel ama TV eski sürümü çalıştırmayı sürdürüyor (kapatıp açtıktan sonra da): TV'de kapatıp açın.
+            NoticeCard(text: model.tvAppStaleRunning
+                       ? String(format: String(localized: "CouchSubs on the TV is still running an old version (%@). On the TV, close CouchSubs and open it again."),
+                                model.tvAppOutdated?.installed ?? "")
+                       : String(format: String(localized: "TV app is out of date (%@ → %@)"),
+                                model.tvAppOutdated?.installed ?? "", model.tvAppOutdated?.bundled ?? "")) {
                 Button("Update the TV App") { Task { await model.updateTVApp() } }
                     .buttonStyle(.dsSecondary)
                     .disabled(model.tvAppUpdating && model.tvApp == .working)
@@ -265,10 +274,22 @@ struct HomeNotices: View {
                     .disabled(model.tvAppUpdating && model.tvApp == .working)
                 if model.canChangeTV { Button("Change the TV") { model.step = .tv }.buttonStyle(.dsSecondary) }
             }
+            // TV uygulaması bağlı değilken adres yoklanır: TV'nin adresi değiştiyse kart "Yanıt vermiyor — yeniden
+            // aranıyor…" der, TV yeni adreste bulunursa kayıt kendiliğinden güncellenir.
+            .task(id: model.tv?.host) {
+                while !Task.isCancelled {
+                    await model.checkTVReachable()
+                    try? await Task.sleep(nanoseconds: 10_000_000_000)
+                }
+            }
         case .testNotConnected:
             NoticeCard(text: String(localized: "The test subtitle did not reach the TV because the TV app is not connected. Open CouchSubs on the TV. If the TV shows a 6-digit code, don't type it anywhere: approve it in the “Pair this TV?” window that opens on this computer, then test again.")) { EmptyView() }
         case .mainAccount:
             NoticeCard(text: String(localized: "To play without the connection dropping: 1. On the PS5, start the game with your MAIN account first. 2. Then start translating. 3. Don't switch users during the game; when you turn on the controller, choose your MAIN account. Don't play with the second account CouchSubs signs in with, or the controller will turn off by itself or won't work in the game.")) { EmptyView() }
+        case .xboxGame:
+            NoticeCard(text: String(localized: "Xbox doesn't report the game being played; choose the game to turn on game-specific translation and the GTA 6 phone.")) {
+                Button("Choose") { choice.ask() }.buttonStyle(.dsSecondary)
+            }
         case .areas:
             NoticeCard(text: String(format: String(localized: "There are saved areas for %@. Use them?"), model.gameAreas.offeredGame ?? "")) {
                 Button("Use") { model.gameAreas.useOffered() }.buttonStyle(.dsPrimary)
@@ -280,6 +301,11 @@ struct HomeNotices: View {
                        + " " + String(localized: "Meanwhile the free translation is used.")) { EmptyView() }
         case .autoScreenText:
             NoticeCard(text: String(localized: "Automatic on-screen text translation is experimental; you can turn it on in Settings.")) { EmptyView() }
+        case .gamePhone:
+            NoticeCard(text: String(localized: "The phone translation is off. Turn it on?")) {
+                Button("Turn On") { model.enableGamePhone() }.buttonStyle(.dsPrimary)
+                Button("No") { model.dismissGamePhoneHint() }.buttonStyle(.dsSecondary)
+            }
         case .usage:
             NoticeCard(text: String(localized: "CouchSubs measures how the app is used without linking it to you; no subtitle text, picture or account data is sent. You can turn this off in Settings › Game packs › Usage data.")) { EmptyView() }
         case .setup:

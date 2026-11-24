@@ -267,6 +267,10 @@ struct XboxConsoleStep: View {
 /// Xbox ve Microsoft hesabı.
 struct ConsoleSettingsCard: View {
     @EnvironmentObject private var model: AppModel
+    /// "IP Adresi Gir": PS5'in yeni adresi elle yazılıyor (adres değişip PS5 ağda bulunamazsa).
+    @State private var enteringAddress = false
+    @State private var address = ""
+    @State private var addressRejected = false
 
     var body: some View {
         DSCard(scrolls: false) {
@@ -296,7 +300,34 @@ struct ConsoleSettingsCard: View {
                       divider: false) {
                     DSBadge(text: model.console == nil ? "Not Set Up" : "Connected", tone: model.console == nil ? .unknown : .ok)
                 }
+                if model.console != nil {
+                    Button("Enter IP Address") { enteringAddress.toggle() }
+                        .buttonStyle(.dsSecondary)
+                    if enteringAddress {
+                        DSFieldChrome(mono: true) {
+                            TextField("IP address, e.g. 192.168.1.20", text: $address)
+                                .textFieldStyle(.plain)
+                                .onSubmit(useAddress)
+                        } trailing: {
+                            Button("Save", action: useAddress)
+                                .buttonStyle(DSButtonStyle(kind: .compact))
+                                .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                        if addressRejected {
+                            Text("This is not a valid IP address. Type it like 192.168.1.20, without http:// or a port number.")
+                                .font(.dsSmall).foregroundStyle(Color.dsLiveText).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
             }
+        }
+    }
+
+    private func useAddress() {
+        addressRejected = !model.enterConsoleAddress(address)
+        if !addressRejected {
+            enteringAddress = false
+            address = ""
         }
     }
 }

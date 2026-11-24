@@ -43,12 +43,13 @@ final class AreaPresetTests: XCTestCase {
         XCTAssertFalse(try JSONDecoder().decode(UserSettings.self, from: JSONEncoder().encode(settings)).keepAreaCentered)
     }
 
-    func testGamePhoneIsOptInForNewAndExistingSettings() throws {
-        XCTAssertFalse(UserSettings().autoReadGamePhone)
-        XCTAssertFalse(try JSONDecoder().decode(UserSettings.self, from: Data("{}".utf8)).autoReadGamePhone)
-        var enabled = UserSettings()
-        enabled.autoReadGamePhone = true
-        XCTAssertTrue(try JSONDecoder().decode(UserSettings.self, from: JSONEncoder().encode(enabled)).autoReadGamePhone)
+    /// GTA 6 telefonu varsayılan açık (#1202); kullanıcı kapatırsa kapalı kaydedilir.
+    func testGamePhoneIsOnByDefaultAndKeepsTheUsersChoice() throws {
+        XCTAssertTrue(UserSettings().autoReadGamePhone)
+        XCTAssertTrue(try JSONDecoder().decode(UserSettings.self, from: Data("{}".utf8)).autoReadGamePhone)
+        var disabled = UserSettings()
+        disabled.autoReadGamePhone = false
+        XCTAssertFalse(try JSONDecoder().decode(UserSettings.self, from: JSONEncoder().encode(disabled)).autoReadGamePhone)
     }
 
     func testCustomKeepsTheRegionAndManualEditsBecomeCustom() {

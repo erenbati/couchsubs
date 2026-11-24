@@ -1,0 +1,878 @@
+{
+ "note": "ScreenStyleLock ortak vakaları (Mac/iPhone ScreenStyleLockTests.swift, Windows ScreenStyleLockTests.cs, Android ScreenStyleLockTest.kt). line: satır yüksekliği (kareye oranla); icons: simge sayısı; look:false öğede özgün stil yok (bold/condensed denetlenmez).",
+ "cases": [
+  {
+   "name": "Aynı menü satırı titrese de boyu, kalınlığı ve rengi ilk ölçümde kalır",
+   "steps": [
+    {
+     "now": 0,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.03,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 500,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.034,
+       "upper": true,
+       "bold": false,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#F2F2F2",
+       "bg": "#1C1C1C"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 1000,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.026,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#0A0A0A"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 5000,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.035,
+       "upper": true,
+       "bold": false,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Başlık ile satır aynı türde iki ayrı boy; ikisi de kendi boyunda kalır",
+   "steps": [
+    {
+     "now": 0,
+     "items": [
+      {
+       "source": "ISLAND DREAMS",
+       "line": 0.045,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "source": "MAP",
+       "line": 0.03,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "source": "BRIEF",
+       "line": 0.031,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.045,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 500,
+     "items": [
+      {
+       "source": "ISLAND DREAMS",
+       "line": 0.048,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "source": "MAP",
+       "line": 0.029,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "source": "BRIEF",
+       "line": 0.033,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.045,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 1000,
+     "items": [
+      {
+       "source": "PROGRESS",
+       "line": 0.032,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "source": "BIG TITLE",
+       "line": 0.06,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "line": 0.06,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 1500,
+     "items": [
+      {
+       "source": "BIG TITLE",
+       "line": 0.058,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.06,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Belirgin ve kalıcı ölçek değişimi bir saniye sonra benimsenir",
+   "steps": [
+    {
+     "now": 0,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.03,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 500,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.04,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 1000,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.041,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 1500,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.04,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.04,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 2000,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.037,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.04,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Tek turluk sapma sayacı sıfırlar; boy değişmez",
+   "steps": [
+    {
+     "now": 0,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.03,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 500,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.04,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 1000,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.031,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 1500,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.04,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 2000,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.029,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Seçili menü satırının ayrı renk çifti kalır, titreyen renk kilitli çifte çekilir",
+   "steps": [
+    {
+     "now": 0,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.03,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "source": "BRIEF",
+       "line": 0.03,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#000000",
+       "bg": "#FFFFFF"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#000000",
+       "bg": "#FFFFFF"
+      }
+     ]
+    },
+    {
+     "now": 500,
+     "items": [
+      {
+       "source": "MAP",
+       "line": 0.03,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#101010",
+       "bg": "#F0F0F0"
+      },
+      {
+       "source": "BRIEF",
+       "line": 0.03,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#F8F8F8",
+       "bg": "#181818"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#000000",
+       "bg": "#FFFFFF"
+      },
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Türler ayrı kilitlenir: tuş ipucu, bilgi metni, düz etiket",
+   "steps": [
+    {
+     "now": 0,
+     "items": [
+      {
+       "source": "Press X to jump",
+       "line": 0.024,
+       "upper": false,
+       "bold": false,
+       "condensed": false,
+       "rows": 1,
+       "icons": 1,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "source": "Sunbelt Hwy",
+       "line": 0.03,
+       "upper": false,
+       "bold": false,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "source": "Keep an eye on the party.",
+       "line": 0.026,
+       "upper": false,
+       "bold": false,
+       "condensed": false,
+       "rows": 2,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.024,
+       "bold": false,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "line": 0.03,
+       "bold": false,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "line": 0.026,
+       "bold": false,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 500,
+     "items": [
+      {
+       "source": "Press X to jump",
+       "line": 0.027,
+       "upper": false,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 1,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "source": "Sunbelt Hwy",
+       "line": 0.026,
+       "upper": false,
+       "bold": false,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "source": "Keep an eye on the party.",
+       "line": 0.029,
+       "upper": false,
+       "bold": false,
+       "condensed": true,
+       "rows": 2,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.024,
+       "bold": false,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "line": 0.03,
+       "bold": false,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "line": 0.026,
+       "bold": false,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Telefon balonu ve özgün stili olmayan öğe kilide girmez",
+   "steps": [
+    {
+     "now": 0,
+     "items": [
+      {
+       "source": "Hey",
+       "line": 0.03,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010",
+       "bubble": true
+      },
+      {
+       "source": "MAP",
+       "line": 0.02,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010",
+       "look": false
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.03,
+       "bold": true,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      },
+      {
+       "line": 0.02,
+       "bold": false,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    },
+    {
+     "now": 500,
+     "items": [
+      {
+       "source": "Hey",
+       "line": 0.036,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#EEEEEE",
+       "bg": "#101010",
+       "bubble": true
+      },
+      {
+       "source": "MAP",
+       "line": 0.024,
+       "upper": true,
+       "bold": true,
+       "condensed": false,
+       "rows": 1,
+       "icons": 0,
+       "fg": "#FFFFFF",
+       "bg": "#101010",
+       "look": false
+      }
+     ],
+     "expect": [
+      {
+       "line": 0.036,
+       "bold": true,
+       "condensed": false,
+       "fg": "#EEEEEE",
+       "bg": "#101010"
+      },
+      {
+       "line": 0.024,
+       "bold": false,
+       "condensed": false,
+       "fg": "#FFFFFF",
+       "bg": "#101010"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -56,7 +56,13 @@ struct AppShell: View {
         }
         .overlay(alignment: .bottom) {
             if Self.bottomBar > 0 {
+                // Çeviri sürerken şerit yumuşakça söner; cam çubuk ve yeri kalır, düzen zıplamaz.
+                let band = AdCatalog.bandVisible(appPage: true, hasAds: true, translating: model.isRunning, demo: model.demoMode)
                 DSAdBand()
+                    .opacity(band ? 1 : 0)
+                    .allowsHitTesting(band)
+                    .accessibilityHidden(!band)
+                    .animation(DS.animation(.page, reduced: reduceMotion), value: band)
                     .padding(.horizontal, DS.space("l"))
                     .padding(.top, DS.space("xs"))
                     .padding(.bottom, DS.space("m"))

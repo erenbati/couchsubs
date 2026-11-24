@@ -18,12 +18,12 @@ final class SubtitleWrapTests: XCTestCase {
         XCTAssertEqual(lines.joined(separator: " "), text)
     }
 
-    func testVeryLongTextUsesAtMostThreeLinesAndShrinks() {
+    // Konuşma altyazısı hiç küçülmez (Sinan Bey, beta.91): satırlar uzar, yazı boyu hep 1.
+    func testVeryLongTextUsesAtMostThreeLinesAndNeverShrinks() {
         let text = Array(repeating: "kelime", count: 30).joined(separator: " ")
         let result = SubtitleWrap.fit(text)
         XCTAssertEqual(result.text.split(separator: "\n").count, 3)
-        XCTAssertLessThan(result.scale, 1)
-        XCTAssertGreaterThanOrEqual(result.scale, SubtitleWrap.minScale)
+        XCTAssertEqual(result.scale, 1)
     }
 
     func testSpeakerNameStaysOnFirstLineWithText() {

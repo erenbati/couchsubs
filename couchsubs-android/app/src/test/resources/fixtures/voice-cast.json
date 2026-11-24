@@ -1,0 +1,52 @@
+{
+  "about": "Dublajda konuşana ses seçme (VoiceCast, NameGender). Mac/iPhone DubbingTests.swift, Windows DubbingTests.cs ve Android DubbingTest.kt aynı dosyayı okur. gender null: addan anlaşılmaz, 'Tanınmayan karakterlerin sesi' kullanılır.",
+  "names": [
+    {"name": "JASON", "gender": "male"},
+    {"name": "Lucia", "gender": "female"},
+    {"name": "Lucía", "gender": "female"},
+    {"name": "CAL", "gender": "male"},
+    {"name": "BOOBIE", "gender": "male"},
+    {"name": "Dre'Quan", "gender": "male"},
+    {"name": "RAUL", "gender": "male"},
+    {"name": "MICHAEL", "gender": "male"},
+    {"name": "FRANKLIN", "gender": "male"},
+    {"name": "TREVOR", "gender": "male"},
+    {"name": "LAMAR", "gender": "male"},
+    {"name": "AMANDA", "gender": "female"},
+    {"name": "TRACEY", "gender": "female"},
+    {"name": "ARTHUR", "gender": "male"},
+    {"name": "Arthur Morgan", "gender": "male"},
+    {"name": "DUTCH", "gender": "male"},
+    {"name": "JAVIER", "gender": "male"},
+    {"name": "SADIE", "gender": "female"},
+    {"name": "Mary-Beth", "gender": "female"},
+    {"name": "Mr. Wilson", "gender": "male"},
+    {"name": "Mrs. Wilson", "gender": "female"},
+    {"name": "OLD MAN", "gender": "male"},
+    {"name": "Strange Woman", "gender": "female"},
+    {"name": "Kratos", "gender": "male"},
+    {"name": "Freya", "gender": "female"},
+    {"name": "AYŞE", "gender": "female"},
+    {"name": "İBRAHİM", "gender": "male"},
+    {"name": "Ömer", "gender": "male"},
+    {"name": "V", "gender": null},
+    {"name": "Stranger", "gender": null},
+    {"name": "???", "gender": null}
+  ],
+  "casts": [
+    {
+      "unknownGender": "male",
+      "narrator": "male_1",
+      "partner": "male_2",
+      "speakers": ["JASON", "LUCIA", "CAL", "BOOBIE", "DRE'QUAN", "STRANGER"],
+      "voices": ["male_2", "female_1", "male_3", "male_1", "male_2", "male_3"]
+    },
+    {
+      "unknownGender": "female",
+      "narrator": "female_1",
+      "partner": "female_2",
+      "speakers": ["V", "JOHNNY", "STRANGER", "ARTHUR MORGAN"],
+      "voices": ["female_2", "male_1", "female_3", "male_2"]
+    }
+  ]
+}

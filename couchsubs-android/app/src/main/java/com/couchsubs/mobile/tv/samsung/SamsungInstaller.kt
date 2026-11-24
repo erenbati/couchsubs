@@ -51,7 +51,22 @@ class SamsungInstaller(
     private val progress: (InstallStep) -> Unit = {},
     private val log: InstallLog = InstallLog(null),
 ) {
+    /** Sessiz sürüm denetiminin sonucu (iPhone'daki TVAppVersionCheck.Outcome). */
+    sealed interface InstalledPresence {
+        data class Version(val version: String) : InstalledPresence
+        /** sdb bağlandı, `vd_applist` okundu, CouchSubs yok: uygulama TV'den silinmiş. */
+        data object Missing : InstalledPresence
+        data object Unknown : InstalledPresence
+    }
+
     companion object {
+        /** `vd_applist` sonucundan durum: yalnız okunan listede CouchSubs yoksa "yok" (iPhone ile aynı kural). */
+        fun presence(version: String?, listRead: Boolean, foreign: Boolean): InstalledPresence = when {
+            version != null -> if (foreign) InstalledPresence.Unknown else InstalledPresence.Version(version)
+            listRead -> InstalledPresence.Missing
+            else -> InstalledPresence.Unknown
+        }
+
         const val APP_ID = "CouchSubsT.CouchSubs"
         const val PACKAGE_ID = "CouchSubsT"
 
@@ -178,6 +193,16 @@ class SamsungInstaller(
 
     /** Yalnız TV'deki CouchSubs sürümünü okur (kurmaz, açmaz); uygulama yoksa null. Güncelleme denetimi için. */
     fun installedVersion(): String? = connect().use { device -> readInstalledVersion(device).takeUnless { lastForeign } }
+
+    /**
+     * TV'deki durum (kurmadan): sürüm, kesin "CouchSubs yok" ya da bilinmiyor (liste okunamadı, aynı kimlikle başka
+     * uygulama). TV'ye bağlanılamazsa hata. Sessiz sürüm denetimi "yok"u ayırmıyordu; TV'den silinen uygulama telefonda
+     * "kurulu" kalıyordu (#1158). iPhone ile aynı.
+     */
+    fun installedPresence(): InstalledPresence = connect().use { device ->
+        val version = readInstalledVersion(device)
+        presence(version, lastListRead, lastForeign)
+    }
 
     /**
      * Kurulu TV uygulamasını geliştirici bağlantısıyla (sdb, `was_execute`) açar; arka plandaysa öne getirir (Windows, Mac ve

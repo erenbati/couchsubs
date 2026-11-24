@@ -9,10 +9,16 @@ final class SubtitleLogTests: XCTestCase {
     func testAreaSummaryNamesThePresetAndBounds() {
         var settings = UserSettings()
         settings.autoScreenText = true
-        XCTAssertEqual(SubtitleLog.areaSummary(settings), "alan: bottom (0.62-0.97 x 0.14-0.86), otomatik ekran yazısı: açık")
+        XCTAssertEqual(SubtitleLog.areaSummary(settings),
+                       "alan: bottom (0.62-0.97 x 0.14-0.86), otomatik ekran yazısı: açık, telefon: açık")
         settings.selectAreaPreset(.full)
         settings.autoScreenText = false
-        XCTAssertEqual(SubtitleLog.areaSummary(settings), "alan: full (0.00-1.00 x 0.00-1.00), otomatik ekran yazısı: kapalı")
+        XCTAssertEqual(SubtitleLog.areaSummary(settings),
+                       "alan: full (0.00-1.00 x 0.00-1.00), otomatik ekran yazısı: kapalı, telefon: açık")
+        // #1202: telefonun okunmadığı oturum günlükte görünür.
+        settings.autoReadGamePhone = false
+        XCTAssertEqual(SubtitleLog.areaSummary(settings),
+                       "alan: full (0.00-1.00 x 0.00-1.00), otomatik ekran yazısı: kapalı, telefon: kapalı")
     }
 
     func testMenuStateLines() {
