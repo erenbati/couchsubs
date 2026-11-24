@@ -183,4 +183,10 @@ public interface IStreamSession : IDisposable
     /// Xbox ve pencereden okumada yok). Her iş parçacığından okunur.
     /// </summary>
     ConnectStep? LastConnectStep => null;
+    /// <summary>
+    /// Karelerin kopyalanma sıklığı (<see cref="FrameCadence"/>): oturum kareyi işlemciye kopyalamadan önce sorar. Okuma
+    /// hattı (AppController) okuma süresini, oturum işlemci yükünü bildirir. Pencereden okuma ve Xbox kullanır; PS5'e doğrudan
+    /// bağlantı (en çok saniyede 20 kare, okuma meşgulken kopyalamaz; Mac ile aynı) ve deneme kendi hızında gönderir.
+    /// </summary>
+    void UseCadence(FrameCadence cadence) { }
 }

@@ -1,0 +1,1 @@
+0.9.88: After an update the TV app no longer keeps running the old version on LG TVs; the new version opens right away.

@@ -79,8 +79,33 @@ public static class AiRequest
     /// Kullanıcı iletisi: önceki satırlar (yalnız bağlam) ve çevrilecek cümleler. <paramref name="names"/>: konuşan
     /// etiketlerinden öğrenilip cümlelerde geçen adlar; model "Price"ı "Fiyat" diye çevirmesin diye adıyla söylenir (#287).
     /// </summary>
+    /// <summary>
+    /// Ekran çevirisinde her yazının en çok karakter sayısı: özgün uzunluğun %15 fazlası (en az 4); çeviri özgün yazının
+    /// yerine, aynı boyda sığsın diye kısa söyleyiş istenir (Mac ve Android ile aynı).
+    /// </summary>
+    public static IReadOnlyList<int> ScreenLimits(IReadOnlyList<string> sentences) =>
+        [.. sentences.Select(s => Math.Max(4, (int)Math.Ceiling(s.Length * 1.15)))];
+
+    /// <summary>
+    /// Ekran çevirisinin günlüğe yazılacak sorunu (<see cref="DropLog"/>): boş döndü, aslıyla aynı döndü (İngilizce kaldı)
+    /// ya da <see cref="ScreenLimits"/> sınırını aştı. Sorun yoksa null. Mac/iPhone (AIRequest.screenIssue) ve Android
+    /// (AiRequest.screenIssue) aynı.
+    /// </summary>
+    public static string? ScreenIssue(string source, string translation, int limit)
+    {
+        var trimmed = translation.Trim();
+        if (trimmed.Length == 0) return "motor boş çeviri döndü";
+        if (string.Equals(trimmed, source.Trim(), StringComparison.CurrentCultureIgnoreCase) && source.Any(char.IsLetter))
+            return "çeviri aslıyla aynı döndü, İngilizce kaldı";
+        if (trimmed.Length > limit) return $"%115 sınırını aştı ({trimmed.Length}/{limit})";
+        return null;
+    }
+
+    /// <summary>Karakter sınırlarının istemdeki açıklaması (küfür kuralı: sansür ve yumuşatma yok).</summary>
+    public const string LimitsNote = "On-screen texts (menus, objectives, labels): each Turkish translation must fit in the place of the English text. Use at most the number of characters given for it in this JSON array, in the same order; choose shorter Turkish wording, but keep the meaning and never censor or soften profanity.";
+
     public static string UserMessage(IReadOnlyList<string> sentences, IReadOnlyList<AiContextLine> context, string? game = null,
-                                     IReadOnlyList<string>? names = null)
+                                     IReadOnlyList<string>? names = null, IReadOnlyList<int>? limits = null)
     {
         var parts = new List<string>();
         if (!string.IsNullOrEmpty(game)) parts.Add($"Game: {game}");
@@ -96,6 +121,8 @@ public static class AiRequest
             }
             parts.Add(string.Join("\n", lines));
         }
+        if (limits is not null && limits.Count == sentences.Count)
+            parts.Add(LimitsNote + "\n[" + string.Join(",", limits) + "]");
         var list = new JsonArray([.. sentences.Select(s => (JsonNode?)JsonValue.Create(s))]).ToJsonString(Compact);
         parts.Add($"Translate each string in this JSON array into Turkish. Reply with only a JSON array of {sentences.Count} " +
                   $"Turkish strings in the same order.\n{list}");
@@ -119,10 +146,11 @@ public static class AiRequest
     public static HttpRequestMessage Build(AiProvider provider, string key, AiModel model, IReadOnlyList<string> sentences,
                                            IReadOnlyList<AiContextLine> context, string? game = null, LocalAiServer? server = null,
                                            int maxOutputTokens = MaxOutputTokens, bool thinkingOff = true,
-                                           IReadOnlyList<string>? names = null, string? instruction = null)
+                                           IReadOnlyList<string>? names = null, string? instruction = null,
+                                           IReadOnlyList<int>? limits = null)
     {
         key = key.Trim();
-        var user = UserMessage(sentences, context, game, names);
+        var user = UserMessage(sentences, context, game, names, limits);
         var system = SystemPromptWith(instruction);
         HttpRequestMessage request;
         JsonObject body;
@@ -508,6 +536,8 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
     /// <summary>"Ekranı çevir"in uzun yanıtlı tek isteği için daha uzun bekleyen istemci.</summary>
     private readonly HttpClient _screenHttp;
     private readonly TranslationCache _cache;
+    /// <summary>Ekran çevirisinin boş, aslıyla aynı ya da sınırı aşan yanıtı altyazı günlüğüne (<see cref="DropLog"/>).</summary>
+    private readonly DropLog _drops = new();
     private readonly RequestBudget? _budget;
     private readonly ConcurrentDictionary<string, IReadOnlyList<SpokenLine>> _speech = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _names = new(StringComparer.Ordinal);
@@ -718,6 +748,10 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
 
     public bool TranslatesTogether => true;
 
+    /// <summary>Önbellekteki çevirisi (<see cref="TranslateAllAsync"/> ile aynı anahtar: oynanan oyunla); istek göndermez.</summary>
+    public string? CachedTranslation(string text) =>
+        _cache.TryGet(CacheKey(text, _game?.Invoke()?.Trim()), out var known) ? known : null;
+
     /// <summary>
     /// "Ekranı çevir": birbirinden bağımsız parçalar (menü satırı, görev yazısı...) tek istekte, aynı sırada çevrilir.
     /// Parça başına istek gitseydi kalabalık bir ekran Gemini'nin dakikalık hakkını (15) ilk saniyelerde bitirir, kalan
@@ -742,10 +776,14 @@ public sealed class AiTranslator : ITextTranslator, IOnlineTranslator
             {
                 var sentences = chunk.Select(i => texts[i]).ToList();
                 var translated = await PerformAsync(thinkingOff => AiRequest.Build(Provider, _key, Model, sentences, [], game, Server,
-                    maxOutputTokens: AiRequest.ScreenOutputTokens, thinkingOff: thinkingOff, instruction: _instruction), _screenHttp, sentences.Count, cancellationToken).ConfigureAwait(false);
+                    maxOutputTokens: AiRequest.ScreenOutputTokens, thinkingOff: thinkingOff, instruction: _instruction,
+                    limits: AiRequest.ScreenLimits(sentences)), _screenHttp, sentences.Count, cancellationToken).ConfigureAwait(false);
                 Report(null);
+                var limits = AiRequest.ScreenLimits(sentences);
                 for (var i = 0; i < chunk.Count; i++)
                 {
+                    if (AiRequest.ScreenIssue(texts[chunk[i]], translated[i], limits[i]) is { } issue)
+                        _drops.Note("translateAll", issue, texts[chunk[i]]);
                     results[chunk[i]] = translated[i];
                     _cache.Store(CacheKey(texts[chunk[i]], game), translated[i]);
                 }

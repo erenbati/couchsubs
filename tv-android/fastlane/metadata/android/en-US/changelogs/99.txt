@@ -1,0 +1,1 @@
+0.9.96: Text translations (menus, signs, help boxes) no longer stay on the TV after the text leaves the game.

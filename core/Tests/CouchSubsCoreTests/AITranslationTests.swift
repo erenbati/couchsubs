@@ -1291,3 +1291,15 @@ private final class GameBox: @unchecked Sendable {
     var value: String?
     var reads = 0
 }
+
+extension AITranslationTests {
+    /// Ekran çevirisi isteğinde yazı başına karakter bütçesi (özgün uzunluk × 1,15, en az 4); küfür yumuşatılmaz. Windows
+    /// AiTranslatorTests ve Android LocalAiTest ile aynı.
+    func testScreenRequestCarriesCharacterBudget() {
+        XCTAssertEqual(AIRequest.screenLimits(["MAP", "SET DESTINATION", "Keep an eye on the party."]), [4, 18, 29])
+        let message = AIRequest.userMessage(sentences: ["MAP", "SET DESTINATION"], context: [], limits: [4, 18])
+        XCTAssertTrue(message.contains(AIRequest.limitsNote + "\n[4,18]"))
+        XCTAssertTrue(AIRequest.limitsNote.contains("never censor or soften profanity"))
+        XCTAssertFalse(AIRequest.userMessage(sentences: ["MAP"], context: []).contains(AIRequest.limitsNote))
+    }
+}

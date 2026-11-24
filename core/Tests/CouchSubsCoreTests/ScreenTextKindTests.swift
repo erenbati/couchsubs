@@ -36,6 +36,8 @@ final class ScreenTextKindTests: XCTestCase {
 
     func testPhoneIsReadWithItsOwnSettingOrThePhoneKind() {
         var settings = UserSettings()
+        XCTAssertTrue(settings.readsGamePhone)
+        settings.autoReadGamePhone = false
         XCTAssertFalse(settings.readsGamePhone)
         settings.autoScreenText = true
         XCTAssertTrue(settings.readsGamePhone)

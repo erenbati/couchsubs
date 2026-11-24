@@ -1,0 +1,1 @@
+0.9.94: On some LG TVs the picture no longer goes black repeatedly when translation starts or when you press the PS button.

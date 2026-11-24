@@ -50,7 +50,7 @@ public sealed class AppearanceEditor : Grid
     private readonly WrapPanel textSwatches = new();
     private readonly StackPanel nameArea = new();
     private readonly RadioButton[] darknessButtons = new RadioButton[3];
-    private readonly RadioButton[] nameModes = new RadioButton[3];
+    private readonly RadioButton[] nameModes = new RadioButton[4];
     private int background;
     private int text;
     private int nameMode = 1;
@@ -150,7 +150,7 @@ public sealed class AppearanceEditor : Grid
         textName.SetResourceReference(StyleProperty, "HintText");
         right.Children.Add(Unit("Text Color", textSwatches, textName));
 
-        var modes = Segments(["Same as Text", "Single Color", "By Character"], nameModes, index =>
+        var modes = Segments(["Same as Text", "Single Color", "By Character", "Whole Line"], nameModes, index =>
         {
             nameMode = index;
             SaveNames();
@@ -187,7 +187,7 @@ public sealed class AppearanceEditor : Grid
         text = Math.Max(0, Array.FindIndex(TextColors, item => Hex(item.Value) == style.TextRgb));
         if (style.TextHex is null && style.TextColor == SubtitleTextColor.Yellow) text = 2;
         ((ColorSwatch)textSwatches.Children[text]).IsChecked = true;
-        nameMode = !settings.SpeakerColors || style.NameColorMode == NameColorMode.Text ? 0 : style.NameColorMode == NameColorMode.Single ? 1 : 2;
+        nameMode = !settings.SpeakerColors || style.NameColorMode == NameColorMode.Text ? 0 : style.NameColorMode == NameColorMode.Single ? 1 : style.NameColorMode == NameColorMode.Line ? 3 : 2;
         singleName = Math.Max(0, Array.FindIndex(NameColors, item => Hex(item.Value) == SubtitleStyle.Hex(style.NameHex)));
         var known = controller.SpeakerBook.Known;
         if (known.Count > 0) characters = [.. known.Take(8).Select(person => Title(person.Key))];
@@ -227,7 +227,7 @@ public sealed class AppearanceEditor : Grid
     /// <summary>Karakter adı: Yazıyla Aynı konuşan renklerini kapatır; Tek Renk ve Karaktere Göre açar.</summary>
     private void SaveNames()
     {
-        var mode = nameMode switch { 0 => NameColorMode.Text, 1 => NameColorMode.Single, _ => NameColorMode.Speaker };
+        var mode = nameMode switch { 0 => NameColorMode.Text, 1 => NameColorMode.Single, 3 => NameColorMode.Line, _ => NameColorMode.Speaker };
         var chosen = characters.Select((name, index) => (name.ToLowerInvariant(), Hex(NameColors[perCharacter[index]].Value)))
             .ToDictionary(item => item.Item1, item => item.Item2);
         Save(style => style with { NameColorMode = mode, NameHex = Hex(NameColors[singleName].Value), CharacterColors = chosen }, speakerColors: nameMode != 0);
@@ -300,7 +300,8 @@ public sealed class AppearanceEditor : Grid
             var nameColor = nameMode == 0 ? fg : nameMode == 1 ? NameColors[singleName].Value : NameColors[perCharacter[i % perCharacter.Length]].Value;
             var line = new TextBlock { FontWeight = FontWeights.SemiBold, FontSize = Math.Round(size.Value * 0.5), Foreground = new SolidColorBrush(fg), TextAlignment = TextAlignment.Center };
             line.Inlines.Add(new System.Windows.Documents.Run(Sample[i].Name + ":") { Foreground = new SolidColorBrush(nameColor) });
-            line.Inlines.Add(new System.Windows.Documents.Run(" " + Sample[i].Line));
+            // Tüm Satır: cümle de karakterin renginde.
+            line.Inlines.Add(new System.Windows.Documents.Run(" " + Sample[i].Line) { Foreground = new SolidColorBrush(nameMode == 3 ? nameColor : fg) });
             // Zeminsizken okunurluk gölgesi; zeminliyken plakanın yumuşak gölgesi (Mac SubtitlePreviewBox).
             if (bg is null) line.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 3, ShadowDepth = 1, Opacity = 0.85, Color = Colors.Black };
             previewLines.Children.Add(new Border

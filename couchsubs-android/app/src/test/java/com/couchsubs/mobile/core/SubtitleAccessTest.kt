@@ -54,6 +54,24 @@ class SubtitleAccessTest {
             }
         } finally { server.stop() }
     }
+    /** `link` olayı telefondaki TV paketinin sürümünü (`latest`) taşır; TV daha eskiyse paneli "TV uygulaması eski" der (#1199). */
+    @Test fun linkCarriesBundledTvAppVersion() {
+        val server = SubtitleServer(port = 0, allowLegacy = true)
+        server.latestTvAppVersion = "0.9.95"
+        val port = server.start()
+        try {
+            Socket("127.0.0.1", port).use { socket ->
+                socket.soTimeout = 3000
+                socket.getOutputStream().write("GET /events?v=0.9.71 HTTP/1.1\r\nHost: localhost\r\n\r\n".toByteArray())
+                val reader = socket.getInputStream().bufferedReader()
+                var line = reader.readLine()
+                while (line != null && line != "event: link") line = reader.readLine()
+                val data = reader.readLine()
+                assertTrue(data, data.contains("\"latest\":\"0.9.95\""))
+            }
+        } finally { server.stop() }
+    }
+
     /** TV uygulaması sürümünü akışla bildirir; bildirmeyen TV (0.9.69'den eski) eski sayılır, OBS sayılmaz (#884, #891). */
     @Test fun remembersTheTvAppVersionAndTreatsSilentTvsAsOld() {
         val server = SubtitleServer(port = 0, allowLegacy = true)

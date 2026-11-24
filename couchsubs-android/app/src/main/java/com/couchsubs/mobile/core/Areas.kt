@@ -7,8 +7,11 @@ import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.CancellationException
 import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 import java.util.concurrent.FutureTask
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.math.abs
 
 /** Altyazı bölgesinin hazır seçimleri (Ayarlar › Altyazı alanı). Mac/iPhone AreaPreset.swift ve Windows AreaPreset.cs ile aynı. */
@@ -242,6 +245,14 @@ object RegionSignature {
         }
         return false
     }
+
+    /** İzdeki örneklerin [CHANGE_THRESHOLD]'dan çok değişen payı (boyları farklıysa 1). */
+    fun changedShare(a: ByteArray, b: ByteArray): Double {
+        if (a.size != b.size || a.isEmpty()) return 1.0
+        var changed = 0
+        for (i in a.indices) if (abs((a[i].toInt() and 0xff) - (b[i].toInt() and 0xff)) > CHANGE_THRESHOLD) changed++
+        return changed.toDouble() / a.size
+    }
 }
 
 /** Ek alanların çevirisini TV'ye ileten taraf (gerçekte [SubtitleServer]). */
@@ -284,7 +295,7 @@ class RegionWatcher(
      * Önceden istenen çevirilerin ([prefetchesTranslations]) sürdüğü yer; verilmezse turun iş parçacığında (testler).
      * Henüz başlamamış önceden çeviri, yazı gösterilirken turun iş parçacığında çalıştırılır; beklemede kalmaz.
      */
-    private val prefetchWork: Executor = Executor { it.run() },
+    private val prefetchWork: Executor = INLINE,
     private val prefetchTranslator: TextTranslator = translator,
     /** Oyun telefonunun düzleştirilmiş ekranını okuyan ([GamePhoneReader]); verilmezse telefon okunmaz. */
     private val readPhone: ((GamePhoneReader.Flat) -> Reading)? = null,
@@ -310,6 +321,32 @@ class RegionWatcher(
          * gerçekten değişmiş sayılır ve gösterilir (görevin tek sözcüğü değişebilir: "Go to the barn" → "Go to the bank").
          */
         internal const val HOLD_LIMIT = 4
+        /**
+         * Hazır alanda arayüz kutusu ([UiPanel.hasText]) art arda bu kadar turda bulunamazsa çeviri silinir (Mac/iPhone
+         * panelMissTurns, Windows PanelMissTurns). Tek karelik ıska çeviriyi siliyordu; metin aynı kaldığı için bir daha
+         * gelmiyordu (#1202).
+         */
+        const val PANEL_MISS_TURNS = 3
+
+        /**
+         * Çevirisi gösterilen alanda okuma bu kadar tur art arda değişip doğrulanamazsa (yazı gitti, yerinde sahne oynuyor)
+         * çeviri kaldırılır: menü, tabela ve ipucu kutusunun çevirisi yazı oyundan kalktıktan sonra TV'de kalıyordu (#1198).
+         */
+        internal const val UNSTEADY_LIMIT = 3
+
+        /** Alanın izindeki örneklerin bu kadarı bir turda değiştiyse görüntü bütünüyle değişmiştir: beklemeden kaldırılır. */
+        internal const val BIG_CHANGE_SHARE = 0.5
+
+        /** Önceden çevirinin turun iş parçacığında sürdüğü varsayılan (testler): çeviri yine süre sınırıyla beklenir. */
+        private val INLINE = Executor { it.run() }
+
+        /**
+         * Çevirinin çalıştığı iş parçacıkları: tur çeviriyi en çok [translationTimeoutMs] bekler. Kesilmeyi dinlemeyen çevirmen
+         * asılı kalsa da tur biter, sonraki tur başlayabilir.
+         */
+        private val deadlineWork = Executors.newCachedThreadPool { runnable ->
+            Thread(runnable, "CouchSubs region translate").apply { isDaemon = true }
+        }
 
         /** Çevirisi saklanan en çok yazı sayısı (oyun görev yazısını arada silip yeniden gösteriyor). */
         private const val TRANSLATION_LIMIT = 64
@@ -637,6 +674,10 @@ class RegionWatcher(
 
     private class State {
         var signature: ByteArray? = null
+        /** Bir önceki turun izi ([BIG_CHANGE_SHARE] için; [signature] okuma hatasında silinir). */
+        var passSignature: ByteArray? = null
+        /** Çevirisi gösterilirken art arda kaç turdur okuma değişip doğrulanamadı ([UNSTEADY_LIMIT]). */
+        var unsteady = 0
         var lastRead: String? = null
         var candidate: Candidate? = null
         var shown = ""
@@ -648,7 +689,11 @@ class RegionWatcher(
         var remembered = ""
         /** Bekletilen okuma ve kaç turdur bekletildiği ([HOLD_LIMIT]). */
         var held: String? = null
+        /** Bekletilen okumanın yazısı (günlük için). */
+        var heldText: String? = null
         var holds = 0
+        /** Hazır alanda arayüz kutusunun art arda bulunamadığı tur sayısı ([PANEL_MISS_TURNS]). */
+        var panelMisses = 0
         var renderedKey: String? = null
         var renderedText: String? = null
         var renderedIcons: List<IconPlacement>? = null
@@ -677,6 +722,9 @@ class RegionWatcher(
      */
     @Volatile var prefetchesTranslations = false
 
+    /** Çeviri bu süreyi aşarsa çevrilemedi sayılır (aday sonraki turda yeniden denenir): asılı istek turu kilitliyordu. */
+    @Volatile var translationTimeoutMs = 8000L
+
     /**
      * Dünya yazısı listesi (yazı anahtarı → ne zamana dek): kamera hareket ederken başka bir yerde ya da boyda yeniden
      * okunan yazı (poster, plaka) oyun dünyasındadır; oturumda 10 dakika bir daha çevrilmez. Son görülen yerler de burada.
@@ -703,6 +751,11 @@ class RegionWatcher(
         return true
     }
 
+    /** Altyazı günlüğü (Mac/iPhone `onLog`, Windows `Log`): ek alanda okunup çevrilmeyen yazının nedeni. */
+    @Volatile var onLog: ((String) -> Unit)? = null
+    /** Düşürülen ya da bekletilen okumanın nedeni, sınırlı ve tekrarsız ([DropLog]). */
+    private val drops = DropLog(clock)
+
     /** Açık oyun telefonunun oturumu ("GTA 6'daki telefonu otomatik çevir"); telefon kapalıyken null. */
     private var phoneSession: PhoneRegionSession? = null
     /** Telefon mesajları İngilizce: kısaltmalar çevirmene açık yazılır ([GamePhoneText.englishModelInput]). */
@@ -714,7 +767,8 @@ class RegionWatcher(
     fun observePhone(capture: PhoneCapture) {
         val read = readPhone ?: return
         synchronized(lock) {
-            (phoneSession ?: PhoneRegionSession(read, translator, sender, { phonePanel() }).also { phoneSession = it }).observe(capture)
+            (phoneSession ?: PhoneRegionSession(read, translator, sender, { phonePanel() })
+                .also { it.onLog = { line -> onLog?.invoke(line) }; phoneSession = it }).observe(capture)
         }
     }
 
@@ -817,8 +871,11 @@ class RegionWatcher(
         }
         val changed = state.signature?.let { RegionSignature.changed(it, crop.signature) } ?: true
         state.signature = crop.signature
+        val before = state.passSignature
+        state.passSignature = crop.signature
         if (!changed) {
             // İz bir tur değişmedi: okunan yazı kararlıdır.
+            state.unsteady = 0
             state.candidate?.let {
                 state.candidate = null
                 commit(it, area, state, started)
@@ -827,7 +884,12 @@ class RegionWatcher(
         }
         val frame = crop.frame
         if (GameAreaPresets.isPreset(area.id) && frame != null && !UiPanel.hasText(frame)) {
-            // Hazır alanda arayüz kutusu yok (PS5 ana ekranı, başka oyun, oyun dünyası): OCR çalışmaz, gösterilen kutu kalkar.
+            // Hazır alanda arayüz kutusu yok (PS5 ana ekranı, başka oyun, oyun dünyası): OCR çalışmaz. İz unutulur: kare
+            // değişmese de sonraki tur kutuyu yeniden arar; panel aynı yazıyla geri gelince yeniden okunup gösterilir.
+            state.signature = null
+            state.panelMisses++
+            // Tek karelik ıska çeviriyi silmez: kutu [PANEL_MISS_TURNS] tur art arda yoksa gösterilen kutu kalkar.
+            if (state.shown.isNotEmpty() && state.panelMisses < PANEL_MISS_TURNS) return
             state.candidate = null
             state.lastRead = null
             state.held = null
@@ -848,6 +910,7 @@ class RegionWatcher(
             }
             return
         }
+        state.panelMisses = 0
         val reading = try {
             read(crop)
         } catch (error: Exception) {
@@ -887,6 +950,7 @@ class RegionWatcher(
             candidate = styled(candidate, text, area.region, crop.frame, crop.color)
         }
         if (state.lastRead == candidate.key) {
+            state.unsteady = 0
             state.candidate = null
             commit(candidate, area, state, started)
         } else {
@@ -894,9 +958,42 @@ class RegionWatcher(
             state.held = null
             state.holds = 0
             state.candidate = candidate
+            if (!state.renderedText.isNullOrEmpty()) clearIfUnsteady(candidate, area, state, before, crop.signature, started)
             // Yazı kararlı mı diye bir tur beklenirken çevirisi şimdiden istenir: doğrulanınca çoğu zaman hazırdır.
             prefetch(candidate, state, started)
         }
+    }
+
+    /**
+     * Çevirisi gösterilen alanda okuma doğrulanamadı: [UNSTEADY_LIMIT] tur sürdüyse ya da görüntü bütünüyle değiştiyse
+     * ([BIG_CHANGE_SHARE]) ve yeni okuma gösterilen yazıya benzemiyorsa çeviri kaldırılır. Yazı gidince yerinde oynayan sahne
+     * hiç kararlı okunmuyor, eski çeviri TV'de kalıyordu (#1198; Mac/iPhone ve Windows ile aynı).
+     */
+    private fun clearIfUnsteady(candidate: Candidate, area: ExtraArea, state: State, before: ByteArray?, signature: ByteArray, started: Int) {
+        val turns = ++state.unsteady
+        // Görüntünün bütünüyle değişmesi tek başına ilk turda yetmez: yeni yazı eskisinin yerine geçerken eski çeviri yenisi
+        // doğrulanana dek kalır (kutu yanıp sönmesin). Yazı da gittiyse (boş okuma) ya da ikinci turdaysa kaldırılır.
+        val bigChange = before != null && RegionSignature.changedShare(before, signature) >= BIG_CHANGE_SHARE &&
+            (candidate.key.isEmpty() || turns >= 2)
+        if (turns < UNSTEADY_LIMIT && !bigChange) return
+        if (matches(candidate.text, state.shownText) || isPartOf(candidate.text, state.shownText)) return
+        val shownText = state.shownText
+        synchronized(lock) { if (started == session) sender.sendRegion(area.id, "", null, null) }
+        state.shown = ""
+        state.shownText = ""
+        state.shownIcons = 0
+        state.held = null
+        state.holds = 0
+        state.renderedKey = null
+        state.renderedText = null
+        state.renderedIcons = null
+        state.renderedBox = null
+        state.renderedLineHeight = null
+        state.renderedLayout = null
+        state.renderedBlocks = null
+        state.renderedStyles = null
+        state.unsteady = 0
+        drops.note("RegionWatcher", "${area.name}: $turns tur kararlı okunmadı ya da görüntü çok değişti, çevirisi kaldırıldı", shownText, onLog)
     }
 
     /**
@@ -906,6 +1003,11 @@ class RegionWatcher(
     private fun prefetch(candidate: Candidate, state: State, started: Int) {
         if (!prefetchesTranslations || candidate.key.isEmpty() || candidate.key == state.shown || shouldHold(candidate, state)) return
         val task = translation(candidate, started, speculative = true) ?: return
+        if (prefetchWork === INLINE) {
+            // Turun iş parçacığında: süre sınırıyla beklenir; hata ya da süre aşımı doğrulanınca yeniden denenir.
+            try { await(task) } catch (error: Exception) {}
+            return
+        }
         try {
             prefetchWork.execute(task)
         } catch (error: RejectedExecutionException) {
@@ -959,9 +1061,17 @@ class RegionWatcher(
             state.renderedStyles = candidate.styles
             return
         }
+        // Bekletilen okuma gösterilmeden yerine başka okuma geldi: o okuma hiç çevrilmedi (günlüğe bir kez).
+        state.held?.let { held ->
+            if (held != candidate.key) {
+                drops.note("RegionWatcher", "${area.name}: bekletilen okuma gösterilmeden yerine yenisi geldi, çevrilmedi", state.heldText ?: "", onLog)
+                state.held = null
+            }
+        }
         if (shouldHold(candidate, state)) {
             if (state.held != candidate.key) {
                 state.held = candidate.key
+                state.heldText = IconText.plain(candidate.paragraphs.joinToString(" "))
                 state.holds = 0
             }
             if (++state.holds <= HOLD_LIMIT) {
@@ -992,10 +1102,12 @@ class RegionWatcher(
             // Önceden istenmiş ya da daha önce gösterilmiş yazı: çevirmene yeniden gidilmez. Önceden istenen çeviri
             // henüz başlamadıysa burada çalışır (run), sürüyorsa beklenir (get).
             val task = translation(candidate, started) ?: return
-            task.run()
-            task.get()
+            await(task)
         } catch (error: Exception) {
             // Çevrilemedi: önceki yazı kutuda kalır, aynı yazı sonraki turda yeniden denenir.
+            if (started == session) {
+                onLog?.invoke("ek alan ${area.name}: ${logExcerpt(IconText.plain(candidate.paragraphs.joinToString(" ")), 120)} çevrilemedi (${error.message})")
+            }
             if (started == session && state.shown == candidate.key) {
                 state.shown = previousShown
                 state.shownText = previousText
@@ -1019,6 +1131,7 @@ class RegionWatcher(
             TextMatch.isSimilar(TextMatch.normalize(IconText.plain(a)), TextMatch.normalize(IconText.plain(b)), 0.90)
         }
         if (similar.all { it }) {
+            drops.note("RegionWatcher", "${area.name}: çevirisi aslıyla aynı, gösterilmedi", IconText.plain(candidate.paragraphs.joinToString(" ")), onLog)
             // Kutu hiç gösterilmediyse boşaltma olayı gönderilmez.
             if (!state.renderedText.isNullOrEmpty()) send { sender.sendRegion(area.id, "", null, null) }
             state.renderedText = ""
@@ -1043,11 +1156,40 @@ class RegionWatcher(
         state.renderedKey = candidate.key
     }
 
+    /**
+     * Çeviriyi en çok [translationTimeoutMs] bekler. Başlamamış iş [deadlineWork]'te başlatılır (başka yerde sürüyorsa
+     * `run` bir şey yapmaz). Süre dolunca iş iptal edilir (saklananlardan çıkar) ve [TimeoutException] atılır.
+     */
+    private fun await(task: Pending): List<String> {
+        if (!task.isDone) {
+            try {
+                deadlineWork.execute(task)
+            } catch (error: RejectedExecutionException) {
+                task.run()
+            }
+        }
+        return try {
+            task.get(translationTimeoutMs, TimeUnit.MILLISECONDS)
+        } catch (error: TimeoutException) {
+            task.cancel(true)
+            task.forget()
+            throw TimeoutException("çeviri ${translationTimeoutMs / 1000.0} sn'de bitmedi")
+        } catch (error: Exception) {
+            // [Pending.done] işin kendi iş parçacığında, bekleyen uyandıktan sonra çalışır: sonraki tur başarısız işi
+            // saklananlarda bulmasın, yeniden denesin.
+            task.forget()
+            throw error
+        }
+    }
+
     /** Parçaların çevirisinin işi; başarısız biterse [failed] çağrılır (saklananlardan çıkarılsın, sonra yeniden denensin). */
     private class Pending(work: Callable<List<String>>, private val failed: (Pending) -> Unit) : FutureTask<List<String>>(work) {
         override fun done() {
             if (isCancelled || runCatching { get() }.isFailure) failed(this)
         }
+
+        /** Saklananlardan hemen çıkar (başarısız ya da süresi dolmuş iş). */
+        fun forget() = failed(this)
     }
 
     /**

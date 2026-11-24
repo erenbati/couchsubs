@@ -23,7 +23,7 @@
     <string name="phase_reconnecting">Bağlantı koptu, yeniden bağlanılıyor…</string>
     <string name="reconnect">Yeniden bağlan</string>
     <string name="phase_in_use">PS5 başka bir Remote Play bağlantısında. Diğer cihazı kapat.</string>
-    <string name="phase_not_found_host">PS5 %1$s adresinde bulunamadı. Açık ve aynı ağda olduğundan emin ol. Yeniden bağlanılıyor…</string>
+    <string name="phase_not_found_host">PS5 %1$s adresinde bulunamadı, ağda aranıyor. Açık ve aynı ağda olduğundan emin ol; adresi değiştiyse Ayarlar &gt; Konsol\'da IP Adresi Gir\'i kullan. Yeniden bağlanılıyor…</string>
     <string name="phase_network">PS5 ile bağlantı koptu, yeniden bağlanılıyor… Sık oluyorsa PS5\'i modeme kabloyla bağla.</string>
     <string name="phase_remote_play_disabled">PS5\'te Uzaktan Oynama kapalı (kod %1$s). PS5\'te Ayarlar › Sistem › Uzaktan Oynama\'ya gidip Uzaktan Oynama\'yı Etkinleştir\'i aç.</string>
     <string name="phase_rejected_code">PS5 bağlantıyı reddetti (kod %1$s). Başka bir Uzaktan Oynatma (PS Remote Play) açık olabilir ya da PS5 başka bir oturumda olabilir. PS Remote Play\'i kapat, PS5\'i yeniden başlatıp tekrar dene.</string>
@@ -205,7 +205,7 @@
     <string name="settings_display_mode_auto">Otomatik</string>
     <string name="settings_display_mode_in_app">Uygulama içinde</string>
     <string name="settings_display_mode_overlay">Katman</string>
-    <string name="settings_display_mode_note">Otomatik, TV uygulaması izin verdikçe Katman\'ı kullanır: TV, PS5\'i kendi HDMI girişinde gösterir, altyazı görüntünün üstünde çıkar. Bazı TV\'lerde CouchSubs TV uygulamasının içinde görüntü siyah kalıyor. PS5\'i CouchSubs TV uygulamasının içinde görmek isterseniz Uygulama içinde\'yi seçin; orada görüntü gelmezse TV uygulaması önce HDMI girişlerini gösterir, Katman varsa ona geçer. Katman\'da TV\'nin görüntü modu değişmez, oyun modu ya da HDR kaybolmaz. Google Play\'den kurulan TV uygulamasında Katman yok: orada Otomatik uygulamanın içinde kalır, Katman seçilirse TV bunu ekranda söyler.</string>
+    <string name="settings_display_mode_note">Otomatik, TV uygulaması izin verdikçe Katman\'ı kullanır: TV, PS5\'i kendi HDMI girişinde gösterir, altyazı görüntünün üstünde çıkar. Bazı TV\'lerde CouchSubs TV uygulamasının içinde görüntü siyah kalıyor. PS5\'i CouchSubs TV uygulamasının içinde görmek isterseniz Uygulama içinde\'yi seçin; TV uygulaması o zaman kendiliğinden Katman\'a hiç geçmez: görüntü gelmezse HDMI girişini yeniden açar ve girişleri gösterir, Katman\'ı oradan siz seçebilirsiniz. Katman\'da TV\'nin görüntü modu değişmez, oyun modu ya da HDR kaybolmaz. Google Play\'den kurulan TV uygulamasında Katman yok: orada Otomatik uygulamanın içinde kalır, Katman seçilirse TV bunu ekranda söyler.</string>
     <string name="settings_screen_on">Ekranı açık tut</string>
     <string name="settings_screen_on_note">Telefon kilitlense ya da ekran kapansa da TV\'deki çeviri sürer. Ancak ekran kapalıyken Wi-Fi güç tasarrufuna geçer; bazı telefonlarda bağlantı yavaşlayabilir ya da kopabilir. En sağlam yol, ekranı açık bırakıp parlaklığı kısmak.</string>
     <string name="background_limit_title">Telefon kilitlenince çeviri durabilir</string>
@@ -248,6 +248,8 @@
     <string name="psn_why">Neden ikinci hesap?</string>
     <string name="psn_why_body">Remote Play aynı hesapla bağlanınca oynadığın oturumu ve kolunu devralır. İkinci hesap yalnız görüntüyü alır; sen kendi hesabınla, kendi kolunla oynamaya devam edersin. Hesap ücretsizdir, PS Plus gerekmez.</string>
     <string name="subtitle_off_tip">Oyunun kendi altyazısını açın: CouchSubs sesi değil, ekrandaki İngilizce altyazıyı okur.</string>
+    <string name="game_phone_hint">Telefon çevirisi kapalı, açmak ister misiniz?</string>
+    <string name="game_phone_hint_turn_on">Aç</string>
     <string name="psn_main_account_steps">Bağlantı kopmadan oynamak için: 1. PS5\'te önce ANA hesabınla oyuna gir. 2. Sonra çeviriyi başlat. 3. Oyun sırasında kullanıcı değiştirme; kolu açınca ANA hesabını seç. CouchSubs\'ın giriş yaptığı ikinci hesapla oynama, yoksa kol kendiliğinden kapanır ya da oyunda çalışmaz.</string>
     <string name="psn_main_account">Oynarken kolu açınca PS5\'te ANA hesabınızı seçin. CouchSubs\'ın giriş yaptığı ikinci hesapla oynamayın, yoksa kol kendiliğinden kapanır ya da oyunda çalışmaz.</string>
     <string name="pair_found">%1$s bulundu</string>
@@ -299,6 +301,7 @@
     <string name="game_ask_dont_ask">Sorma</string>
     <string name="game_played">Oynanan oyun</string>
     <string name="game_unknown">Bilinmiyor</string>
+    <string name="game_xbox_unknown_note">Xbox oynanan oyunu bildirmiyor; oyunu seçerseniz oyuna özel çeviri ve GTA 6 telefonu açılır.</string>
     <string name="game_change">Değiştir</string>
     <string name="area_profile_title">Bu oyunun alanları</string>
     <string name="area_profile_saved">Bu alanlar %1$s için kayıtlı.</string>
@@ -359,7 +362,7 @@
     <string name="running_from_pack">Hazır çeviriden</string>
     <string name="subtitle_connected">PS5 bağlı</string>
     <string name="subtitle_waiting">Bağlanıyor</string>
-    <string name="subtitle_screen_note">Ekran açık kalır · parlaklık otomatik kısılır</string>
+    <string name="subtitle_screen_note">Oynarken telefonun ekranını açık tutun; ekran kapanınca çeviri durur. Şarja takılı olsun.</string>
     <string name="subtitle_screen_gesture_hint">Altyazıyı parmağınızla yukarı ya da aşağı taşıyın; yazı boyunu iki parmakla değiştirin.</string>
     <string name="packs_auto">Oyun açılınca paket kendiliğinden seçilir. Pakette olmayan satır seçtiğin motorla çevrilir. Paketler ücretsiz; yenileri ve düzeltmeler kendiliğinden iner.</string>
     <string name="packs_now">şimdi</string>
@@ -423,6 +426,7 @@
     <string name="tvapp_update_body">%1$s TV\'deki CouchSubs %2$s, bu telefondaki %3$s. Güncelleme bir dakika kadar sürer; TV açık ve aynı Wi-Fi\'da kalsın.</string>
     <string name="tvapp_update_button">TV uygulamasını güncelle</string>
     <string name="tvapp_update_short">Güncelleme var: %1$s</string>
+    <string name="tvapp_stale_running">TV\'deki CouchSubs eski sürümde çalışıyor (%1$s). TV\'de CouchSubs\'ı kapatıp yeniden açın.</string>
     <string name="tvinstall_title">TV uygulamasını kur</string>
     <string name="tvinstall_body">CouchSubs TV uygulamasını Samsung TV\'ne bilgisayar olmadan, bu telefondan kurar. Telefon ve TV aynı Wi-Fi\'da olmalı.</string>
     <string name="tvinstall_supported">Samsung TV\'ler ve akıllı monitörler (2016 ve sonrası; 2016–2018 modelleri deneysel).</string>
@@ -475,6 +479,7 @@
     <string name="tvinstall_err_not_restarted">TV\'deki ayar doğru (Geliştirici modu açık, Host PC IP %1$s), ama TV o zamandan beri tam yeniden başlamadığı için telefonu henüz kabul etmiyor. Kumandanın güç tuşunu TV kapanıp Samsung logosuyla yeniden açılana kadar (yaklaşık 5 saniye) basılı tut ya da TV\'nin fişini 30 saniye çek, sonra tekrar dene.</string>
     <string name="tvinstall_err_other_ip">TV\'deki Host PC IP %1$s, bu telefonun adresi %2$s. TV\'deki geliştirici modu penceresinde Host PC IP\'yi %2$s yap, sonra TV\'yi tam yeniden başlat (güç tuşunu Samsung logosu görünene kadar, yaklaşık 5 saniye basılı tut).</string>
     <string name="tvinstall_err_dev_off">TV\'de geliştirici modu kapalı. Yukarıdaki adımlarla aç, Host PC IP olarak bu telefonun adresini (%1$s) yaz, sonra TV\'yi tam yeniden başlat (güç tuşunu Samsung logosu görünene kadar, yaklaşık 5 saniye basılı tut).</string>
+    <string name="tvinstall_host_pc_steps">TV\'de: Uygulamalar › kumandada 1 2 3 4 5 › Developer Mode Açık, Host PC IP = bu cihazın IP\'si (%1$s), sonra TV\'yi yeniden başlat.</string>
     <string name="tvinstall_err_too_old">Bu Samsung TV, CouchSubs TV uygulaması için çok eski (2016 ve sonraki modeller destekleniyor).</string>
     <string name="tvinstall_err_login">Samsung girişi tamamlanmadı. Tekrar dene ve açılan sayfada girişi bitir.</string>
     <string name="tvinstall_err_certificate">Samsung imza sertifikasını vermedi. Birkaç dakika sonra tekrar dene.</string>
@@ -503,9 +508,9 @@
     <string name="tvinstall_lg_session_note">Geliştirici modu en çok 1000 saat açık kalır. Telefon TV\'ye ulaşabildiği sürece CouchSubs bunu günde bir kez kendisi uzatır.</string>
     <string name="tvinstall_lg_tv_says">TV\'nin yanıtı: %1$s</string>
     <string name="tvinstall_lg_err_unreachable">TV yanıt vermedi. TV\'nin açık ve bu telefonla aynı Wi-Fi\'da olduğundan, Developer Mode uygulamasında Dev Mode Status\'un açık olduğundan emin ol.</string>
-    <string name="tvinstall_lg_err_restart_needed">TV\'de Key Server açık ama geliştirici bağlantısı kapalı. Dev Mode Status açıldıktan sonra TV yeniden başlamalı: Developer Mode uygulamasında RESTART\'a bas (ya da TV\'yi fişten çekip tak), sonra uygulamayı yeniden açıp Key Server\'ı aç ve tekrar dene.</string>
+    <string name="tvinstall_lg_err_restart_needed">Geliştirici modu açık görünüyor (TV\'nin Key Server\'ı yanıt veriyor) ama TV kurulum bağlantısını reddediyor. TV\'yi fişten çek, 30 saniye bekleyip yeniden tak (ya da Developer Mode uygulamasında RESTART\'a bas); sonra Developer Mode uygulamasını açıp Dev Mode Status\'un açık olduğuna bak, Key Server\'ı aç ve tekrar dene. webOS Hub kullanan bazı TV\'lerde bu bağlantı TV\'nin yazılımında kapalı olabilir; o zaman TV uygulaması bu yolla kurulamaz.</string>
     <string name="tvinstall_lg_err_dev_mode_off">TV bu adreste açık ama geliştirici modu kapalı. TV\'de Developer Mode uygulamasını aç: Dev Mode Status açık olmalı (süresi dolunca kendiliğinden kapanır; yeniden aç, TV yeniden başlar). Sonra Key Server\'ı açıp tekrar dene.</string>
-    <string name="tvinstall_lg_err_tv_not_found">Bu adreste TV yanıt vermiyor. TV kapalı, başka bir Wi-Fi\'da ya da adresi değişmiş olabilir. TV\'yi aç, TV\'de Ayarlar › Ağ\'dan IP adresine bak ve yukarıdaki listeden doğru TV\'yi seç.</string>
+    <string name="tvinstall_lg_err_tv_not_found">TV bu adreste yanıt vermiyor (açık ve aynı ağda mı?) TV ağda arandı, bulunamadı. TV\'yi aç, TV\'de Ayarlar › Ağ\'dan IP adresine bak ve yukarıdaki listeden doğru TV\'yi seç.</string>
     <string name="tvinstall_lg_err_key_server">Key Server kapalı. TV\'deki Developer Mode uygulamasında Key Server\'ı aç ve uygulamayı ekranda açık tut.</string>
     <string name="tvinstall_lg_err_passphrase">Passphrase doğru değil. TV ekranındakiyle karşılaştır.</string>
     <string name="tvinstall_lg_err_key_refused">TV anahtarı kabul etmedi. Key Server\'ı açıp Passphrase\'i yeniden yaz.</string>
@@ -655,6 +660,10 @@
     <string name="dubbing_output">Ses nereden çalsın</string>
     <string name="dubbing_narrator">Anlatıcı ve adı yazmayan satırlar</string>
     <string name="dubbing_partner">Karşılıklı konuşmada ikinci kişi</string>
+    <string name="dubbing_unknown">Tanınmayan karakterlerin sesi</string>
+    <string name="dubbing_unknown_hint">Karakterin adından kadın mı erkek mi olduğu anlaşılmazsa bu ses kullanılır. Her karakterin sesini aşağıdan değiştirebilirsiniz.</string>
+    <string name="dubbing_man">Erkek</string>
+    <string name="dubbing_woman">Kadın</string>
     <string name="dubbing_characters">Karakterler</string>
     <string name="dubbing_listen">Dinle</string>
     <string name="dubbing_voice_female_1">Kadın 1 (canlı)</string>
@@ -801,6 +810,7 @@
     <string name="set_name_same">Yazıyla Aynı</string>
     <string name="set_name_single">Tek Renk</string>
     <string name="set_name_speaker">Karaktere Göre</string>
+    <string name="set_name_line">Tüm Satır</string>
     <string name="set_name_same_note">Karakter adı yazıyla aynı renkte gösterilir.</string>
     <string name="set_characters_empty">Oynarken karşılaştığınız karakterler burada görünür.</string>
     <string name="set_characters_more">Yeni karakterlere sırayla renk verilir.</string>
@@ -900,4 +910,15 @@
     <string name="perde_not_set_up">Kurulmadı</string>
     <string name="perde_on_this_screen">Bu ekranda</string>
     <string name="perde_ready_translation">Hazır çeviri</string>
+    <string name="tv_not_responding">TV bu adreste yanıt vermiyor (açık ve aynı ağda mı?)</string>
+    <string name="tv_not_responding_at">TV %1$s adresinde yanıt vermiyor; TV\'nin adresi değişmiş olabilir.</string>
+    <string name="tv_searching_again">Yanıt vermiyor — yeniden aranıyor…</string>
+    <string name="tv_search_again">TV\'yi Yeniden Ara</string>
+    <string name="tv_enter_ip">IP Adresi Gir</string>
+    <string name="tv_use_address">Ekle</string>
+    <string name="tv_ip_not_recognised">Bu adreste TV tanınmadı.</string>
+    <string name="tv_change">TV\'yi Değiştir</string>
+    <string name="tv_remove_pairing">Eşleşmeyi Kaldır</string>
+    <string name="tv_remove_pairing_title">Eşleşme Kaldırılsın mı?</string>
+    <string name="tv_remove_pairing_confirm">Eşli TV kaldırılacak. TV\'yi Değiştir ile yeniden TV seçebilirsiniz.</string>
 </resources>
