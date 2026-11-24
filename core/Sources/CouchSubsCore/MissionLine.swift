@@ -16,6 +16,8 @@ public struct MissionLine {
 
     private struct Track {
         var text: String
+        /// Satırın okunduğu gibi hâli (günlük için).
+        var source: String
         var since: Int
         var lastSeen: Int
         var box: TextBox
@@ -25,6 +27,9 @@ public struct MissionLine {
 
     /// Görevin karedeki bölgesi; görev yoksa nil.
     public private(set) var region: CropRegion?
+    /// Son `observe`ta görev sayılmadan (`settleMs` dolmadan) ekrandan kalkan satırlar: altyazıdan da çıkarıldıkları için
+    /// hiç çevrilmediler; günlüğe bir kez yazılır.
+    public private(set) var dropped: [String] = []
 
     public init() {}
 
@@ -40,9 +45,10 @@ public struct MissionLine {
                 tracks[index].lastSeen = time
                 tracks[index].box = placed
             } else {
-                tracks.append(Track(text: text, since: time, lastSeen: time, box: placed))
+                tracks.append(Track(text: text, source: line.text, since: time, lastSeen: time, box: placed))
             }
         }
+        dropped = tracks.filter { time - $0.lastSeen > Self.forgetMs && $0.lastSeen - $0.since < Self.settleMs }.map(\.source)
         tracks.removeAll { time - $0.lastSeen > Self.forgetMs }
         let settled = tracks.filter { time - $0.since >= Self.settleMs }
         var next: CropRegion?
@@ -70,6 +76,7 @@ public struct MissionLine {
 
     public mutating func reset() {
         tracks.removeAll()
+        dropped = []
         region = nil
     }
 

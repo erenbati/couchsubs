@@ -232,6 +232,12 @@ public final class SamsungAppKnowledge: @unchecked Sendable {
         return text
     }
 
+    /// İki adres aynı TV mi (boşluk ve büyük/küçük harf gözetmeden; bilgi bu biçimde saklanır).
+    public static func sameHost(_ a: String?, _ b: String?) -> Bool {
+        guard let a = normalized(a), let b = normalized(b) else { return false }
+        return a == b
+    }
+
     public func isKnown(host: String?) -> Bool {
         guard let host = Self.normalized(host) else { return false }
         return lock.withLock { hosts.contains(host) }
@@ -260,9 +266,38 @@ public final class SamsungAppKnowledge: @unchecked Sendable {
     public func forget(host: String?) {
         guard let host = Self.normalized(host) else { return }
         lock.withLock {
+            unconfirmed.remove(host)
+            staleReported.remove(host)
             guard hosts.remove(host) != nil else { return }
             defaults?.set(hosts.sorted(), forKey: Self.storeKey)
         }
+    }
+
+    /// TV, CouchSubs'ın artık kurulu olmadığını söyledi; uygulama katmanı kendi "kurulu" kaydını siler (Mac'te
+    /// tvAppVersion, iPhone'da installedTVApp). Bağlanmazsa yalnız bu bilgi silinir.
+    public static var onMissing: (@Sendable (String) -> Void)?
+
+    /// Kurulu olduğu bilinen TV'de son listesiz açmadan sonra uygulama bağlanmadı ve TV'nin kurulu uygulama listesi de
+    /// CouchSubs yok diyor: uygulama TV'den silinmiş (güncelleme sırasında ya da elle, #1158). "Kurulu" bilgisi kalınca
+    /// telefon/bilgisayar uygulamayı kurulu gösteriyor, kurulum adımı hiç önerilmiyordu. Bilgi silinir, `onMissing`
+    /// çağrılır; true: bilgi silindi. Windows ve Android ile aynı.
+    @discardableResult
+    public func appMissing(host: String?) -> Bool {
+        guard let key = Self.normalized(host), isKnown(host: key) else { return false }
+        forget(host: key)
+        let line = Self.missingLine(host: key)
+        SubtitleLog.write(line)
+        Self.installLog?(line)
+        Self.onMissing?(key)
+        return true
+    }
+
+    /// Listede "CouchSubs yok" kurulu bilgisini siler mi: yalnız liste okunduysa ve kesin "yok" dediyse (yanıtsız liste,
+    /// zaman aşımı silmez). Windows ve Android ile aynı.
+    static func forgetsOnList(_ presence: SamsungAppPresence?) -> Bool { presence == .missing }
+
+    static func missingLine(host: String) -> String {
+        "Samsung \(host): TV'nin kurulu uygulama listesinde CouchSubs yok; TV uygulaması silinmiş, \"kurulu\" bilgisi silindi (kurulum adımı önerilecek)."
     }
 
     /// Bilinen TV'de listeye bakmadan DEEP_LINK gönderilebilir mi. Hak, TV uygulaması her bağlandığında (`mark`) bir kez
@@ -426,6 +461,8 @@ public final class SamsungClient: NSObject, TVControlling, URLSessionDelegate, @
             return
         }
         let presence = await installedApp(appId: appId, socket: socket)
+        // Bilinen TV'de bayat bilgi yüzünden listeye bakıldıysa ve liste "yok" diyorsa uygulama silinmiş (#1158).
+        if knownInstalled == nil, SamsungAppKnowledge.forgetsOnList(presence) { SamsungAppKnowledge.shared.appMissing(host: host) }
         guard let action = SamsungAppKnowledge.action(knownInstalled: false, presence: presence) else {
             SamsungAppKnowledge.shared.reportNotSent(host: host, presence: presence)
             throw SamsungError.notInstalled

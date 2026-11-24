@@ -96,6 +96,8 @@ public final class ScreenTextDetector: @unchecked Sendable {
     /// Menüye girilen an ve süresi dolan menünün bittiği an (bundan önce belirmiş yazılar yeniden menü sayılmaz).
     private var menuEnteredAt = 0
     private var menuFloor: Int?
+    /// Menü durumu bu örnekte `menuLifeMs` dolduğu için bitti: menüde bulunan bütün alanlar kalkar (#1198).
+    private var menuExpired = false
 
     public init() {}
 
@@ -186,6 +188,7 @@ public final class ScreenTextDetector: @unchecked Sendable {
             menu = false
             menuAnchors = []
             menuFloor = nil
+            menuExpired = false
         }
     }
 
@@ -364,6 +367,7 @@ public final class ScreenTextDetector: @unchecked Sendable {
             let activity = menuAnchors.map { tiles[$0].stableSince }.max() ?? menuEnteredAt
             if now - max(activity, menuEnteredAt) <= Self.menuLifeMs { return true }
             menuFloor = now
+            menuExpired = true
             return false
         }
         let appeared = components.map { $0.tiles.map { tiles[$0].stableSince }.max()! }
@@ -383,7 +387,11 @@ public final class ScreenTextDetector: @unchecked Sendable {
         menu = inMenu
         // Menü kapandı: menüde bulunan bütün alanlar hemen kalkar (700 ms beklemez).
         // Karoları hâlâ yerinde duran alan (seçim gezinirken menü durumu bir örnek düşse de) kalır; yanıp sönmez.
-        if closed { tracked.removeAll { $0.menu && !$0.tiles.contains { candidate[$0] } } }
+        // Menü durumu süresi dolduğu için bittiyse karoları yerinde dursa da bütün menü alanları kalkar (RegionWatcher
+        // çevirilerini TV'den kaldırır). Eskiden alan tek aday karoyla yaşamaya devam ediyor, menü yazısı oyundan kalksa da
+        // çevirisi ekranda kalıyordu (#1198).
+        if closed { tracked.removeAll { $0.menu && (menuExpired || !$0.tiles.contains { candidate[$0] }) } }
+        menuExpired = false
         var matched = Set<ObjectIdentifier>()
         for (cells, list) in components {
             var existing = tracked.first { !matched.contains(ObjectIdentifier($0)) && $0.cells.overlap(cells) >= Self.keepOverlap }

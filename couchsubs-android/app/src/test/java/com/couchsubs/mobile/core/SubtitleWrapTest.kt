@@ -21,10 +21,10 @@ class SubtitleWrapTest {
         assertEquals(text, lines.joinToString(" "))
     }
 
-    @Test fun veryLongTextUsesAtMostThreeLinesAndShrinks() {
+    @Test fun veryLongTextUsesAtMostThreeLinesAndNeverShrinks() {
         val result = SubtitleWrap.fit(List(30) { "kelime" }.joinToString(" "))
         assertEquals(3, result.text.split("\n").size)
-        assertTrue(result.scale < 1f && result.scale >= SubtitleWrap.MIN_SCALE.toFloat())
+        assertEquals(1f, result.scale)
     }
 
     @Test fun speakerNameStaysOnFirstLineWithText() {

@@ -15,7 +15,7 @@ const { startPage } = require('./tv-live-page');
 const ID = '0f8e7d6c-1111-2222-3333-444455556677';
 const KEY = 'abcdefghijklmnopqrstuv';
 
-function couchsubs({ link }) {
+function couchsubs({ link, latest }) {
   const streams = [];
   const acks = [];
   let opened = 0;
@@ -38,7 +38,7 @@ function couchsubs({ link }) {
       if (link) {
         const id = 'link' + opened;
         known.add(id);
-        res.write('event: link\ndata: ' + JSON.stringify({ id }) + '\n\n');
+        res.write('event: link\ndata: ' + JSON.stringify(latest ? { id, latest } : { id }) + '\n\n');
       }
       streams.push(res);
       req.on('close', () => streams.splice(streams.indexOf(res), 1));
@@ -102,6 +102,31 @@ test('link göndermeyen eski bilgisayar/telefon sürümüne alındı gitmez', as
     await new Promise((r) => setTimeout(r, 500));
     assert.equal(server.acks.length, 0);
     assert.equal(server.opened(), 1);
+  } finally {
+    page.close();
+    server.close();
+  }
+});
+
+// GitHub #1199: TV'de 0.9.71 kalmıştı, düzeltme 0.9.94'teydi. Bilgisayar/telefon `link` olayında kendi paketindeki TV
+// uygulamasının sürümünü (latest) bildirir; TV'deki daha eskiyse tanı satırı "TV uygulaması eski" der.
+test('bilgisayar/telefon daha yeni TV uygulaması bildirirse tanı satırı "TV uygulaması eski" der', async () => {
+  const server = await couchsubs({ link: true, latest: '99.0.0' });
+  const page = pageFor(server.address);
+  try {
+    await until(() => /TV uygulaması eski, 99\.0\.0 var/.test(page.diag()), 'eski uyarısı');
+  } finally {
+    page.close();
+    server.close();
+  }
+});
+
+test('bildirilen sürüm TV\'dekinden eski ya da aynıysa uyarı çıkmaz', async () => {
+  const server = await couchsubs({ link: true, latest: '0.9.1' });
+  const page = pageFor(server.address);
+  try {
+    await until(() => page.status() === 'bağlı' && server.acks.length > 0, 'bağlanma');
+    assert.doesNotMatch(page.diag(), /eski/);
   } finally {
     page.close();
     server.close();

@@ -86,6 +86,7 @@ public partial class DubbingCard : UserControl
         ProgressText.Text = Localizer.Current["Downloading voices… %lld%%"]
             .Replace("%lld", ((int)(controller.DubbingProgress * 100)).ToString()).Replace("%%", "%");
         (settings.Output == DubbingOutput.Tv ? OnTv : OnComputer).IsChecked = true;
+        (settings.Cast.UnknownGender == VoiceGender.Female ? UnknownFemale : UnknownMale).IsChecked = true;
         Error.Text = controller.DubbingError ?? "";
         Error.Visibility = controller.DubbingError is null ? Visibility.Collapsed : Visibility.Visible;
         BuildVoices(settings.Cast);
@@ -159,6 +160,19 @@ public partial class DubbingCard : UserControl
 
     private void OnEnabled(object sender, RoutedEventArgs e) =>
         Update(s => s with { Dubbing = s.Dubbing with { Enabled = Enabled.IsChecked == true } });
+
+    /// <summary>"Tanınmayan karakterlerin sesi": anlatıcı ve ikinci ses de bu cinsiyete geçer (VoiceCast.SetUnknownGender).</summary>
+    private void OnUnknownGender(object sender, RoutedEventArgs e)
+    {
+        if (loading || sender is not RadioButton { Tag: string tag }) return;
+        var gender = Enum.Parse<VoiceGender>(tag);
+        Update(s =>
+        {
+            var cast = s.Dubbing.Cast.Copy();
+            cast.SetUnknownGender(gender);
+            return s with { Dubbing = s.Dubbing with { Cast = cast } };
+        });
+    }
 
     private void OnOutput(object sender, RoutedEventArgs e)
     {

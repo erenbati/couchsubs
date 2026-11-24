@@ -87,6 +87,83 @@ public class VoiceCastTests
         Assert.Equal(DubbingVoice.Female3, restored.VoiceFor(new SpokenLine("", "", "MIMIR"), out _));
         Assert.Contains("\"Female3\"", JsonSerializer.Serialize(cast));
     }
+
+    // Ortak deneme dosyası core/Tests/CouchSubsCoreTests/Fixtures/voice-cast.json (Mac DubbingTests.swift ve Android
+    // DubbingTest.kt aynı dosyayı okur).
+    private static JsonDocument Vectors() => JsonDocument.Parse(File.ReadAllText(PackFixtures.Path("voice-cast.json")));
+
+    private static VoiceGender GenderOf(string value) => value == "female" ? VoiceGender.Female : VoiceGender.Male;
+
+    [Fact]
+    public void NameGenderVectors()
+    {
+        using var vectors = Vectors();
+        foreach (var item in vectors.RootElement.GetProperty("names").EnumerateArray())
+        {
+            var name = item.GetProperty("name").GetString()!;
+            var gender = item.GetProperty("gender");
+            VoiceGender? expected = gender.ValueKind == JsonValueKind.Null ? null : GenderOf(gender.GetString()!);
+            Assert.True(expected == NameGender.Guess(name), name);
+        }
+    }
+
+    /// <summary>GTA 6'da Jason, Cal, Boobie listede yoktu ve kadın sesiyle konuşuyordu (X: iki kullanıcı).</summary>
+    [Fact]
+    public void CastVectors()
+    {
+        using var vectors = Vectors();
+        foreach (var vector in vectors.RootElement.GetProperty("casts").EnumerateArray())
+        {
+            var cast = new VoiceCast();
+            cast.SetUnknownGender(GenderOf(vector.GetProperty("unknownGender").GetString()!));
+            Assert.Equal(vector.GetProperty("narrator").GetString(), cast.Narrator.FileName());
+            Assert.Equal(vector.GetProperty("partner").GetString(), cast.Partner.FileName());
+            var speakers = vector.GetProperty("speakers").EnumerateArray().Select(s => s.GetString()!).ToList();
+            var expected = vector.GetProperty("voices").EnumerateArray().Select(s => s.GetString()!).ToList();
+            var voices = speakers.Select(speaker => cast.VoiceFor(new SpokenLine("", "", speaker), out _).FileName()).ToList();
+            Assert.Equal(expected, voices);
+        }
+    }
+
+    [Fact]
+    public void UnknownNameNeverFallsToAFemaleVoiceByDefault()
+    {
+        var cast = new VoiceCast();
+        foreach (var name in new[] { "ZORBLAX", "QUILLAN", "BRAKKA", "VORN" })
+            Assert.Equal(VoiceGender.Male, cast.VoiceFor(new SpokenLine("", "", name), out _).Gender());
+        // Tireli karşılıklı konuşmanın ikinci kişisi de kadın sesine geçmez.
+        Assert.Equal(VoiceGender.Male, cast.VoiceFor(new SpokenLine("", "", NewTurn: true), out _).Gender());
+    }
+
+    [Fact]
+    public void OldRecordIsUpgradedOnce()
+    {
+        // Eski (kural 1) kayıt: bilinmeyen adlar sıralı dağıtımla kadın sesi almıştı, ikinci ses Kadın 1'di.
+        const string old = """{"Assignments":{"JASON":"Female1","CAL":"Female2","LUCIA":"Female3","KRATOS":"Male2"},"Narrator":"Male1","Partner":"Female1"}""";
+        var cast = JsonSerializer.Deserialize<VoiceCast>(old)!;
+        Assert.Equal(DubbingVoice.Male2, cast.Partner);
+        Assert.Equal(VoiceGender.Male, cast.Assignments["JASON"].Gender());
+        Assert.Equal(VoiceGender.Male, cast.Assignments["CAL"].Gender());
+        Assert.Equal(DubbingVoice.Female3, cast.Assignments["LUCIA"]);
+        Assert.Equal(DubbingVoice.Male2, cast.Assignments["KRATOS"]);
+        Assert.Equal(VoiceGender.Male, cast.UnknownGender);
+        // Yeni kayıt kural 2'yi taşır: kullanıcının sonradan verdiği ses bir daha değişmez.
+        cast.Assign(DubbingVoice.Female1, "Jason");
+        var again = JsonSerializer.Deserialize<VoiceCast>(JsonSerializer.Serialize(cast))!;
+        Assert.Equal(DubbingVoice.Female1, again.Assignments["JASON"]);
+    }
+
+    [Fact]
+    public void UnknownGenderSettingIsSavedAndCopied()
+    {
+        var cast = new VoiceCast();
+        cast.SetUnknownGender(VoiceGender.Female);
+        var restored = JsonSerializer.Deserialize<VoiceCast>(JsonSerializer.Serialize(cast))!;
+        Assert.Equal(VoiceGender.Female, restored.UnknownGender);
+        Assert.Equal(DubbingVoice.Female1, restored.Narrator);
+        Assert.Equal(DubbingVoice.Female2, restored.Partner);
+        Assert.Equal(VoiceGender.Female, restored.Copy().UnknownGender);
+    }
 }
 
 public class SpeechAudioTests

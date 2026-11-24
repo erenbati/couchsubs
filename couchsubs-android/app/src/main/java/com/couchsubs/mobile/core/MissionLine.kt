@@ -31,12 +31,19 @@ class MissionLine {
                 abs(a.left - b.left) <= tolerance * 2 && abs(a.right - b.right) <= tolerance * 2
     }
 
-    private class Track(val text: String, val since: Long, var lastSeen: Long, var box: TextBox)
+    private class Track(val text: String, val source: String, val since: Long, var lastSeen: Long, var box: TextBox)
 
     private val tracks = mutableListOf<Track>()
 
     /** Görevin karedeki bölgesi; görev yoksa null. */
     var region: CropRegion? = null
+        private set
+
+    /**
+     * Son [observe]'da görev sayılmadan ([SETTLE_MS] dolmadan) ekrandan kalkan satırlar, özgün metinleriyle: altyazıdan da
+     * çıkarıldıkları için hiç çevrilmediler; altyazı günlüğüne bir kez yazılır (Mac/iPhone ve Windows aynı).
+     */
+    var dropped: List<String> = emptyList()
         private set
 
     /** Altyazı bloğundan çıkarılan satırlar (yeri [area]'ya oranla). Görev bölgesi değiştiyse true. */
@@ -53,9 +60,10 @@ class MissionLine {
                 track.lastSeen = time
                 track.box = placed
             } else {
-                tracks.add(Track(text, time, time, placed))
+                tracks.add(Track(text, line.text, time, time, placed))
             }
         }
+        dropped = tracks.filter { time - it.lastSeen > FORGET_MS && it.lastSeen - it.since < SETTLE_MS }.map { it.source }
         tracks.removeAll { time - it.lastSeen > FORGET_MS }
         val settled = tracks.filter { time - it.since >= SETTLE_MS }
         var next: CropRegion? = null
@@ -77,6 +85,7 @@ class MissionLine {
 
     fun reset() {
         tracks.clear()
+        dropped = emptyList()
         region = null
     }
 }

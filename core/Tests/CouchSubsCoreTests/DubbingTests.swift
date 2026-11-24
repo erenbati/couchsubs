@@ -104,6 +104,77 @@ final class VoiceCastTests: XCTestCase {
         var copy = restored
         XCTAssertEqual(copy.voice(for: SpokenLine(speaker: "MIMIR", english: "", turkish: "")), .female3)
     }
+
+    // Ortak deneme dosyası Fixtures/voice-cast.json (Windows DubbingTests.cs ve Android DubbingTest.kt aynı dosyayı okur).
+    private struct Vectors: Decodable {
+        struct Name: Decodable { let name: String; let gender: DubbingVoice.Gender? }
+        struct Cast: Decodable {
+            let unknownGender: DubbingVoice.Gender
+            let narrator: DubbingVoice
+            let partner: DubbingVoice
+            let speakers: [String]
+            let voices: [DubbingVoice]
+        }
+        let names: [Name]
+        let casts: [Cast]
+    }
+
+    private func vectors() throws -> Vectors {
+        let url = Bundle.module.url(forResource: "Fixtures", withExtension: nil)!.appendingPathComponent("voice-cast.json")
+        return try JSONDecoder().decode(Vectors.self, from: Data(contentsOf: url))
+    }
+
+    func testNameGenderVectors() throws {
+        for item in try vectors().names {
+            XCTAssertEqual(NameGender.guess(item.name), item.gender, item.name)
+        }
+    }
+
+    /// GTA 6'da Jason, Cal, Boobie listede yoktu ve kadın sesiyle konuşuyordu (X: iki kullanıcı).
+    func testCastVectors() throws {
+        for vector in try vectors().casts {
+            var cast = VoiceCast()
+            cast.setUnknownGender(vector.unknownGender)
+            XCTAssertEqual(cast.narrator, vector.narrator)
+            XCTAssertEqual(cast.partner, vector.partner)
+            let voices = vector.speakers.map { cast.voice(for: SpokenLine(speaker: $0, english: "", turkish: "")) }
+            XCTAssertEqual(voices, vector.voices, vector.speakers.joined(separator: ", "))
+        }
+    }
+
+    func testUnknownNameNeverFallsToAFemaleVoiceByDefault() {
+        var cast = VoiceCast()
+        for name in ["ZORBLAX", "QUILLAN", "BRAKKA", "VORN"] {
+            XCTAssertEqual(cast.voice(for: SpokenLine(speaker: name, english: "", turkish: "")).gender, .male, name)
+        }
+        // Tireli karşılıklı konuşmanın ikinci kişisi de kadın sesine geçmez.
+        XCTAssertEqual(cast.voice(for: SpokenLine(newTurn: true, english: "", turkish: "")).gender, .male)
+    }
+
+    func testOldRecordIsUpgradedOnce() throws {
+        // Eski (kural 1) kayıt: bilinmeyen adlar sıralı dağıtımla kadın sesi almıştı, ikinci ses Kadın 1'di.
+        let old = #"{"assignments":{"JASON":"female_1","CAL":"female_2","LUCIA":"female_3","KRATOS":"male_2"},"narrator":"male_1","partner":"female_1"}"#
+        var cast = try JSONDecoder().decode(VoiceCast.self, from: Data(old.utf8))
+        XCTAssertEqual(cast.partner, .male2)
+        XCTAssertEqual(cast.assignments["JASON"]?.gender, .male)
+        XCTAssertEqual(cast.assignments["CAL"]?.gender, .male)
+        XCTAssertEqual(cast.assignments["LUCIA"], .female3)
+        XCTAssertEqual(cast.assignments["KRATOS"], .male2)
+        XCTAssertEqual(cast.unknownGender, .male)
+        // Yeni kayıt kural 2'yi taşır: kullanıcının sonradan verdiği ses bir daha değişmez.
+        cast.assign(.female1, to: "Jason")
+        let again = try JSONDecoder().decode(VoiceCast.self, from: JSONEncoder().encode(cast))
+        XCTAssertEqual(again.assignments["JASON"], .female1)
+    }
+
+    func testUnknownGenderSettingIsSaved() throws {
+        var cast = VoiceCast()
+        cast.setUnknownGender(.female)
+        let restored = try JSONDecoder().decode(VoiceCast.self, from: JSONEncoder().encode(cast))
+        XCTAssertEqual(restored.unknownGender, .female)
+        XCTAssertEqual(restored.narrator, .female1)
+        XCTAssertEqual(restored.partner, .female2)
+    }
 }
 
 final class SpeechAudioTests: XCTestCase {
