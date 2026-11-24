@@ -47,15 +47,15 @@ public class GameAreaPresetTests
     }
 
     [Fact]
-    public void MigrationTurnsPresetsAndPhoneOffOnceWhenAutoScreenTextIsOff()
+    public void MigrationTurnsPresetsOffOnceWhenAutoScreenTextIsOff()
     {
         // beta.63–68 ayar dosyası: hazır alanlar açık (eski varsayılan), otomatik ekran yazısı kapalı.
         var beta68 = JsonSerializer.Deserialize<UserSettings>(
             """{"AutoScreenText":false,"AutoScreenTextReset":true,"GameAreaPresets":true,"AutoReadGamePhone":true}""")!;
         var migrated = ScreenTextExtrasMigration.Apply(AutoScreenTextMigration.Apply(beta68).Settings);
         Assert.False(migrated.GameAreaPresets);
-        Assert.False(migrated.AutoReadGamePhone);
-        Assert.False(migrated.ReadsGamePhone);
+        // GTA 6 telefonuna artık dokunulmaz (#1202).
+        Assert.True(migrated.AutoReadGamePhone);
         Assert.True(migrated.ScreenTextExtrasReset);
         Assert.Empty(migrated.PresetAreas("GTA 6", false));
         // Kullanıcı sonra bilerek açarsa göç tekrarlanmaz.

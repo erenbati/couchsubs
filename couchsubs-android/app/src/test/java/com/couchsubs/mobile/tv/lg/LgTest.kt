@@ -238,6 +238,65 @@ class LgTest {
         assertTrue(tv.commands.any { it.contains("dev/remove") })
     }
 
+    /** beta.89: kurulum doğrulandıktan sonra açık (eski) uygulama kapatılır, sonra açılır; webOS eski süreci tutuyordu. */
+    @Test
+    fun installClosesTheRunningAppBeforeLaunching() {
+        val tv = FakeTv(installed = "0.9.10")
+        LgInstaller(tv, pollIntervalMs = 1).ensureInstalled(ipk, "com.couchsubs.tv_0.9.18_all.ipk", "0.9.18")
+        assertEquals(listOf(LgInstaller.CLOSE_COMMAND, LgInstaller.launchCommand()), tv.commands.takeLast(2))
+        // Mac, Windows ve iPhone'daki komutla aynı.
+        assertEquals("/usr/bin/luna-send-pub -n 1 'luna://com.webos.applicationManager/closeByAppId' '{\"id\":\"com.couchsubs.tv\"}'; sleep 2",
+            LgInstaller.CLOSE_COMMAND)
+    }
+
+    /** Paket güncel ama açık uygulama eski sürümü bildiriyor: yeniden kurulmaz, kapatılıp açılır. */
+    @Test
+    fun upToDatePackageWithAnOldRunningAppIsRestarted() {
+        val tv = FakeTv(installed = "0.9.18")
+        val result = LgInstaller(tv).ensureInstalled(ipk, "com.couchsubs.tv_0.9.18_all.ipk", "0.9.18", runningVersion = "0.9.10")
+        assertEquals(LgInstaller.Result("0.9.18", false), result)
+        assertNull(tv.uploaded)
+        assertEquals(listOf(LgInstaller.CLOSE_COMMAND, LgInstaller.launchCommand()), tv.commands.takeLast(2))
+        // Açık uygulama güncelse kapatılmaz.
+        val fine = FakeTv(installed = "0.9.18")
+        LgInstaller(fine).ensureInstalled(ipk, "com.couchsubs.tv_0.9.18_all.ipk", "0.9.18", runningVersion = "0.9.18")
+        assertFalse(fine.commands.contains(LgInstaller.CLOSE_COMMAND))
+    }
+
+    @Test
+    fun runningCheckRestartsOnceThenReportsAStaleApp() {
+        val check = TvAppRunningCheck("0.9.86")
+        assertEquals(TvAppRunningCheck.Verdict.RESTART_AGAIN, check.report("0.9.81"))
+        assertEquals(TvAppRunningCheck.Verdict.STALE, check.report("0.9.81"))
+        assertEquals(TvAppRunningCheck.Verdict.RUNNING, TvAppRunningCheck("0.9.86").report("0.9.86"))
+        assertEquals(TvAppRunningCheck.Verdict.RUNNING, TvAppRunningCheck("0.9.9").report("0.9.10"))
+        assertEquals(TvAppRunningCheck.Verdict.RESTART_AGAIN, TvAppRunningCheck("0.9.86").report(""))
+        assertTrue(TvAppRunningCheck.isStale("0.9.81", "0.9.84"))
+        assertFalse(TvAppRunningCheck.isStale("0.9.84", "0.9.84"))
+        assertFalse(TvAppRunningCheck.isStale("0.9.81", ""))
+    }
+
+    /** Kurulumdan sonra açılan uygulama eski: bir kez daha kapat-aç, yine eskiyse ana ekran "TV'de kapatıp açın" der. */
+    @Test
+    fun phoneRestartsAnOldRunningAppOnceThenTellsTheUser() {
+        val tv = com.couchsubs.mobile.tv.InstalledTv(com.couchsubs.mobile.tv.TvBrand.LG, "192.168.1.20", version = "0.9.86")
+        val update = com.couchsubs.mobile.tv.TvAppUpdate
+        val restarts = mutableListOf<String>()
+        val log = mutableListOf<String>()
+        update.expectRunning("0.9.86")
+        assertTrue(update.lgRunningReported(null, tv, "0.9.81", { host, done -> restarts += host; done(true) }, { log += it }))
+        assertEquals(listOf("192.168.1.20"), restarts)
+        assertTrue(update.lgRunningReported(null, tv, "0.9.81", { host, done -> restarts += host; done(true) }, { log += it }))
+        assertEquals(1, restarts.size)
+        assertEquals(com.couchsubs.mobile.tv.TvAppStatus.RunningStale(tv, "0.9.81", "0.9.86"), update.status.value)
+        // Denetim bitti: sonraki bildirim olağan yoldan geçer.
+        assertFalse(update.lgRunningReported(null, tv, "0.9.86", { _, _ -> }, { log += it }))
+        // Kurulumdan sonra yeni sürüm bağlanırsa kapat-aç yok.
+        update.expectRunning("0.9.86")
+        assertFalse(update.lgRunningReported(null, tv, "0.9.86", { host, done -> restarts += host; done(true) }, { log += it }))
+        assertEquals(1, restarts.size)
+    }
+
     @Test
     fun upToDateTvIsOnlyLaunched() {
         val tv = FakeTv(installed = "0.9.18")

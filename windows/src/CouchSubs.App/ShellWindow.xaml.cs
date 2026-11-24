@@ -134,6 +134,7 @@ public partial class ShellWindow : Window
             ShowStatus();
         if (e.PropertyName is nameof(AppController.Settings)) Motion.AnimationsEnabled = controller.Settings.TransitionAnimations;
         if (e.PropertyName is nameof(AppController.IsRunning)) MotionGate.Translating = controller.IsRunning;
+        if (e.PropertyName is nameof(AppController.IsRunning) or nameof(AppController.DemoMode)) ApplyInsets();
         if (e.PropertyName is nameof(AppController.IsRunning) && !controller.IsRunning && showingMain)
             PopupAdWindow.Offer(this, controller, PopupAdMoment.TranslationStopped);
         if (e.PropertyName is nameof(AppController.IsRunning) or nameof(AppController.HotkeysPaused) or nameof(AppController.Settings))
@@ -267,6 +268,10 @@ public partial class ShellWindow : Window
         var top = showingMain ? Palette.Size["header"] : 0;
         var bottom = ads ? Palette.Size["adBand"] + Sp.V("xs") + Sp.V("m") : 0;
         Root.Resources["shell.inset"] = new Thickness(0, top, 0, bottom);
+        // Çeviri sürerken şerit yumuşakça söner, yeri (cam çubuk ve alt boşluk) aynı kalır: düzen zıplamaz.
+        var band = AdBandPolicy.Visible(showingMain, AdCatalog.Banners.Count > 0, controller.IsRunning, controller.DemoMode);
+        Ads.IsHitTestVisible = band;
+        Ads.BeginAnimation(OpacityProperty, Motion.To(band ? 1 : 0, Motion.Page, exit: !band));
         Ambient.Animated = !showingMain || tab == ShellTab.Home;
     }
 

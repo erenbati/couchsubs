@@ -41,7 +41,9 @@ public class ScreenTextKindSettingsTests
     [Fact]
     public void PhoneIsReadWithItsOwnSettingOrThePhoneKind()
     {
-        var settings = new UserSettings();
+        // Telefonun kendi ayarı varsayılan açık (#1202); kapatılınca Telefon türüne bakılır.
+        Assert.True(new UserSettings().ReadsGamePhone);
+        var settings = new UserSettings { AutoReadGamePhone = false };
         Assert.False(settings.ReadsGamePhone);
         settings = settings with { AutoScreenText = true };
         Assert.True(settings.ReadsGamePhone);

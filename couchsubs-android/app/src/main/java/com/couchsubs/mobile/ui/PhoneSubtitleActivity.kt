@@ -35,6 +35,8 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -69,8 +71,8 @@ import com.couchsubs.mobile.service.LiveState
 class PhoneSubtitleActivity : ComponentActivity() {
     companion object {
         /** Bölünmüş [display] metni; [enabled] ise yalnız konuşan adları kendi renginde ([source]: bölünmemiş metin). */
-        fun speakerText(display: String, source: String, enabled: Boolean): AnnotatedString {
-            val segments = if (enabled) SpeakerColors.segments(display, source) else emptyList()
+        fun speakerText(display: String, source: String, enabled: Boolean, wholeLine: Boolean = false): AnnotatedString {
+            val segments = if (enabled) SpeakerColors.segments(display, source, wholeLine = wholeLine) else emptyList()
             if (segments.none { it.color != null }) return AnnotatedString(display)
             return buildAnnotatedString {
                 append(display)
@@ -105,6 +107,7 @@ class PhoneSubtitleActivity : ComponentActivity() {
         val stackPrevious = settings.stackPrevious
         // "Konuşan adını renklendir": yalnız ad o konuşanın renginde, cümle "Yazı rengi"nde (TV ile aynı; bkz. SpeakerColors).
         val speakerColors = settings.speakerColors
+        val wholeLine = settings.nameColorMode == com.couchsubs.mobile.core.NameColorMode.LINE
         val setApart = settings.setTextApart
         setContent {
             // Siyah zeminli ekran: Görünüm Açık seçilse de koyu renkler.
@@ -167,13 +170,13 @@ class PhoneSubtitleActivity : ComponentActivity() {
                         // Uzun çeviri en çok 3 satıra dengeli bölünür; sığmazsa yazı biraz küçülür (bkz. SubtitleWrap).
                         if (stackPrevious && previous.isNotEmpty() && status.current.isNotEmpty() && previous != status.current) {
                             val wrapped = SubtitleWrap.fit(previous)
-                            Text(speakerText(wrapped.text, previous, speakerColors),
+                            Text(speakerText(wrapped.text, previous, speakerColors, wholeLine),
                                 style = style.copy(fontSize = style.fontSize * scale * 0.8f * wrapped.scale, lineHeight = style.lineHeight * scale * 0.8f * wrapped.scale),
                                 color = color.copy(alpha = 0.4f), textAlign = TextAlign.Center)
                         }
                         val currentText = status.current.ifEmpty { if (status.running) "" else "CouchSubs" }
                         val current = SubtitleWrap.fit(currentText)
-                        Text(speakerText(current.text, currentText, speakerColors),
+                        Text(speakerText(current.text, currentText, speakerColors, wholeLine),
                             style = style.copy(fontSize = style.fontSize * scale * current.scale, lineHeight = style.lineHeight * scale * current.scale),
                             color = color, textAlign = TextAlign.Center)
                     }
@@ -270,9 +273,10 @@ class PhoneSubtitleActivity : ComponentActivity() {
 }
 
 /**
- * Otomatik ekran yazısının bir bloğu, özgün yazının yerinde ve stilinde: zemin rengi (her zeminde tam opak; özgün yazı
- * arasından görünmez, #827), yazı rengi, kalınlık, dar aile, hizalama. Yazı boyu özgün satır yüksekliğinden; Türkçe uzunsa en çok %40
- * küçülür (TV ile aynı kural).
+ * Otomatik ekran yazısının ve "Ekranı çevir"in bir bloğu, özgün yazının yerinde ve stilinde: zemin rengi (her zeminde tam
+ * opak; özgün yazı arasından görünmez, #827), yazı rengi, kalınlık, dar aile, hizalama. Yerleşim TV, Mac ve iPhone ile aynı
+ * ([ScreenFit.lines]): yazı boyu özgün satır yüksekliğinden ve küçülmez; Türkçe uzunsa yatayda sıkışır, bilgisayarın
+ * verdiği alana (simgelere kadar) genişler, özgün satır sayısında kalır. Önceden yazı %40'a kadar küçülüyordu.
  */
 @androidx.compose.runtime.Composable
 private fun StyledBlock(
@@ -284,23 +288,43 @@ private fun StyledBlock(
     val look = item.look
     fun color(hex: String, alpha: Float = 1f) = runCatching { Color(android.graphics.Color.parseColor(hex)).copy(alpha = alpha) }.getOrDefault(Color.Black)
     val box = item.box
-    val boxWidth = width * (box.right - box.left).toFloat()
-    val line = (height.value * item.lineHeight * 0.8).coerceIn(8.0, 40.0).toFloat()
-    val longest = item.translation.split('\n').maxOfOrNull { it.length } ?: 1
-    val original = item.source.split('\n').maxOfOrNull { it.length } ?: 1
-    val shrink = (original.toFloat() / longest).coerceIn(0.6f, 1f)
-    Text(item.translation,
-        style = Tokens.Type.caption.copy(
-            fontSize = (line * shrink).sp, lineHeight = (line * shrink * 1.15f).sp,
-            fontWeight = if (look?.bold == true) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
-            fontFamily = if (look?.condensed == true) androidx.compose.ui.text.font.FontFamily(android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.NORMAL)) else null,
-        ),
-        color = color(surface.foreground),
-        textAlign = when (look?.align) { "right" -> TextAlign.End; "center" -> TextAlign.Center; else -> TextAlign.Start },
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val widthPx = with(density) { width.toPx() }.toDouble()
+    val heightPx = with(density) { height.toPx() }.toDouble()
+    val fontPx = (heightPx * item.lineHeight * 0.95).coerceAtLeast(8.0)
+    val bold = look?.bold == true
+    val paint = android.graphics.Paint().apply {
+        textSize = fontPx.toFloat()
+        typeface = android.graphics.Typeface.create(
+            if (look?.condensed == true) "sans-serif-condensed" else "sans-serif",
+            if (bold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+    }
+    val fit = com.couchsubs.mobile.core.ScreenFit.lines(item.translation, box.left * widthPx, (box.right - box.left) * widthPx,
+        item.room?.let { it.left * widthPx to it.right * widthPx }, item.rows, look?.align ?: "left") { paint.measureText(it).toDouble() }
+    val boxHeightPx = (box.bottom - box.top) * heightPx
+    val pitchPx = maxOf(boxHeightPx / maxOf(1, fit.lines.size), fontPx * 1.05)
+    val toDp = { px: Double -> with(density) { px.toFloat().toDp() } }
+    Column(
         modifier = Modifier
-            .offset(x = width * box.left.toFloat(), y = height * box.top.toFloat())
-            .width(boxWidth)
+            .offset(x = toDp(fit.left), y = height * box.top.toFloat())
+            .width(toDp(fit.width))
             .then(if (fill) Modifier.height(height * (box.bottom - box.top).toFloat()) else Modifier)
-            .background(color(surface.background))
-            .padding(horizontal = 2.dp))
+            .background(color(surface.background)),
+    ) {
+        for (text in fit.lines) {
+            Text(text, maxLines = 1, softWrap = false,
+                style = Tokens.Type.caption.copy(
+                    fontSize = with(density) { fontPx.toFloat().toSp() }, lineHeight = with(density) { pitchPx.toFloat().toSp() },
+                    fontWeight = if (bold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+                    fontFamily = if (look?.condensed == true) androidx.compose.ui.text.font.FontFamily(android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.NORMAL)) else null,
+                ),
+                color = color(surface.foreground),
+                textAlign = when (look?.align) { "right" -> TextAlign.End; "center" -> TextAlign.Center; else -> TextAlign.Start },
+                modifier = Modifier
+                    // Satır sıkıştırılmadan önceki genişliğinde, yazının alanına ortalı; ortasından yatayda ölçeklenince alanın
+                    // tamamını kaplar (hiza satırın içinde korunur).
+                    .requiredWidth(toDp(fit.width / fit.squeeze))
+                    .graphicsLayer { scaleX = fit.squeeze.toFloat() })
+        }
+    }
 }

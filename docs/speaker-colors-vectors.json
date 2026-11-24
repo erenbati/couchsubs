@@ -1,96 +1,151 @@
 {
  "palette": [
-  "#FFD54F",
-  "#4FC3F7",
-  "#81C784",
-  "#FF8A65",
-  "#CE93D8",
-  "#F06292",
-  "#4DD0E1",
-  "#AED581",
-  "#FFB74D",
-  "#90CAF9"
+  "#FD736D",
+  "#FEA757",
+  "#FEDD3C",
+  "#9BE759",
+  "#1EE4B2",
+  "#2AD5E5",
+  "#49B5FA",
+  "#8F9BFB",
+  "#D482FF",
+  "#F76AB7"
  ],
- "families": {
-  "#FFD54F": "A",
-  "#FFB74D": "A",
-  "#FF8A65": "A",
-  "#4FC3F7": "B",
-  "#4DD0E1": "B",
-  "#90CAF9": "B",
-  "#81C784": "C",
-  "#AED581": "C",
-  "#CE93D8": "D",
-  "#F06292": "D"
- },
+ "hues": [
+  25,
+  61,
+  97,
+  133,
+  169,
+  205,
+  241,
+  277,
+  313,
+  349
+ ],
+ "minHueGap": 72,
  "sequence": [
   {
    "name": "Mattia",
-   "color": "#90CAF9"
+   "color": "#F76AB7"
   },
   {
    "name": "Lucia",
-   "color": "#F06292"
+   "color": "#2AD5E5"
   },
   {
    "name": "Mattla",
-   "color": "#90CAF9"
+   "color": "#F76AB7"
   },
   {
    "name": "Mattia.",
-   "color": "#90CAF9"
+   "color": "#F76AB7"
   },
   {
    "name": "MATTIA",
-   "color": "#90CAF9"
+   "color": "#F76AB7"
   },
   {
    "name": "Boobie",
-   "color": "#FFD54F"
+   "color": "#FEDD3C"
   },
   {
    "name": "Jason",
-   "color": "#AED581"
+   "color": "#8F9BFB"
   },
   {
    "name": "Cal",
-   "color": "#4FC3F7"
+   "color": "#FEA757"
   },
   {
    "name": "Raul",
-   "color": "#81C784"
+   "color": "#FD736D"
   },
   {
    "name": "Brian",
-   "color": "#FF8A65"
+   "color": "#9BE759"
   },
   {
    "name": "Mattia",
-   "color": "#90CAF9"
+   "color": "#F76AB7"
   },
   {
    "name": "Lucia:",
-   "color": "#F06292"
+   "color": "#2AD5E5"
   },
   {
    "name": "Jasen",
-   "color": "#AED581"
+   "color": "#8F9BFB"
   },
   {
    "name": "Dre'Quan",
-   "color": "#CE93D8"
+   "color": "#1EE4B2"
   },
   {
    "name": "Bae-Luxe",
-   "color": "#4DD0E1"
+   "color": "#49B5FA"
   },
   {
    "name": "Lori",
-   "color": "#FFB74D"
+   "color": "#D482FF"
   },
   {
    "name": "Cal",
-   "color": "#4FC3F7"
+   "color": "#FEA757"
+  }
+ ],
+ "gta6": [
+  {
+   "name": "Lucia",
+   "color": "#2AD5E5"
+  },
+  {
+   "name": "Jason",
+   "color": "#FD736D"
+  },
+  {
+   "name": "Cal",
+   "color": "#FEDD3C"
+  },
+  {
+   "name": "Yolanda",
+   "color": "#8F9BFB"
+  },
+  {
+   "name": "CO Wilson",
+   "color": "#F76AB7"
+  },
+  {
+   "name": "Stefanie Gates",
+   "color": "#9BE759"
+  },
+  {
+   "name": "Donnie",
+   "color": "#49B5FA"
+  },
+  {
+   "name": "Brian",
+   "color": "#FEA757"
+  },
+  {
+   "name": "Officer Gutierrez",
+   "color": "#D482FF"
+  },
+  {
+   "name": "Boobie",
+   "color": "#1EE4B2"
+  },
+  {
+   "name": "Raul",
+   "color": "#F76AB7"
+  },
+  {
+   "name": "Lucia",
+   "color": "#2AD5E5"
+  },
+  {
+   "name": "JASON",
+   "color": "#FD736D"
   }
  ]
 }

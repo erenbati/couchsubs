@@ -50,6 +50,37 @@ class TvSessionLauncherTest {
         TvSessionLauncher.samsungAppConnected(host)
     }
 
+    /**
+     * #1158: uygulama TV'den silinince telefon onu "kurulu" gösteriyor, kurulum önerilmiyordu. Bayat bilgide liste kesin
+     * "yok" derse eşli TV'nin sürümü ve "bağlandı" kaydı silinir (eşli TV kalır); yanıtsız liste ve başka TV silmez.
+     */
+    @Test fun samsungMissingListForgetsTheInstalledRecord() {
+        val missing = TvSessionLauncher.SamsungAppPresence(false, null)
+        assertTrue(TvSessionLauncher.samsungForgetsOnList(true, missing))
+        assertFalse(TvSessionLauncher.samsungForgetsOnList(true, null))
+        assertFalse(TvSessionLauncher.samsungForgetsOnList(true, TvSessionLauncher.SamsungAppPresence(true, 2)))
+        assertFalse(TvSessionLauncher.samsungForgetsOnList(false, missing))
+
+        val tv = InstalledTv(TvBrand.SAMSUNG, "192.168.1.40", version = "0.9.80")
+        val (kept, seen) = TvSessionLauncher.samsungForgetMissing(tv, "192.168.1.40", " 192.168.1.40 ")
+        assertEquals(tv.copy(version = null), kept)
+        assertNull(seen)
+        assertFalse(TvSessionLauncher.samsungKnownInstalled(kept!!, seen))
+        // Başka TV'nin bildirimi kayda dokunmaz.
+        assertEquals(tv to "192.168.1.40", TvSessionLauncher.samsungForgetMissing(tv, "192.168.1.40", "192.168.1.99"))
+        val lg = InstalledTv(TvBrand.LG, "192.168.1.40", version = "0.9.80")
+        assertEquals(lg, TvSessionLauncher.samsungForgetMissing(lg, null, "192.168.1.40").first)
+        assertTrue(TvSessionLauncher.samsungMissingLine("1.2.3.4").contains("TV uygulaması silinmiş"))
+
+        // Silinen bilgiden sonra yeniden kurulup bağlanınca listesiz açma hakkı yine verilir.
+        val host = "192.168.1.240"
+        assertTrue(TvSessionLauncher.samsungAllowsDirect(host))
+        assertFalse(TvSessionLauncher.samsungAllowsDirect(host))
+        TvSessionLauncher.samsungForget(host)
+        assertTrue(TvSessionLauncher.samsungAllowsDirect(host))
+        TvSessionLauncher.samsungForget(host)
+    }
+
     /** beta.63: liste geliştirici moduyla kurulan uygulamayı içermiyorsa telefon uygulamayı hiç açmıyordu. */
     @Test fun samsungKnownInstalledAppLaunchesWithoutTheList() {
         val missing = TvSessionLauncher.SamsungAppPresence(false, null)

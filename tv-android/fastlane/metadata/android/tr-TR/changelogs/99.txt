@@ -1,0 +1,1 @@
+0.9.96: Ekran yazılarının (menü, tabela, yardım kutusu) çevirisi yazı oyundan kalkınca TV'de kalmıyor.

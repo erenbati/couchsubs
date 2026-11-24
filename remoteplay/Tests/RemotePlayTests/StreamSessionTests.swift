@@ -465,6 +465,16 @@ final class DisconnectReasonTests: XCTestCase {
         XCTAssertNil(StreamSession.pickMoved([], name: "PS5-A"))
     }
 
+    /// Adresi değişen PS5 adı harf/boşluk farkıyla gelse de yeni adreste bulunur; kayıtta ad yoksa ağdaki tek PS5 seçilir.
+    func testMovedConsoleIsFoundDespiteCaseOrSpacing() {
+        let a = ConsoleInfo(host: "192.168.1.35", name: "PS5-A ", isAwake: false)
+        let b = ConsoleInfo(host: "192.168.1.36", name: "PS5-B", isAwake: true)
+        XCTAssertEqual(StreamSession.pickMoved([a, b], name: "ps5-a"), a)
+        XCTAssertTrue(StreamSession.isRegistered(a, name: " PS5-a"))
+        XCTAssertEqual(StreamSession.pickMoved([b], name: ""), b)
+        XCTAssertNil(StreamSession.pickMoved([a, b], name: ""))
+    }
+
     /// Kayıtlı adreste başka PS5 yanıt verirse kayıtlı PS5 sayılmaz (GitHub #425).
     func testOtherConsoleAtSavedAddressIsNotTheRegisteredOne() {
         let a = ConsoleInfo(host: "192.168.1.20", name: "PS5-A", isAwake: true)

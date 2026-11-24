@@ -186,14 +186,21 @@ public struct UserSettings: Codable, Equatable {
     /// Ayarlardaki bekleme kaydırıcılarının üst sınırı (ms); kayıttaki değer hatta en çok `maxWaitMs` olarak uygulanır.
     public static let waitSliderMaxMs = 1000
     public static let maxWaitMs = 2000
-    /// Mac'te GTA 6 telefonu açıkken mesajları yerinde gösterir. Varsayılan kapalı; kullanıcı açmadıkça telefon okunmaz.
-    public var autoReadGamePhone = false
+    /// "GTA 6 telefonunu otomatik çevir": oyun GTA 6 seçiliyken telefon açılınca mesajları çevrilir (izleyici yalnız GTA 6'da
+    /// çalışır). Varsayılan açık (#1202, #1197, #1193, #1170: telefon okuyucusu hiç çalışmıyordu, telefon listesi altyazı
+    /// yolunda sahne yazısı sayılıp atılıyordu). Eski kayıtlarda kapalı kalan ayar bir kez açılır (`migratingGamePhone()`).
+    public var autoReadGamePhone = true
     /// "GTA 6 Telefon Mesajları": açıkken (Yanda Panel, varsayılan) telefonun mesajları telefonun yanındaki sohbet
     /// panelinde (karşı taraf solda, oyuncu sağda; `ScreenPhoneCard.layout`), kapalıyken (Balonların Üstünde) her mesajın
     /// çevirisi kendi balonunun üstünde, balonun renginde gösterilir. Otomatik telefon okuması ve "Ekranı çevir" aynı
     /// ayarı kullanır. Kullanıcı bildirimi (X, monitörde oynayan): balonların üstündeki çeviriler kayıyor, küçük kalıyor,
     /// kimin ne dediği belli olmuyordu. Eski `phoneChatCard` kaydı (varsayılanı kapalıydı) okunmaz; herkes panelle başlar.
     public var phoneMessagesPanel = true
+    /// "Ekranı yerinde Türkçe çiz (deneysel)": GTA 6 telefonunun yazıları zeminden silinir, Türkçesi aynı yere çizilir ve
+    /// telefonun görüntüsüne çapayla yapışık, oyun penceresinin üstünde gösterilir (`PhoneAnchorSession`, `PhoneTwin`;
+    /// docs/ekran-capasi.md). Telefon sarsılsa da kaysa da çizim onunla gider; OCR yalnız yazı değişince çalışır. Önce
+    /// yalnız Mac'te (Sinan Bey kararı, 24 Kas): Mac'te varsayılan açık, öbür platformlar bu ayarı henüz okumaz.
+    public var drawScreenInPlace = false
     /// Bilinen oyunlarda hazır ek alanlar (bkz. `GameAreaPresets`); kullanıcının kendi ek alanı varsa o kullanılır.
     /// Varsayılan kapalı (beta.63–68'de açık geliyordu: otomatik ekran yazısı kapalıyken de GTA 6'nın sol üstünde menüyü,
     /// sağda bildirimleri çeviriyordu). Kullanıcı açmadıkça altyazı alanı dışında hiçbir şey çevrilmez.
@@ -209,6 +216,8 @@ public struct UserSettings: Codable, Equatable {
     public var autoScreenTextReset = false
     /// Hazır alanlar ve GTA 6 telefonu bir kerelik göçü yapıldı (bkz. `migratingScreenTextExtras()`). Eski kayıtlarda yoktur.
     public var screenTextExtrasReset = false
+    /// GTA 6 telefonu bir kerelik açıldı (bkz. `migratingGamePhone()`). Eski kayıtlarda yoktur (false).
+    public var gamePhoneReenabled = false
     /// Otomatik ekran yazısında hangi türler çevrilir (bkz. `ScreenTextKind`); yalnız `autoScreenText` açıkken geçerli.
     /// Eski kayıtlarda yoktur; varsayılanla gelir: telefon, görev, yardım/eylemler açık; menüler ve diğerleri kapalı
     /// (kullanıcı isteği: "menülerde olmasını istemiyorum").
@@ -283,11 +292,13 @@ public struct UserSettings: Codable, Equatable {
         partialWaitMs = (try? values.decodeIfPresent(Int.self, forKey: .partialWaitMs)) ?? defaults.partialWaitMs
         autoReadGamePhone = try values.decodeIfPresent(Bool.self, forKey: .autoReadGamePhone) ?? defaults.autoReadGamePhone
         phoneMessagesPanel = try values.decodeIfPresent(Bool.self, forKey: .phoneMessagesPanel) ?? defaults.phoneMessagesPanel
+        drawScreenInPlace = try values.decodeIfPresent(Bool.self, forKey: .drawScreenInPlace) ?? defaults.drawScreenInPlace
         gameAreaPresets = try values.decodeIfPresent(Bool.self, forKey: .gameAreaPresets) ?? defaults.gameAreaPresets
         setTextApart = try values.decodeIfPresent(Bool.self, forKey: .setTextApart) ?? defaults.setTextApart
         autoScreenText = try values.decodeIfPresent(Bool.self, forKey: .autoScreenText) ?? defaults.autoScreenText
         autoScreenTextReset = try values.decodeIfPresent(Bool.self, forKey: .autoScreenTextReset) ?? defaults.autoScreenTextReset
         screenTextExtrasReset = try values.decodeIfPresent(Bool.self, forKey: .screenTextExtrasReset) ?? defaults.screenTextExtrasReset
+        gamePhoneReenabled = try values.decodeIfPresent(Bool.self, forKey: .gamePhoneReenabled) ?? defaults.gamePhoneReenabled
         screenTextPhone = try values.decodeIfPresent(Bool.self, forKey: .screenTextPhone) ?? defaults.screenTextPhone
         screenTextMission = try values.decodeIfPresent(Bool.self, forKey: .screenTextMission) ?? defaults.screenTextMission
         screenTextHelp = try values.decodeIfPresent(Bool.self, forKey: .screenTextHelp) ?? defaults.screenTextHelp
@@ -436,19 +447,31 @@ extension UserSettings {
         return wasOn
     }
 
-    /// Hazır alanlar ("Bilinen oyunlarda hazır alanları kullan") ve "GTA 6 telefonunu otomatik çevir" bir kerelik göçü
-    /// (Windows ScreenTextExtrasMigration, Android aynı kural). `migratingAutoScreenText()`'ten sonra çağrılır. Hazır
-    /// alanlar beta.63–68'de varsayılan açık geliyordu ve otomatik ekran yazısı kapalıyken de GTA 6'da menüyü ve
-    /// bildirimleri çeviriyordu. İşaret yoksa: otomatik ekran yazısı kapalıysa ikisi de kapatılır; kullanıcı otomatik ekran
-    /// yazısını açmışsa dokunulmaz. Sonra işaret konur; kullanıcı ikisini bilerek yeniden açabilir. Dönüş: ayar değişti.
+    /// Hazır alanlar ("Bilinen oyunlarda hazır alanları kullan") bir kerelik göçü (Windows ScreenTextExtrasMigration,
+    /// Android aynı kural). `migratingAutoScreenText()`'ten sonra çağrılır. Hazır alanlar beta.63–68'de varsayılan açık
+    /// geliyordu ve otomatik ekran yazısı kapalıyken de GTA 6'da menüyü ve bildirimleri çeviriyordu. İşaret yoksa: otomatik
+    /// ekran yazısı kapalıysa kapatılır; kullanıcı otomatik ekran yazısını açmışsa dokunulmaz. Sonra işaret konur. GTA 6
+    /// telefonuna artık dokunulmaz (önceden o da kapatılıyordu; #1202: telefon hiç çevrilmiyordu). Dönüş: ayar değişti.
     @discardableResult
     public mutating func migratingScreenTextExtras() -> Bool {
         guard !screenTextExtrasReset else { return false }
         screenTextExtrasReset = true
         guard !autoScreenText else { return false }
-        let changed = gameAreaPresets || autoReadGamePhone
+        let changed = gameAreaPresets
         gameAreaPresets = false
-        autoReadGamePhone = false
+        return changed
+    }
+
+    /// "GTA 6 telefonunu otomatik çevir" bir kerelik açılır (Windows GamePhoneMigration, Android aynı kural;
+    /// `migratingScreenTextExtras()`'ten sonra çağrılır). Eski göç otomatik ekran yazısı kapalıyken telefonu da kapatıyordu;
+    /// GTA 6 oynayanların telefonu hiç çevrilmiyordu (#1202, #1197, #1193, #1170). İşaret konur; kullanıcı sonra bilerek
+    /// kapatabilir. Dönüş: ayar değişti.
+    @discardableResult
+    public mutating func migratingGamePhone() -> Bool {
+        guard !gamePhoneReenabled else { return false }
+        gamePhoneReenabled = true
+        let changed = !autoReadGamePhone
+        autoReadGamePhone = true
         return changed
     }
 }

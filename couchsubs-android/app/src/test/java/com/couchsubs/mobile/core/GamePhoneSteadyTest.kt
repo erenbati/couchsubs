@@ -168,4 +168,30 @@ class GamePhoneSteadyTest {
         }
         assertNotEquals(first.box, jiggled.box)
     }
+
+    /**
+     * #1202, #1170: kaydırınca telefon yenilenmiyordu. Eşleşen balonların hepsi aynı yöne satır yüksekliğinin yarısından
+     * fazla kayarsa kaydırmadır; el titremesi, tek yöne gitmeyen oynama ya da eşleşmeyen okuma kaydırma değildir (Mac/iPhone
+     * ve Windows ile aynı vektörler).
+     */
+    @Test
+    fun scrollIsRecognisedOnlyWhenEveryMatchedBubbleMovesTheSameWay() {
+        fun p(text: String, top: Double) = PhoneSteady.Placed(text, top)
+        val before = listOf(p("Where are you right now?", 0.30), p("At the diner, come over.", 0.45))
+        val line = 0.04
+        // Yukarı kaydırma: ikisi de 0,1 yukarı, altta yeni balon.
+        assertTrue(PhoneSteady.scrolled(before,
+            listOf(p("Where are you right now?", 0.20), p("At the diner, come over.", 0.35), p("On my way.", 0.50)), line))
+        // Aşağı kaydırma, OCR'la biraz farklı okunan mesaj da eşleşir.
+        assertTrue(PhoneSteady.scrolled(before, listOf(p("Where are you rigth now?", 0.40), p("At the diner, come over.", 0.55)), line))
+        // El titremesi (satır yüksekliğinin yarısından az).
+        assertFalse(PhoneSteady.scrolled(before, listOf(p("Where are you right now?", 0.31), p("At the diner, come over.", 0.46)), line))
+        // Biri yukarı, biri aşağı.
+        assertFalse(PhoneSteady.scrolled(before, listOf(p("Where are you right now?", 0.20), p("At the diner, come over.", 0.55)), line))
+        // Biri yerinde.
+        assertFalse(PhoneSteady.scrolled(before, listOf(p("Where are you right now?", 0.20), p("At the diner, come over.", 0.45)), line))
+        // Eşleşen balon yok.
+        assertFalse(PhoneSteady.scrolled(before, listOf(p("Totally different message here", 0.10)), line))
+        assertFalse(PhoneSteady.scrolled(before, listOf(p("Where are you right now?", 0.20)), 0.0))
+    }
 }

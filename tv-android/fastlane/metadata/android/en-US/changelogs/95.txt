@@ -1,0 +1,1 @@
+0.9.92: Dialogue subtitles are never squeezed or shrunk in any mode; long lines wrap and the text size stays the same. Long translated screen text is no longer squeezed; short labels narrow by at most 10%.

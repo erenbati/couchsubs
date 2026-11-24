@@ -97,8 +97,34 @@ final class UiPanelTests: XCTestCase {
         await watcher.pass(frame(panel: true), areas: [help])
         await watcher.pass(frame(panel: true), areas: [help])
         XCTAssertTrue(server.sent.contains { $0.id == GameAreaPresets.helpId && $0.text == "TR: Follow Vicki to the car." })
+        // Panel `panelMissTurns` tur bulunamadan çeviri kalkmaz.
+        for _ in 1..<RegionWatcher.panelMissTurns { await watcher.pass(frame(panel: false), areas: [help]) }
+        XCTAssertEqual(server.sent.last?.text, "TR: Follow Vicki to the car.")
         await watcher.pass(frame(panel: false), areas: [help])
         XCTAssertEqual(server.sent.last?.id, GameAreaPresets.helpId)
         XCTAssertEqual(server.sent.last?.text, "")
+    }
+
+    /// Tek karelik ıska çeviriyi silmez; panel aynı yazıyla (aynı görüntüyle) dönünce çeviri yeniden gösterilir (#1202:
+    /// iz değişmediği için çeviri bir daha gelmiyordu).
+    func testPresetAreaSurvivesAMissedPanelAndComesBackWithTheSameText() async {
+        let reader = Reader(), server = Server()
+        reader.lines = [TextLine("Follow Vicki to the car.", box: TextBox(left: 0.1, top: 0.2, right: 0.9, bottom: 0.3))]
+        let watcher = RegionWatcher(reader: reader, translator: Translator(), server: server)
+        await watcher.pass(frame(panel: true), areas: [help])
+        await watcher.pass(frame(panel: true), areas: [help])
+        XCTAssertEqual(server.sent.last?.text, "TR: Follow Vicki to the car.")
+        await watcher.pass(frame(panel: false), areas: [help])
+        XCTAssertFalse(server.sent.contains { $0.text.isEmpty })
+        // Panel geri geldi: çeviri ekranda kaldı.
+        await watcher.pass(frame(panel: true), areas: [help])
+        await watcher.pass(frame(panel: true), areas: [help])
+        XCTAssertFalse(server.sent.contains { $0.text.isEmpty })
+        // Panel gerçekten kapandı, sonra aynı yazıyla aynı görüntüde döndü: çeviri yeniden gönderilir.
+        for _ in 0..<RegionWatcher.panelMissTurns { await watcher.pass(frame(panel: false), areas: [help]) }
+        XCTAssertEqual(server.sent.last?.text, "")
+        let cleared = server.sent.count
+        for _ in 0..<3 { await watcher.pass(frame(panel: true), areas: [help]) }
+        XCTAssertTrue(server.sent.dropFirst(cleared).contains { $0.text == "TR: Follow Vicki to the car." })
     }
 }

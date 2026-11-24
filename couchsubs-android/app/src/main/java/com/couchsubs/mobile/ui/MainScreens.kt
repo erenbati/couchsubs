@@ -389,6 +389,10 @@ private fun RunningScreen(status: LiveStatus, topBar: @Composable () -> Unit, on
         AnimatedNote(status.error)
         // TV'ye çevirirken telefon kilitlenebilir: pil kısıtlaması açıksa çeviri ekran kapanınca durabilir.
         if (!status.demo && Services.settings.target.showsOnTv) BackgroundLimitNote()
+        // TV uygulaması sürümünü çeviri başında, altyazı akışına bağlanınca bildirir: eskiyse güncelleme önerisi çeviri
+        // ekranında da görünür. Önceden yalnız ana ekrandaydı, çeviri sürerken hiç görülmüyordu; TV'de 0.9.71 kalmıştı
+        // (GitHub #1199). Windows, Mac ve iPhone ile aynı.
+        if (!status.demo && Services.settings.target.showsOnTv) TvAppUpdateCard(onTvInstall)
         // TV uygulaması bağlı değil: CouchSubs TV'de nerede bulunur (markaya göre), otomatik açma neden olmadı ve
         // "Otomatik açmayı dene" (Windows, Mac ve iPhone ile aynı).
         if (!status.demo && Services.settings.target.showsOnTv && status.connectedTvs == 0)
@@ -404,6 +408,21 @@ private fun RunningScreen(status: LiveStatus, topBar: @Composable () -> Unit, on
         // Görüntü bir dakikadır geliyor ama hiç altyazı satırı okunmadı (GitHub #503, #566, #572; SubtitleOffTip).
         if (status.subtitleOffTip) {
             NoteTile(stringResource(R.string.subtitle_off_tip), Tokens.Color.secondary)
+        }
+        // Telefon çevirisi kapalıyken GTA 6 telefonunun listesi altyazı sayılmadı (#1202): oturumda bir kez sorulur.
+        if (status.gamePhoneHint && !status.demo) {
+            Tile(Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.game_phone_hint), style = Tokens.Type.body, color = Tokens.Color.text)
+                Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Space.inline)) {
+                    SecondaryButton(stringResource(R.string.game_phone_hint_turn_on)) {
+                        Services.settings.autoReadGamePhone = true
+                        com.couchsubs.mobile.service.LiveState.update { it.copy(gamePhoneHint = false) }
+                    }
+                    GhostButton(stringResource(R.string.area_profile_no), color = Tokens.Color.secondary) {
+                        com.couchsubs.mobile.service.LiveState.update { it.copy(gamePhoneHint = false) }
+                    }
+                }
+            }
         }
         if (!status.demo) GameSection(status)
         // Yeni satır gelince kartın amber halkası kısa sürede söner (hareket azaltılmışken yok).

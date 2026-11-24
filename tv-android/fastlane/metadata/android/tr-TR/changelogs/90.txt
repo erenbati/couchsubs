@@ -1,0 +1,1 @@
+0.9.87: LG'de çeviri başında ve PS tuşundan dönüşte akan görüntü artık yeniden kurulmuyor; ekran yalnız görüntü gerçekten donarsa kısa kararır.

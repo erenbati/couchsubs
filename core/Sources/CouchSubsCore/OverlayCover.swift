@@ -21,25 +21,13 @@ public enum OverlayCover {
     }
 }
 
-/// "Örtsün" yerleşiminde yazı boyu kararlıdır (TV ve OBS sayfası aynı kuralı uygular; Windows: CoverFontScale). Kullanıcının
-/// seçtiği boy kullanılır, kutu çeviriye göre genişler; yazı ancak 3 satıra sığmıyorsa bir kademe küçülür (seçilen boyun
-/// %80'i) ve asla büyütülmez. Küçülen boy oturum boyunca (yazı boyu değişene dek) kalır: ardışık satırlarda boy bir büyük
-/// bir küçük zıplamasın.
+/// "Örtsün" yerleşiminde yazı boyu sabittir (TV ve OBS sayfası aynı kuralı uygular; Windows: CoverFontScale): her satır
+/// kullanıcının seçtiği boyda, kutu çeviriye göre genişler. 3 satıra sığmayan çeviri küçülmez, daha çok satıra bölünür
+/// (en çok 3 dengeli satır, pencere daha uzununu kendisi böler). X'te bildirildi (beta.89): eskiden böyle tek bir satır yazıyı %80'e indiriyor ve boy
+/// ayarı değişene dek öyle bırakıyordu; yazı boyu satırdan satıra değişiyor, çeviri sıkışıyordu.
 public struct CoverFontScale: Equatable, Sendable {
-    /// Tek kademe: seçilen boyun %80'i. Bundan küçüğe inilmez.
-    public static let step = 0.8
-    public private(set) var shrunk = false
-    private var fontSize: Int?
-
     public init() {}
 
-    /// Satırın yazı boyu çarpanı (1 ya da `step`). Yazı boyu ayarı değişince kademe sıfırlanır.
-    public mutating func scale(for text: String, fontSize: Int) -> Double {
-        if self.fontSize != fontSize {
-            self.fontSize = fontSize
-            shrunk = false
-        }
-        if !text.contains("\n"), SubtitleWrap.fit(text).scale < 1 { shrunk = true }
-        return shrunk ? Self.step : 1
-    }
+    /// Satırın yazı boyu çarpanı: hep 1 (seçilen boy).
+    public mutating func scale(for text: String, fontSize: Int) -> Double { 1 }
 }
