@@ -27,4 +27,15 @@ class MovedConsoleTest {
         assertFalse(ConsoleDiscovery.isRegistered(a, "PS5-B"))
         assertTrue(ConsoleDiscovery.isRegistered(a, ""))
     }
+
+    /** Adresi değişen PS5 adı harf/boşluk farkıyla gelse de yeni adreste bulunur; kayıtta ad yoksa ağdaki tek PS5 seçilir. */
+    @Test
+    fun movedConsoleIsFoundDespiteCaseOrSpacing() {
+        val a = ConsoleInfo("192.168.1.35", "PS5-A ", false)
+        val b = ConsoleInfo("192.168.1.36", "PS5-B", true)
+        assertEquals(a, ConsoleDiscovery.pickMoved(listOf(a, b), "ps5-a"))
+        assertTrue(ConsoleDiscovery.isRegistered(a, " PS5-a"))
+        assertEquals(b, ConsoleDiscovery.pickMoved(listOf(b), ""))
+        assertNull(ConsoleDiscovery.pickMoved(listOf(a, b), ""))
+    }
 }

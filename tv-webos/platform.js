@@ -76,7 +76,8 @@
     lastTime: -1, lastAdvanceAt: 0, advances: 0, playTried: false, sawUnpaused: false,
     pending: null, building: null, checkTimer: null, soonTimer: null, soonStrict: false, wasHidden: false,
     stalls: 0, stallNote: '', stallRebuiltAt: 0, stallTimer: null,
-    stallVideo: null, stallTime: 0, stallRebuilds: [], firstFrameAt: 0
+    stallVideo: null, stallTime: 0, stallFrames: -1, stallAt: 0, stallRebuilds: [], firstFrameAt: 0,
+    lastFrames: -1, flowing: false
   };
 
   function nowMs() { return new Date().getTime(); }
@@ -201,18 +202,93 @@
   var NOISE_LEARN_MS = 2 * 60000;
   var NOISE_DOUBT_MS = 3 * 60000;
   var NOISE_KEY = 'couchsubs.hdmiStallNoise';
-  var noise = { known: readNoise(), learnTimer: null, ignoredAt: 0, doubted: false };
+  var noise = { known: readFlag(NOISE_KEY), learnTimer: null, ignoredAt: 0, doubted: false };
+  //
+  // 0.9.87 (#1055, aynı TV, 0.9.84 + beta.89): "çeviriyi başlattığımda ve PS tuşuna bastığımda hâlen 3-4 kez siyah
+  // ekran gidip geliyor; üçü art arda, sonuncusu ~10 sn sonra". 0.9.82'nin öğrenmesi ancak ilk oturumda sınır dolup
+  // NOISE_LEARN_MS geçtikten sonra yazıyordu: ilk oturum (ve öğrenme hiç bitmediyse her oturum) hâlâ üç kurmaydı. Ayrıca
+  // 'stalled' sonrası tek ölçüt 1,5 sn içinde currentTime'ın ilerlemesiydi; kare sayacını (getVideoPlaybackQuality,
+  // webkitDecodedFrameCount) ilerleten ya da currentTime'ı seyrek/yeni görüntüde geç ilerleten TV'de akan görüntü
+  // "donmuş" sayılıyordu. Artık:
+  // - Görüntünün akışı currentTime YA DA kare sayacıyla ölçülür (progressMark/progressedSince); gözcünün durmuş sayaç
+  //   işareti ve öne gelişin sıkı denetimi de ikisine bakar.
+  // - Akışını ölçebildiğimiz TV'de (bu <video>'da ya da daha önce sayaç ilerledi; FLOW_KEY ile saklanır) 'stalled'dan
+  //   sonra STALL_FREEZE_MS boyunca STALL_POLL_MS'de bir bakılır: sayaç bir kez ilerlerse görüntü akıyordur, dokunulmaz
+  //   ve sınırdan düşülmez ("stall <n> ok"). Yalnız bu süre boyunca hiç ilerlemezse (görüntü gerçekten dondu) kurulur.
+  //   Bu ilk oturumda da böyledir; öğrenmeyi beklemez.
+  // - Sayacı hiç ilerlemeyen TV'de (#643, t=) sayfa akan görüntüyü siyah ekrandan ayıramaz: 0.9.82 gibi.
+  // - Tanıda "fr <n>" (kare sayacı varsa) ve "flow" (t= iken akış yine ölçülebiliyor: kare sayacı ya da kayıt).
+  var STALL_FREEZE_MS = 4000;
+  var STALL_POLL_MS = 500;
+  var FLOW_KEY = 'couchsubs.hdmiFlowCounter';
+  var flow = { known: readFlag(FLOW_KEY) };
 
-  function readNoise() {
-    try { return window.localStorage.getItem(NOISE_KEY) === '1'; } catch (e) { return false; }
+  function readFlag(key) {
+    try { return window.localStorage.getItem(key) === '1'; } catch (e) { return false; }
+  }
+
+  function writeFlag(key, on) {
+    try {
+      if (on) window.localStorage.setItem(key, '1');
+      else window.localStorage.removeItem(key);
+    } catch (e) {}
   }
 
   function saveNoise(known) {
     noise.known = known;
+    writeFlag(NOISE_KEY, known);
+  }
+
+  // <video>'nun çözülen/gösterilen kare sayısı; TV vermiyorsa -1.
+  function frameCount(video) {
+    var count = -1;
     try {
-      if (known) window.localStorage.setItem(NOISE_KEY, '1');
-      else window.localStorage.removeItem(NOISE_KEY);
+      if (typeof video.getVideoPlaybackQuality === 'function') {
+        var quality = video.getVideoPlaybackQuality();
+        if (quality && typeof quality.totalVideoFrames === 'number') count = Math.max(count, quality.totalVideoFrames);
+      }
     } catch (e) {}
+    try {
+      if (typeof video.webkitDecodedFrameCount === 'number') count = Math.max(count, video.webkitDecodedFrameCount);
+    } catch (e2) {}
+    return count;
+  }
+
+  function progressMark(video) {
+    return { time: Number(video.currentTime) || 0, frames: frameCount(video) };
+  }
+
+  // Görüntü işaretten bu yana aktı mı (currentTime ya da kare sayacı ilerledi). Aktıysa TV'nin akışı ölçülebilir.
+  function progressedSince(video, mark) {
+    var now = progressMark(video);
+    var moved = now.time > mark.time || now.frames > Math.max(mark.frames, 0);
+    if (moved) noteFlow();
+    return moved;
+  }
+
+  // Bu TV görüntünün akışını gösteriyor (sayaç en az bir kez ilerledi).
+  function noteFlow() {
+    hdmi.flowing = true;
+    if (flow.known) return;
+    flow.known = true;
+    writeFlag(FLOW_KEY, true);
+  }
+
+  // 'stalled'dan sonra akış ölçülerek beklenebilir mi.
+  function flowMeasurable() {
+    return hdmi.flowing || flow.known;
+  }
+
+  // 0.9.94 (#1055; LG 65UR91006LA webOS 33.31.75, OLED65C46LA): "hdmi playing rs4 1920x1080 t= fr 0 · rebuilt 1 (resume)
+  // · ev stalled · stall 2 noise". Bu TV'ler kare sayacını veriyor ama hep 0 (fr 0) ve currentTime'ı ilerletmiyor (t=):
+  // sayfa akışı hiç ölçemiyor. Öne gelişin sıkı denetimi "sayaç ilerlemedi" diye sağlam görüntüyü her PS tuşunda yeniden
+  // kuruyor, 'stalled' da çeviri başında kurduruyordu (ekran art arda kararıyordu). Artık böyle bir TV'de görüntü
+  // "oynuyor" (rs>=2, duraklamamış, hata yok) iken ne öne geliş ne 'stalled' kurdurur ("stall <n> blind"); kurma yalnız
+  // <video> hatası/bitmesi/boşalması (gözcü), giriş değişmesi ya da kullanıcının girişi yeniden seçmesiyle olur. Kare
+  // sayacı hiç olmayan (#643) ya da akışı ölçülebilen (#1153) TV'lerde davranış aynı.
+  function flowBlind(video) {
+    return !!video && !flowMeasurable() && frameCount(video) === 0 && !video.error && !video.paused && !video.ended &&
+      (video.readyState >= 2 || video.videoWidth > 0);
   }
 
   // Görüntünün ilk karesinden bu yana STALL_FRESH_MS geçmedi.
@@ -435,6 +511,17 @@
     readVolume(function (muted) { if (sound.mutedBefore === null) sound.mutedBefore = muted; });
   }
 
+  // 0.9.98 (X, üç bildirim: LG webOS; Hi-Level Android TV + AV yükseltici; Android TV): "TV uygulaması açıkken görüntü
+  // var, ses yok; PS5'in kendi girişine geçince ses geliyor". Bu sayfa <video>'yu kısmıyor (audioText "snd on v100"),
+  // ses adımları varsayılan kapalı (#643). Kök neden doğrulanmadı; tahmin, TV'nin uygulama içindeki HDMI yolunun PS5'in
+  // sıkıştırılmış sesini (Dolby/DTS) ARC/eARC'a geçirmemesi. Ses adımları kapalıyken TV'nin ses çıkışı, dijital ses çıkışı
+  // ve ses düzeyi hiç okunmuyordu, tanı satırında "out/dig/tv" boş kalıyordu. Artık açılışta (HDMI <video>'su yokken)
+  // bir kez okunur: #643'ün şüphelendiği an (görüntü oynarken okuma) değil. <video>'ya ve TV sesine dokunulmaz.
+  function readSoundAtLaunch() {
+    if (soundEnabled()) return;
+    try { readSoundSettings(); } catch (e) {}
+  }
+
   function buildVideo() {
     // Görüntü gelene kadar 0.9.46'daki kurulumun aynısı (ses adımları: soundSoon).
     var video = document.createElement('video');
@@ -450,6 +537,8 @@
     hdmi.lastTime = -1;
     hdmi.lastAdvanceAt = hdmi.builtAt;
     hdmi.advances = 0;
+    hdmi.lastFrames = -1;
+    hdmi.flowing = false;
     hdmi.playTried = false;
     hdmi.sawUnpaused = false;
     hdmi.firstFrameAt = 0;
@@ -507,6 +596,10 @@
     }
     // Denetim zaten bekliyorsa ya da kurma sıradaysa art arda gelen olay onu ertelemez.
     if (hdmi.stallTimer !== null || hdmi.pending !== null || hdmi.building !== null) return;
+    if (flowBlind(video)) {
+      hdmi.stallNote = 'blind';
+      return;
+    }
     var now = nowMs();
     var fresh = freshPicture(now);
     // Bu TV her yeni <video>'da 'stalled' gönderiyor ve görüntü sağlam kalıyordu (0.9.82, öğrenildi): taze olaya dokunulmaz.
@@ -527,19 +620,31 @@
     var waiting = !!hdmi.stallRebuiltAt && nowMs() - hdmi.stallRebuiltAt < STALL_EVENT_WAIT_MS;
     hdmi.stallNote = waiting ? 'wait' : 'check';
     hdmi.stallVideo = video;
-    hdmi.stallTime = Number(video.currentTime);
+    var mark = progressMark(video);
+    hdmi.stallTime = mark.time;
+    hdmi.stallFrames = mark.frames;
+    hdmi.stallAt = now;
     clearTimeout(hdmi.stallTimer);
-    hdmi.stallTimer = setTimeout(function () {
+    // Görüntü akıyorsa (sayaç ilerledi) dokunulmaz. Akışı ölçülebilen TV'de STALL_FREEZE_MS boyunca beklenir; sayacı hiç
+    // ilerlemeyen TV'de 0.9.61'den beri olduğu gibi STALL_CHECK_MS sonra karar verilir.
+    function poll() {
       hdmi.stallTimer = null;
       if (hdmi.video !== video || !hdmi.host || pageHidden()) return;
       if (stallRecovered()) {
         hdmi.stallNote = 'ok';
         return;
       }
+      var waited = nowMs() - hdmi.stallAt;
+      var limit = flowMeasurable() ? STALL_FREEZE_MS : STALL_CHECK_MS;
+      if (waited < limit) {
+        hdmi.stallTimer = setTimeout(poll, Math.min(STALL_POLL_MS, limit - waited));
+        return;
+      }
       if (hdmi.pending !== null || hdmi.building !== null || !schedule('ev stalled', !waiting, true)) {
         hdmi.stallNote = 'busy';
       }
-    }, STALL_CHECK_MS);
+    }
+    hdmi.stallTimer = setTimeout(poll, STALL_POLL_MS);
   }
 
   // 'stalled' yüzünden son STALL_REBUILD_WINDOW_MS içinde STALL_REBUILD_MAX kez kuruldu mu.
@@ -551,7 +656,8 @@
   // 'stalled' olayından sonra görüntü kendiliğinden akmaya devam etti mi (sayaç ilerledi ve başka bozulma yok).
   function stallRecovered() {
     var video = hdmi.video;
-    return !!video && hdmi.stallVideo === video && Number(video.currentTime) > hdmi.stallTime && health(nowMs()) === '';
+    return !!video && hdmi.stallVideo === video &&
+      progressedSince(video, { time: hdmi.stallTime, frames: hdmi.stallFrames }) && health(nowMs()) === '';
   }
 
   // Görüntü sağlamsa '', değilse neden.
@@ -577,9 +683,15 @@
     hdmi.playTried = false;
     hdmi.sawUnpaused = true;
     var time = Number(video.currentTime);
-    if (time > hdmi.lastTime) {
-      if (hdmi.lastTime >= 0) hdmi.advances++;
-      hdmi.lastTime = time;
+    var frames = frameCount(video);
+    var framesMoved = frames >= 0 && hdmi.lastFrames >= 0 && frames > hdmi.lastFrames;
+    if (frames >= 0) hdmi.lastFrames = frames;
+    if (time > hdmi.lastTime || framesMoved) {
+      if (hdmi.lastTime >= 0) {
+        hdmi.advances++;
+        noteFlow();
+      }
+      hdmi.lastTime = Math.max(time, hdmi.lastTime, 0);
       hdmi.lastAdvanceAt = now;
     } else if (hdmi.advances >= 3 && now - hdmi.lastAdvanceAt >= STALL_MS) {
       // Sayaç bu <video>'da ilerliyordu, artık ilerlemiyor. Sayacı hiç ilerletmeyen TV'de bu işaret kullanılmaz.
@@ -683,13 +795,13 @@
       if (reason) return schedule(reason, true);
       if (!strict || now - hdmi.builtAt < GRACE_MS) return;
       var video = hdmi.video;
-      var before = Number(video.currentTime);
+      var before = progressMark(video);
       hdmi.soonStrict = true;
       hdmi.soonTimer = setTimeout(function () {
         hdmi.soonTimer = null;
         hdmi.soonStrict = false;
         if (pageHidden() || hdmi.video !== video || hdmi.pending !== null || hdmi.building !== null) return;
-        if (Number(video.currentTime) > before) return;
+        if (progressedSince(video, before) || flowBlind(video)) return;
         schedule('resume', true);
       }, 1500);
     }, delay);
@@ -735,6 +847,10 @@
     if (video) {
       text += ' rs' + video.readyState + ' ' + (video.videoWidth || 0) + 'x' + (video.videoHeight || 0) +
         (hdmi.advances >= 3 ? ' t+' : ' t=');
+      var frames = frameCount(video);
+      if (frames >= 0) text += ' fr ' + frames;
+      // t+ zaten akışı gösteriyor; sayacı kare sayacından ya da önceki oturumdan biliniyorsa ayrıca yazılır.
+      if (hdmi.advances < 3 && flowMeasurable()) text += ' flow';
     }
     if (hdmi.rebuilds) text += ' · rebuilt ' + hdmi.rebuilds + ' (' + hdmi.reason + ')';
     if (hdmi.lastError) text += ' · last error ' + hdmi.lastError;
@@ -745,8 +861,69 @@
     return text;
   }
 
+  // --- Eski sürümde kalan sayfa ---
+  // beta.89 (LG, Mac): TV uygulaması 0.9.81'den 0.9.84'e güncellendi; TV'deki appinfo.json 0.9.84 diyordu, açık uygulama
+  // ise 0.9.81'i gösteriyor ve 0.9.81'in kodunu çalıştırıyordu (LG kararma düzeltmesi devreye girmiyordu). Kurulumdan
+  // sonra çalışan uygulama kapatılmıyordu; bilgisayarın ve telefonun açma komutu açık uygulamayı yalnız öne getirip
+  // webOSRelaunch gönderiyor, sayfa diskten yeniden okunmuyordu. Açılışta ve her webOSRelaunch'ta kurulu paketin sürümü
+  // (appinfo.json, diskten) okunur; bu sayfanın sürümünden yeniyse sayfa yeniden yüklenir. Aynı sürüm çifti için yalnız
+  // bir kez: yeniden yüklenen sayfa yine eskiyse döngüye girilmez (bilgisayar/telefon "kapatıp açın" der).
+  var STALE_RELOAD_KEY = 'couchsubs.staleReload';
+
+  function versionIsNewer(a, b) {
+    var x = String(a).split('.');
+    var y = String(b).split('.');
+    for (var i = 0; i < Math.max(x.length, y.length); i++) {
+      var p = parseInt(x[i], 10) || 0;
+      var q = parseInt(y[i], 10) || 0;
+      if (p !== q) return p > q;
+    }
+    return false;
+  }
+
+  // Kurulu paketin sürümü (appinfo.json); okunamazsa null.
+  function readInstalledVersion(callback) {
+    var done = false;
+    function finish(version) {
+      if (done) return;
+      done = true;
+      callback(version);
+    }
+    var xhr;
+    try {
+      xhr = new XMLHttpRequest();
+      xhr.open('GET', 'appinfo.json?t=' + nowMs(), true);
+    } catch (e) {
+      finish(null);
+      return;
+    }
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+      var version = null;
+      try { version = JSON.parse(xhr.responseText).version; } catch (e) {}
+      finish(typeof version === 'string' && version ? version : null);
+    };
+    try { xhr.send(); } catch (e) { finish(null); }
+  }
+
   window.COUCHSUBS_PLATFORM = {
     backKey: 461,
+
+    // Kurulu paket bu sayfadan yeniyse sayfa bir kez yeniden yüklenir (yukarıdaki açıklama).
+    reloadIfStale: function (pageVersion) {
+      readInstalledVersion(function (installed) {
+        if (!installed || !versionIsNewer(installed, pageVersion)) return;
+        var pair = installed + '>' + pageVersion;
+        try {
+          if (window.localStorage.getItem(STALE_RELOAD_KEY) === pair) return;
+          window.localStorage.setItem(STALE_RELOAD_KEY, pair);
+        } catch (e) {
+          // Kayıt tutulamıyorsa yeniden yüklenmez: döngüye girebilirdi.
+          return;
+        }
+        window.location.reload(true);
+      });
+    },
 
     // HDMI görüntüsü gelmezse app.js nedenini ve giriş seçimini gösterir (Android TV bunu kendi ekranında yapar).
     noPictureHelp: true,
@@ -861,6 +1038,8 @@
       }
 
       try { register(); } catch (e) {}
+      // Ses durumu açılışta, HDMI <video>'su kurulmadan önce bir kez okunur (yalnız tanı; bkz. readSoundAtLaunch).
+      readSoundAtLaunch();
     },
 
     launchParams: function () {

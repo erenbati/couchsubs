@@ -261,24 +261,35 @@ Bilgisayar ya da telefon uygulamayı 1-2 saniye içinde geri getirir, altyazı b
 uygulaması 0.9.49 ve sonrası). PS5'in girişine geçiş "kullanıcı başka girişe geçti" sayılmaz; başka bir HDMI numarasına
 ya da yayına geçerseniz CouchSubs üç denemeden sonra sizi zorlamaz.
 
-### LG'de altyazı var ama oyunun sesi yok
+### Altyazı var ama oyunun sesi yok (LG, Android TV)
 
-Ses, TV'nin sesi soundbar ya da ev sinema sistemine (HDMI ARC/eARC, optik, Bluetooth) verdiği düzende kesilebiliyor;
-PS tuşuyla TV kendi HDMI girişine geçince ses geri geliyor ama TV uygulaması arkaya düştüğü için altyazı gidiyor.
-Şunları sırayla deneyin:
+TV uygulaması PS5'i kendi içinde gösterirken ses gelmiyor, TV'de PS5'in HDMI girişine geçince (PS tuşu ya da kumandadan
+giriş) ses geri geliyor ama TV uygulaması arkaya düştüğü için altyazı gidiyor. Bildirimlerin çoğunda ses bir soundbar,
+AV alıcı ya da ev sinema sisteminden (HDMI ARC/eARC, optik, Bluetooth) geçiyor. CouchSubs bu görüntüyü sessize almaz,
+ses düzeyini kısmaz; HDMI sesi TV'nin kendi uygulama içi oynatıcısında çalınır. Şüphemiz (gerçek TV'de doğrulanmadı):
+harici ses cihazı bağlıyken PS5 sesi sıkıştırılmış (Dolby/DTS) gönderiyor, TV kendi girişinde bunu cihaza olduğu gibi
+geçiriyor, uygulama içindeki yolda geçirmiyor. Şunları sırayla deneyin:
 
-1. TV'de **Ayarlar › Tüm Ayarlar › Ses › Gelişmiş Ayarlar › Dijital Ses Çıkışı**'nı **Otomatik** ya da **PCM** yapın (**Geçiş/Pass
-   Through** değil).
-2. PS5'te **Ayarlar › Ses › Ses Çıkışı › Ses Biçimi (Öncelik)**'yi **Linear PCM** yapın.
-3. Olmazsa TV'nin ses çıkışını **TV Hoparlörü** yapın.
+1. **Android TV:** Görüntü modunu **Katman** yapın (bilgisayarda ya da telefonda Ayarlar › TV'de › **Görüntü modu**).
+   Katmanda PS5 TV'nin kendi HDMI girişinde açılır, ses de TV'nin kendi yolundan gelir (#57). Katman, bilgisayarın ya
+   da telefonun kurduğu TV uygulamasında vardır; Google Play'den kurulan kopyada yoktur.
+2. TV'nin dijital ses çıkışını **Otomatik** ya da **PCM** yapın (**Geçiş/Pass Through/Bitstream** değil). LG: **Ayarlar ›
+   Tüm Ayarlar › Ses › Gelişmiş Ayarlar › Dijital Ses Çıkışı**. Android TV: **Ayarlar › Ekran ve Ses › Ses çıkışı** (ya
+   da **Gelişmiş ses ayarları**) altındaki dijital çıkış/biçim seçeneği; adı markaya göre değişir.
+3. PS5'te **Ayarlar › Ses › Ses Çıkışı › Ses Biçimi (Öncelik)**'yi **Linear PCM** yapın.
+4. Olmazsa TV'nin ses çıkışını **TV Hoparlörü** yapın.
 
-Altyazı hedefi "Bu telefonda" iken ses geliyor, TV uygulaması açılınca TV hoparlöründe de gidiyorsa önce 2. adımı
-deneyin: soundbar bağlıyken PS5 sesi sıkıştırılmış (Dolby/DTS) gönderebiliyor, TV uygulamasının içindeki görüntü yolunda
-bu sesin çalınmadığından şüpheleniyoruz (gerçek LG'de doğrulanmadı).
+Altyazı hedefi "Bu telefonda" iken ses geliyor, TV uygulaması açılınca TV hoparlöründe de gidiyorsa önce 3. adımı
+deneyin.
 
-Bilgi panelindeki ikinci tanı satırının `snd` bölümü TV'nin ses çıkışını (`out`), dijital ses çıkışını (`dig`), ses
-düzeyini (`tv`), ses odağını (`mf`) ve TV'nin kısılı sesinin açılıp açılmadığını (`tvmute`) gösterir; sorun sürerse bunun
-fotoğrafını paylaşın.
+Bilgi panelindeki ikinci tanı satırının `snd` bölümü (TV uygulaması 0.9.98 ve sonrası) ses durumunu gösterir; sorun
+sürerse bunun fotoğrafını paylaşın:
+
+- LG: TV'nin ses çıkışı (`out`, ör. `tv_speaker`, `external_arc`), dijital ses çıkışı (`dig`, ör. `passThrough`), ses
+  düzeyi (`tv`); TV uygulaması açılırken bir kez okunur. `snd on v100` görüntünün sessize alınmadığını gösterir.
+- Android TV: medya ses düzeyi (`v7/15`, kısıksa `muted`), bağlı ses çıkışları (`out spk,arc`: `spk` TV hoparlörü,
+  `arc`/`earc` HDMI ARC/eARC, `spdif` optik, `bt` Bluetooth), medyanın gittiği çıkış (`to`, Android 13+) ve TV'nin
+  bildirdiği HDMI ses parçası (`atr` seçili/toplam).
 
 #### Sesi PS5 mi kesiyor?
 
@@ -288,7 +299,7 @@ da PS5 görüntüsünü kendi içinde açar. Ses bu ikisinden hangisinde gidiyor
 1. Altyazı hedefi olarak TV'yi değil telefonu (**Bu telefonda**) ya da bilgisayar ekranını seçin; TV uygulaması
    açılmasın.
 2. Çeviriyi başlatın, TV'yi kumandanın giriş tuşuyla PS5'in HDMI girişine alın.
-3. Ses geliyorsa PS5 sesi kesmiyor; sorun TV uygulamasının içindeki HDMI ses yolunda, yukarıdaki üç adım geçerli.
+3. Ses geliyorsa PS5 sesi kesmiyor; sorun TV uygulamasının içindeki HDMI ses yolunda, yukarıdaki adımlar geçerli.
    Ses burada da yoksa altyazı günlüğüyle, TV ve ses sistemi modeliyle GitHub'da bildirin.
 
 Bilinenler:

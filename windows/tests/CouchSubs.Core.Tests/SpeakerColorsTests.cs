@@ -8,12 +8,12 @@ namespace CouchSubs.Core.Tests;
 public class SpeakerColorsTests
 {
     [Theory]
-    [InlineData("Mattia", "#90CAF9")]
-    [InlineData("MATTIA", "#90CAF9")]
-    [InlineData(" mattia ", "#90CAF9")]
-    [InlineData("Lucia", "#F06292")]
-    [InlineData("Jason", "#4DD0E1")]
-    [InlineData("Cal", "#4FC3F7")]
+    [InlineData("Mattia", "#F76AB7")]
+    [InlineData("MATTIA", "#F76AB7")]
+    [InlineData(" mattia ", "#F76AB7")]
+    [InlineData("Lucia", "#2AD5E5")]
+    [InlineData("Jason", "#49B5FA")]
+    [InlineData("Cal", "#FEA757")]
     public void ColorComesFromTheName(string name, string color) => Assert.Equal(color, SpeakerColors.Color(name));
 
     [Fact]
@@ -39,8 +39,8 @@ public class SpeakerColorsTests
         var segments = SpeakerColors.Segments(text, SpeakerColors.Speakers("Mattia: Bunu yarın konuşuruz.\nLucia : Tamam."));
         Assert.Equal(
             [
-                new SpeakerColors.Segment("Mattia:", "#90CAF9"), new SpeakerColors.Segment(" Bunu yarın\nkonuşuruz.\n", null),
-                new SpeakerColors.Segment("Lucia :", "#F06292"), new SpeakerColors.Segment(" Tamam.", null),
+                new SpeakerColors.Segment("Mattia:", "#F76AB7"), new SpeakerColors.Segment(" Bunu yarın\nkonuşuruz.\n", null),
+                new SpeakerColors.Segment("Lucia :", "#2AD5E5"), new SpeakerColors.Segment(" Tamam.", null),
             ],
             segments);
         Assert.Equal(text, string.Concat(segments.Select(segment => segment.Text)));
@@ -51,8 +51,17 @@ public class SpeakerColorsTests
     {
         var segments = SpeakerColors.Segments("Kapıyı aç.\nJason: Geldim.", ["Jason"]);
         Assert.Equal(
-            [new SpeakerColors.Segment("Kapıyı aç.\n", null), new SpeakerColors.Segment("Jason:", "#4DD0E1"), new SpeakerColors.Segment(" Geldim.", null)],
+            [new SpeakerColors.Segment("Kapıyı aç.\n", null), new SpeakerColors.Segment("Jason:", "#49B5FA"), new SpeakerColors.Segment(" Geldim.", null)],
             segments);
         Assert.Equal([new SpeakerColors.Segment("Düz metin", null)], SpeakerColors.Segments("Düz metin", []));
+    }
+
+    [Fact]
+    public void WholeLineColorsTheSentence()
+    {
+        var segments = SpeakerColors.Segments("Kapıyı aç.\nJason: Geldim\nhemen.", ["Jason"], wholeLine: true);
+        Assert.Equal(
+            [new SpeakerColors.Segment("Kapıyı aç.\n", null), new SpeakerColors.Segment("Jason: Geldim\nhemen.", "#49B5FA")],
+            segments);
     }
 }

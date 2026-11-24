@@ -24,8 +24,8 @@ namespace CouchSubs.App.Services;
 /// </summary>
 public sealed class RemotePlayWindowStream : IStreamSession
 {
-    /// <summary>Saniyedeki kare. Okuma bir önceki kare bitmeden yenisini zaten almaz; fazlası yalnız işlemciyi yorar.</summary>
-    private const int FramesPerSecond = 10;
+    /// <summary>En çok saniyedeki kare (<see cref="FrameCadence"/>; işlemci doluysa ve okuma yavaşsa daha az).</summary>
+    private const int FramesPerSecond = FrameCadence.MaxFramesPerSecond;
     /// <summary>Remote Play'in küçük pencereleri (giriş, denetim) oyun penceresi sanılmasın.</summary>
     private const int MinimumWidth = 400, MinimumHeight = 250;
     private static readonly TimeSpan SearchInterval = TimeSpan.FromSeconds(2);
@@ -49,6 +49,11 @@ public sealed class RemotePlayWindowStream : IStreamSession
     private CancellationTokenSource? search;
     private Capture? capture;
     private SessionState? reported;
+    /// <summary>Karelerin kopyalanma sıklığı; okuma hattı kendi örneğini verir (<see cref="UseCadence"/>).</summary>
+    private FrameCadence cadence = new();
+    private readonly SystemCpuLoad cpu = new();
+
+    public void UseCadence(FrameCadence value) => cadence = value;
 
     public RemotePlayWindowStream(RemotePlayApp app)
     {
@@ -344,7 +349,8 @@ public sealed class RemotePlayWindowStream : IStreamSession
     }
 
     /// <summary>Bir pencerenin yakalanması: Direct3D aygıtı, kare havuzu ve oturum. Kareler saniyede en çok
-    /// <see cref="FramesPerSecond"/> kez işlemciye kopyalanıp BGRA <see cref="Frame"/> olarak verilir.</summary>
+    /// <see cref="FramesPerSecond"/> kez (işlemci doluysa ve okuma yavaşsa daha seyrek, bkz. <see cref="FrameCadence"/>)
+    /// işlemciye kopyalanıp BGRA <see cref="Frame"/> olarak verilir.</summary>
     private sealed class Capture : IDisposable
     {
         private readonly RemotePlayWindowStream owner;
@@ -354,8 +360,14 @@ public sealed class RemotePlayWindowStream : IStreamSession
         private readonly Direct3D11CaptureFramePool pool;
         private readonly GraphicsCaptureSession session;
         private readonly Stopwatch clock = Stopwatch.StartNew();
-        private long lastFrameMs = -1000;
         private int busy;
+        /// <summary>
+        /// Sıklık sınırına takılan son kare (havuzdan bir tampon). Görüntü durunca Windows yeni kare göndermez: altyazı
+        /// belirirken gelen son kare atılsaydı yeni satır kamera oynayana dek okunmazdı (#1019). Sınır dolunca o okunur.
+        /// </summary>
+        private Direct3D11CaptureFrame? held;
+        private readonly object heldGate = new();
+        private readonly System.Threading.Timer trailingTimer;
         private int blackFrames;
         private bool warnedBlack;
         private Windows.Graphics.SizeInt32 size;
@@ -395,10 +407,11 @@ public sealed class RemotePlayWindowStream : IStreamSession
                 Name = process.ProcessName;
             }
             catch (Exception) { Name = "Remote Play"; }
+            trailingTimer = new System.Threading.Timer(_ => DeliverHeld(), null, Timeout.Infinite, Timeout.Infinite);
             device = Direct3D.CreateDevice();
             item = CaptureInterop.CreateItemForWindow(window);
             size = item.Size;
-            pool = Direct3D11CaptureFramePool.CreateFreeThreaded(device, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, size);
+            pool = Direct3D11CaptureFramePool.CreateFreeThreaded(device, DirectXPixelFormat.B8G8R8A8UIntNormalized, PoolFrames, size);
             session = pool.CreateCaptureSession(item);
             session.IsCursorCaptureEnabled = false;
             HideCaptureBorder(session);
@@ -531,36 +544,116 @@ public sealed class RemotePlayWindowStream : IStreamSession
             if (Interlocked.Exchange(ref borderNoted, 1) == 0) RemotePlayLog.Note(text);
         }
 
+        /// <summary>Havuzdaki kare tamponu: biri sıklık sınırında tutulurken Windows öbürlerine çizer.</summary>
+        private const int PoolFrames = 3;
+
         private void OnFrameArrived(Direct3D11CaptureFramePool sender, object args)
         {
             if (disposed) return;
-            using var frame = sender.TryGetNextFrame();
+            var frame = sender.TryGetNextFrame();
+            if (frame is null) return;
             // Yedek yakalamaya geçildiyse aynı kare iki yoldan verilmez.
-            if (frame is null || disposed || fallback) return;
+            if (disposed || fallback)
+            {
+                frame.Dispose();
+                return;
+            }
             watch.Arrived();
             if (frame.ContentSize.Width != size.Width || frame.ContentSize.Height != size.Height)
             {
                 // Pencere büyütüldü ya da tam ekrana geçti: havuz yeni boya kurulur, bu kare atlanır.
                 size = frame.ContentSize;
-                if (size.Width > 0 && size.Height > 0) pool.Recreate(device, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, size);
+                frame.Dispose();
+                Release(TakeHeld());
+                if (size.Width > 0 && size.Height > 0) pool.Recreate(device, DirectXPixelFormat.B8G8R8A8UIntNormalized, PoolFrames, size);
                 return;
             }
-            var now = clock.ElapsedMilliseconds;
-            if (now - lastFrameMs < 1000 / FramesPerSecond) { counts.Idle(); return; }
+            owner.cpu.Report(owner.cadence);
+            // Önceki kare hâlâ kopyalanıyorsa ya da sıklık sınırı dolmadıysa kare kopyalanmaz; son kare tutulur, sınır
+            // dolunca okunur (görüntü durduysa yeni kare gelmez).
+            if (Volatile.Read(ref busy) == 1 || !owner.cadence.Admit(Environment.TickCount64))
+            {
+                counts.Idle();
+                Hold(frame);
+                return;
+            }
+            Release(TakeHeld());
+            Copy(frame);
+        }
+
+        /// <summary>Kareyi tutar (öncekini havuza bırakır) ve sıklık sınırı dolunca okunmasını zamanlar.</summary>
+        private void Hold(Direct3D11CaptureFrame frame)
+        {
+            Direct3D11CaptureFrame? previous;
+            lock (heldGate)
+            {
+                if (disposed)
+                {
+                    frame.Dispose();
+                    return;
+                }
+                previous = held;
+                held = frame;
+            }
+            Release(previous);
+            try { trailingTimer.Change(owner.cadence.IntervalMs, Timeout.Infinite); } catch (ObjectDisposedException) { }
+        }
+
+        private Direct3D11CaptureFrame? TakeHeld()
+        {
+            lock (heldGate)
+            {
+                var frame = held;
+                held = null;
+                return frame;
+            }
+        }
+
+        private static void Release(Direct3D11CaptureFrame? frame)
+        {
+            try { frame?.Dispose(); } catch (Exception) { }
+        }
+
+        /// <summary>Sıklık sınırı doldu ve bu arada yeni kare kopyalanmadı: tutulan son kare okunur.</summary>
+        private void DeliverHeld()
+        {
+            if (disposed || fallback) return;
+            if (Volatile.Read(ref busy) == 1 || !owner.cadence.Admit(Environment.TickCount64))
+            {
+                // Kopya sürüyor ya da sınır henüz dolmadı: biraz sonra yeniden denenir.
+                lock (heldGate) if (held is null) return;
+                try { trailingTimer.Change(owner.cadence.IntervalMs, Timeout.Infinite); } catch (ObjectDisposedException) { }
+                return;
+            }
+            if (TakeHeld() is { } frame) Copy(frame);
+        }
+
+        /// <summary>Kareyi işlemciye kopyalayıp okumaya verir; kare havuza bırakılır.</summary>
+        private void Copy(Direct3D11CaptureFrame frame)
+        {
             // Önceki kare hâlâ kopyalanıyorsa bu kare atlanır.
-            if (Interlocked.Exchange(ref busy, 1) == 1) { counts.Idle(); return; }
-            lastFrameMs = now;
+            if (Interlocked.Exchange(ref busy, 1) == 1)
+            {
+                Release(frame);
+                counts.Idle();
+                return;
+            }
             watch.CopyStarted(clock.Elapsed);
             deliveringFrame = true;
             try
             {
-                using var bitmap = SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface, BitmapAlphaMode.Premultiplied).AsTask().GetAwaiter().GetResult();
-                var (width, height) = (bitmap.PixelWidth, bitmap.PixelHeight);
-                if (width < 2 || height < 2) return;
-                var captured = BitmapPixels.Read(bitmap);
+                Frame captured;
+                using (frame)
+                {
+                    if (disposed) return;
+                    using var bitmap = SoftwareBitmap.CreateCopyFromSurfaceAsync(frame.Surface, BitmapAlphaMode.Premultiplied).AsTask().GetAwaiter().GetResult();
+                    var (width, height) = (bitmap.PixelWidth, bitmap.PixelHeight);
+                    if (width < 2 || height < 2) return;
+                    captured = BitmapPixels.Read(bitmap);
+                }
                 watch.CopyEnded();
                 CheckBlack(captured.Pixels);
-                if (watch.FrameDelivered()) SubtitleLog.Write($"pencereden ilk kare: {width}x{height}");
+                if (watch.FrameDelivered()) SubtitleLog.Write($"pencereden ilk kare: {captured.Width}x{captured.Height}");
                 counts.Delivered();
                 owner.Deliver(captured);
             }
@@ -610,6 +703,7 @@ public sealed class RemotePlayWindowStream : IStreamSession
             disposed = true;
             try { watchTimer.Dispose(); } catch (Exception) { }
             try { minuteTimer.Dispose(); } catch (Exception) { }
+            try { trailingTimer.Dispose(); } catch (Exception) { }
             lock (this)
             {
                 try { fallbackTimer?.Dispose(); } catch (Exception) { }
@@ -631,6 +725,7 @@ public sealed class RemotePlayWindowStream : IStreamSession
             // Süren kare kopyası Direct3D aygıtını ve kare havuzunu kullanır; onlar kopya bitmeden kapatılmaz.
             try { pool.FrameArrived -= OnFrameArrived; } catch (Exception) { }
             WaitWhile(ref busy);
+            Release(TakeHeld());
             try { session.Dispose(); } catch (Exception) { }
             try { pool.Dispose(); } catch (Exception) { }
             try { device.Dispose(); } catch (Exception) { }

@@ -370,7 +370,9 @@ struct SubtitlePreviewBox: View {
     /// Tek örnek satır: ad (ayarın renginde) + metin, zemin rengi ve koyuluğu; zeminsizken okunurluk gölgesi.
     private func sample(_ line: (who: String, text: String), index: Int, style: SubtitleStyle, size: CGFloat) -> some View {
         let name = Text(verbatim: model.settings.showSpeakerNames ? line.who + ": " : "").foregroundColor(nameColor(line.who, index: index, style: style))
-        let textColor: Color = SubtitlePalette.color(SubtitlePalette.textHex(style)) ?? .white
+        let textColor: Color = model.settings.speakerColors && style.nameColorMode == .line
+            ? nameColor(line.who, index: index, style: style)
+            : SubtitlePalette.color(SubtitlePalette.textHex(style)) ?? .white
         let body = Text(verbatim: line.text).foregroundColor(textColor)
         let plate: Color = (SubtitlePalette.color(style.backgroundColor) ?? .black).opacity(Double(style.background) / 100)
         let bare = style.background == 0
@@ -387,7 +389,7 @@ struct SubtitlePreviewBox: View {
         switch style.nameColorMode {
         case .text: return SubtitlePalette.color(SubtitlePalette.textHex(style)) ?? .white
         case .single: return SubtitlePalette.color(style.nameHex ?? SubtitlePalette.names[0].hex) ?? .dsAmber
-        case .speaker:
+        case .speaker, .line:
             let hex = style.characterColors[who.lowercased()] ?? SubtitlePalette.names[(index + 1) % SubtitlePalette.names.count].hex
             return SubtitlePalette.color(hex) ?? .dsAmber
         }
@@ -513,7 +515,7 @@ private struct SubtitleLookSettings: View {
         return DSUnit(title: "Character Name",
                       hint: mode.wrappedValue == .text ? "The character name is shown in the same color as the text." : nil) {
             VStack(alignment: .leading, spacing: DS.space("s")) {
-                DSTabs(selection: mode, items: [(NameColorMode.text, "Same as Text"), (.single, "Single Color"), (.speaker, "By Character")])
+                DSTabs(selection: mode, items: [(NameColorMode.text, "Same as Text"), (.single, "Single Color"), (.speaker, "By Character"), (.line, "Whole Line")])
                 switch mode.wrappedValue {
                 case .text:
                     EmptyView()
@@ -523,7 +525,7 @@ private struct SubtitleLookSettings: View {
                         model.sendTestSubtitle()
                     }
                     .padding(.leading, -DS.space("xxs"))
-                case .speaker:
+                case .speaker, .line:
                     CharacterColors()
                 }
             }
@@ -741,6 +743,10 @@ private struct AreaSettings: View {
                 DSUnit(hint: "Side Panel: the chat is shown next to the phone, the other person on the left and you on the right. On the Bubbles: each message is translated on top of its own bubble.") {
                     DSTabs(selection: $model.settings.phoneMessagesPanel, items: [(true, "Side Panel"), (false, "On the Bubbles")])
                 }
+                // Önce yalnız Mac'te deneniyor (Sinan Bey kararı, 24 Kas); varsayılan açık.
+                DSSwitchRow(title: "Redraw the Screen in Turkish in Place (Experimental)",
+                            subtitle: "GTA 6 phone: the original text is erased and the translation is drawn in its place, right on the phone in the game window, and it moves with the phone. Works when the picture is read from a window on this Mac (Remote Play, chiaki-ng or OBS).",
+                            isOn: $model.settings.drawScreenInPlace, divider: false)
             }
             // Kısayol başlıkta değil, açıklamada (diğer kart başlıkları gibi yalnız ad).
             DSCard(scrolls: false) {
@@ -782,6 +788,10 @@ private struct OutputSettings: View {
     @EnvironmentObject private var model: AppModel
 
     @State private var sent = false
+    @State private var enteringAddress = false
+    @State private var address = ""
+    @State private var confirmRemove = false
+    @State private var checking = false
 
     var body: some View {
         TwoColumns {
@@ -827,28 +837,99 @@ private struct OutputSettings: View {
                  status: model.hasTV ? "Linked" : nil, statusTone: model.tvClients > 0 ? .ok : .muted,
                  selected: model.tvClients > 0)
         Text(tvState).dsMuted()
+        // "TV'yi Eşleştir" ve "Deneme Altyazısı Gönder" önce TV'ye ulaşılıyor mu bakar (adresi değiştiyse TV yeni adreste
+        // bulunur); ulaşılamazsa açık hata, "TV'yi Yeniden Ara" ve "IP Adresi Gir". Önceden düğmeye basınca hiçbir şey olmuyordu.
+        if let host = model.tvUnreachableHost {
+            DSNoticeBox(tone: .warning, text: LocalizedStringKey(String(format: String(localized: "The TV isn't responding at %@. Its address may have changed."), host)))
+            HStack(spacing: DS.space("xs")) {
+                Button("Search for the TV Again") { run { _ = await model.searchTVAgain() } }
+                    .buttonStyle(.dsSecondary)
+                Button("Enter IP Address") { enteringAddress = true }
+                    .buttonStyle(.dsSecondary)
+            }
+            .disabled(checking)
+        }
+        if enteringAddress {
+            DSFieldChrome(mono: true) {
+                TextField("IP address, e.g. 192.168.1.20", text: $address)
+                    .textFieldStyle(.plain)
+                    .onSubmit(useAddress)
+            } trailing: {
+                Button("Add", action: useAddress)
+                    .buttonStyle(DSButtonStyle(kind: .compact))
+                    .disabled(checking || address.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            if model.tvAddressRejected {
+                Text("No TV was recognised at this address.")
+                    .font(.dsSmall).foregroundStyle(Color.dsLiveText).fixedSize(horizontal: false, vertical: true)
+            }
+        }
         HStack(spacing: DS.space("xs")) {
             if sent {
                 DSSuccessBadge(text: "Sent")
             } else {
                 Button("Send Test Subtitle") {
-                    model.sendTestSubtitle()
-                    sent = true
+                    run {
+                        guard await model.ensureTVReachable() else { return }
+                        model.sendTestSubtitle()
+                        sent = true
+                    }
                 }
                 .buttonStyle(.dsSecondary)
             }
             Button(model.hasTV ? "Pair the TV" : "Connect TV") {
-                if model.hasTV { Task { await model.openTVPairing() } } else { model.step = .tv }
+                if model.hasTV {
+                    run { if await model.ensureTVReachable() { await model.openTVPairing() } }
+                } else {
+                    model.step = .tv
+                }
             }
             .buttonStyle(.dsSecondary)
         }
+        .disabled(checking)
         .task(id: sent) {
             guard sent else { return }
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             sent = false
         }
+        // Kart görünürken TV uygulaması bağlı değilse adres yoklanır; TV yeni adreste bulunursa kartta yeni adres görünür.
+        .task(id: model.tv?.host) {
+            while !Task.isCancelled {
+                await model.checkTVReachable()
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+            }
+        }
+        // Eşli TV her zaman değiştirilebilir ve kaldırılabilir (önceden eşli TV hiçbir yerden kaldırılamıyordu).
+        if model.tv != nil {
+            HStack(spacing: DS.space("xs")) {
+                Button("Change the TV") { model.step = .tv }.buttonStyle(.dsSecondary)
+                Button("Remove Pairing") { confirmRemove = true }.buttonStyle(.dsSecondary)
+            }
+            .confirmationDialog("Remove Pairing?", isPresented: $confirmRemove) {
+                Button("Remove Pairing", role: .destructive) { model.removeTVPairing() }
+            } message: {
+                Text("The paired TV will be removed. You can choose a TV again with Change the TV.")
+            }
+        }
         if model.settings.style.placement == .fixed {
             Text("In fixed position you can also move subtitles with the ▲ and ▼ buttons on the TV remote.").dsMuted()
+        }
+    }
+
+    private func run(_ action: @escaping @MainActor () async -> Void) {
+        checking = true
+        Task {
+            await action()
+            checking = false
+        }
+    }
+
+    private func useAddress() {
+        run {
+            if await model.useTVAddress(address) {
+                enteringAddress = false
+                address = ""
+            }
         }
     }
 

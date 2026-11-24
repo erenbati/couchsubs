@@ -194,7 +194,9 @@ struct PhoneSubtitlePreview: View {
             VStack(spacing: Mobile.Space.hair) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
                     (Text(verbatim: model.settings.showSpeakerNames ? line.who + ": " : "").foregroundColor(nameColor(line.who, index: index, style: style))
-                     + Text(verbatim: line.text).foregroundColor(SubtitlePalette.color(SubtitlePalette.textHex(style)) ?? .white))
+                     + Text(verbatim: line.text).foregroundColor(model.settings.speakerColors && style.nameColorMode == .line
+                                                                    ? nameColor(line.who, index: index, style: style)
+                                                                    : SubtitlePalette.color(SubtitlePalette.textHex(style)) ?? .white))
                         .font(.system(size: CGFloat(display) * 0.4, weight: style.bold ? .bold : .semibold))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, Mobile.Space.inline)
@@ -218,7 +220,7 @@ struct PhoneSubtitlePreview: View {
         switch model.settings.speakerColors ? style.nameColorMode : .text {
         case .text: return SubtitlePalette.color(SubtitlePalette.textHex(style)) ?? .white
         case .single: return SubtitlePalette.color(style.nameHex ?? SubtitlePalette.names[0].hex) ?? .dsAmber
-        case .speaker:
+        case .speaker, .line:
             let hex = style.characterColors[who.lowercased()] ?? SubtitlePalette.names[(index + 1) % SubtitlePalette.names.count].hex
             return SubtitlePalette.color(hex) ?? .dsAmber
         }
@@ -343,7 +345,7 @@ private struct AppearancePage: View {
         return SettingUnit(title: "Character Name",
                            hint: mode.wrappedValue == .text ? "The character name is shown in the same color as the text." : nil) {
             VStack(alignment: .leading, spacing: Mobile.Space.gap) {
-                DSTabs(selection: mode, items: [(NameColorMode.text, "Same as Text"), (.single, "Single Color"), (.speaker, "By Character")])
+                DSTabs(selection: mode, items: [(NameColorMode.text, "Same as Text"), (.single, "Single Color"), (.speaker, "By Character"), (.line, "Whole Line")])
                 switch mode.wrappedValue {
                 case .text:
                     EmptyView()
@@ -352,7 +354,7 @@ private struct AppearancePage: View {
                         update { $0.nameHex = swatch.hex }
                         model.sendTestSubtitle()
                     }
-                case .speaker:
+                case .speaker, .line:
                     CharacterColors()
                 }
             }
@@ -588,6 +590,13 @@ private struct OutputsPage: View {
     @Binding var path: [Route]
     @EnvironmentObject private var model: PhoneModel
     @State private var sent = false
+    /// "Eşleşmeyi Kaldır" onayı.
+    @State private var confirmRemove = false
+    /// "IP Adresi Gir": eşli TV'nin yeni adresi elle yazılıyor.
+    @State private var enteringAddress = false
+    @State private var typedAddress = ""
+    @State private var addressRejected = false
+    @State private var applyingAddress = false
 
     var body: some View {
         Tile(spacing: Mobile.Space.gap) {
@@ -630,6 +639,10 @@ private struct OutputsPage: View {
                 .background(Mobile.Palette.surface2, in: RoundedRectangle(cornerRadius: DS.radius("control")))
             VStack(alignment: .leading, spacing: Mobile.Space.hair) {
                 Text(verbatim: model.tv?.name ?? "TV").font(Mobile.TypeScale.headline)
+                // Kartta TV'nin adresi de görünür: TV ağda yeni adreste bulununca yeni adres burada görünür (Mac ile aynı).
+                if let tv = model.tv, !tv.host.isEmpty {
+                    Text(verbatim: "\(brandName(tv.brand)) · \(tv.host)").font(Font.dsMonoValue).foregroundStyle(Mobile.Palette.tertiary)
+                }
                 Text(tvState).dsMuted()
             }
             Spacer(minLength: Mobile.Space.inline)
@@ -644,9 +657,80 @@ private struct OutputsPage: View {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             sent = false
         }
+        // Eşli TV yanıt vermiyorsa kart kendiliğinden yeniden arar (~10 sn'de bir yoklama, ağ araması en çok 30 sn'de bir).
+        .task(id: model.tv?.host) {
+            while !Task.isCancelled {
+                await model.checkTVReachable()
+                try? await Task.sleep(for: .seconds(10))
+            }
+        }
+        if let host = model.tvUnreachableHost, model.tvClients == 0 { unreachableBox(host) }
+        if model.hasTV {
+            // Eşli TV her zaman değiştirilebilir ya da kaldırılabilir (önceden eşli TV kaldırılamıyordu).
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Mobile.Space.inline) { pairingButtons }
+                ButtonStack { pairingButtons }
+            }
+            .confirmationDialog("Remove Pairing?", isPresented: $confirmRemove, titleVisibility: .visible) {
+                Button("Remove Pairing", role: .destructive) { model.removeTVPairing() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The paired TV will be removed. You can choose a TV again with Change the TV.")
+            }
+        }
         if model.tvPairingOpened, model.tvPairingRequest == nil, model.tvClients == 0 {
             InfoBox(text: String(localized: "Pairing is open for 2 minutes. Open CouchSubs on the TV; if the TV says pairing did not finish, press OK on its remote. When the TV shows a code, approve it in the window that opens on this phone."),
                     tone: Mobile.Palette.secondary)
+        }
+    }
+
+    @ViewBuilder private var pairingButtons: some View {
+        Button("Change the TV") { path.append(.target) }.buttonStyle(DSButtonStyle(kind: .secondary))
+        Button("Remove Pairing") { confirmRemove = true }.buttonStyle(DSButtonStyle(kind: .danger))
+    }
+
+    /// "TV'yi Eşleştir" / "Deneme Altyazısı Gönder" eşli TV'ye ulaşamadı ve TV ağda bulunamadı: açık hata, yeniden arama ve
+    /// elle adres girişi (önceden düğmeler hiçbir şey göstermiyordu).
+    @ViewBuilder private func unreachableBox(_ host: String) -> some View {
+        MobileNote(text: String(format: String(localized: "The TV isn't responding at %@. Its address may have changed."), host))
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Mobile.Space.inline) { unreachableButtons }
+            ButtonStack { unreachableButtons }
+        }
+        if enteringAddress {
+            TVAddressField(label: TVText.address, text: $typedAddress)
+                .onChange(of: typedAddress) { _ in addressRejected = false }
+            if addressRejected { MobileNote(text: String(localized: "No TV was recognised at this address.")) }
+            Button("Add") {
+                applyingAddress = true
+                Task {
+                    let used = await model.useTVAddress(typedAddress)
+                    applyingAddress = false
+                    addressRejected = !used
+                    if used {
+                        enteringAddress = false
+                        typedAddress = ""
+                    }
+                }
+            }
+            .buttonStyle(DSButtonStyle(kind: .primary, busy: applyingAddress))
+            .disabled(applyingAddress || typedAddress.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+    }
+
+    @ViewBuilder private var unreachableButtons: some View {
+        Button("Search for the TV Again") { Task { await model.searchTVAgain() } }
+            .buttonStyle(DSButtonStyle(kind: .secondary, busy: model.tvSearching))
+            .disabled(model.tvSearching)
+        Button("Enter IP Address") { enteringAddress = true }.buttonStyle(DSButtonStyle(kind: .secondary))
+    }
+
+    /// Marka adı çevrilmez (katalog anahtarı değil; Android'deki pairedTvDetail ile aynı).
+    private func brandName(_ brand: TVBrand) -> String {
+        switch brand {
+        case .lg: "LG"
+        case .samsung: "Samsung"
+        case .androidTV: "Android TV"
         }
     }
 
@@ -712,6 +796,7 @@ private struct ConsolePage: View {
             }
         }
         .buttonStyle(.plain)
+        if !model.isXbox && model.console != nil { ConsoleAddressTile() }
         if !model.isXbox { LoginPasscodeTile() }
         // Yalnız Xbox: uzaktan oynatmada Xbox sesi istemciye verip TV'yi susturabilir (PS5'te ses TV'de kalır).
         if model.isXbox {
@@ -741,6 +826,43 @@ private struct ConsolePage: View {
             }
         }
         DemoModeTile(path: $path)
+    }
+}
+
+/// Konsol ve Kaynak › "IP Adresi Gir": PS5'in yeni adresi elle yazılır (adres değişip PS5 ağda bulunamazsa; Mac
+/// ConsoleSettingsCard ve Android ile aynı). Kayıt korunur, bağlıysa yeni adresle yeniden bağlanılır.
+private struct ConsoleAddressTile: View {
+    @EnvironmentObject private var model: PhoneModel
+    @State private var entering = false
+    @State private var typed = ""
+    @State private var rejected = false
+
+    var body: some View {
+        Tile {
+            ListRow(symbol: "network", title: "PS5 and connection", detail: model.console?.host)
+            Button("Enter IP Address") { entering.toggle() }.buttonStyle(DSButtonStyle(kind: .secondary))
+            if entering {
+                DSFieldChrome {
+                    TextField("IP address, e.g. 192.168.1.20", text: $typed)
+                        .keyboardType(.numbersAndPunctuation).autocorrectionDisabled().textInputAutocapitalization(.never)
+                        .onChange(of: typed) { _ in rejected = false }
+                } trailing: {
+                    Button("Save") {
+                        rejected = !model.enterConsoleAddress(typed)
+                        if !rejected {
+                            entering = false
+                            typed = ""
+                        }
+                    }
+                    .font(Mobile.TypeScale.headline)
+                    .foregroundStyle(Mobile.Palette.accentText)
+                    .padding(.horizontal, Mobile.Space.gap)
+                    .frame(minHeight: Mobile.Control.icon)
+                    .disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if rejected { MobileNote(text: String(localized: "This is not a valid IP address. Type it like 192.168.1.20, without http:// or a port number.")) }
+            }
+        }
     }
 }
 

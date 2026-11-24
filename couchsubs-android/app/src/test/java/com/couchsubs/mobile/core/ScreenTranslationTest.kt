@@ -212,7 +212,8 @@ class ScreenTranslationTest {
             requests.add(json)
             if (status != 200) return status to "{}"
             val user = json.getJSONArray("contents").getJSONObject(0).getJSONArray("parts").getJSONObject(0).getString("text")
-            val sources = JSONArray(user.substring(user.indexOf('[')))
+            // Son JSON dizisi çevrilecek yazılar; öncesinde karakter bütçesi dizisi olabilir.
+            val sources = JSONArray(user.substring(user.lastIndexOf("\n[") + 1))
             val reply = JSONArray((0 until sources.length()).map { "[tr] " + sources.getString(it) })
             val text = JSONObject().put("text", reply.toString())
             return 200 to JSONObject().put("candidates", JSONArray().put(JSONObject().put("content",

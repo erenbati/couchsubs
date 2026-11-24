@@ -1,0 +1,1 @@
+0.9.87: On LG, a picture that is still flowing is no longer rebuilt when translation starts or after the PS button; the screen only blinks if the picture really freezes.

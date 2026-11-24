@@ -115,6 +115,35 @@ object TvSessionLauncher {
         samsungStaleReported.remove(key)
     }
 
+    /** Listesiz açma bilgisi silinir (uygulama TV'den silindi); yeniden kurulup bağlanınca hak yine verilir. */
+    fun samsungForget(host: String) {
+        val key = host.trim().lowercase()
+        samsungUnconfirmed.remove(key)
+        samsungStaleReported.remove(key)
+    }
+
+    /** İki adres aynı TV mi (boşluk ve büyük/küçük harf gözetmeden). */
+    fun samsungSameHost(a: String?, b: String?): Boolean =
+        !a.isNullOrBlank() && !b.isNullOrBlank() && a.trim().equals(b.trim(), ignoreCase = true)
+
+    /**
+     * Listedeki "CouchSubs yok" kurulu bilgisini siler mi: yalnız kurulu bilinen TV'de bayat bilgi yüzünden listeye
+     * bakıldıysa ve liste kesin "yok" dediyse (yanıtsız liste silmez). Mac/iPhone ve Windows'taki forgetsOnList ile aynı.
+     */
+    fun samsungForgetsOnList(knownStale: Boolean, presence: SamsungAppPresence?): Boolean = knownStale && presence?.installed == false
+
+    /**
+     * Uygulama TV'den silinince (#1158) kayıtların yeni hâli: eşli TV korunur, yalnız sürümü (bilinen kurulumun işareti)
+     * silinir; "uygulama bağlandı" adresi bu TV'nin ise o da silinir. Başka TV'nin kaydına dokunulmaz.
+     */
+    fun samsungForgetMissing(tv: InstalledTv?, seenHost: String?, host: String): Pair<InstalledTv?, String?> {
+        val kept = if (tv != null && tv.brand == TvBrand.SAMSUNG && samsungSameHost(tv.host, host) && tv.version != null) tv.copy(version = null) else tv
+        return kept to seenHost?.takeUnless { samsungSameHost(it, host) }
+    }
+
+    fun samsungMissingLine(host: String): String =
+        "Samsung $host: TV'nin kurulu uygulama listesinde CouchSubs yok; TV uygulaması silinmiş, \"kurulu\" bilgisi silindi (kurulum adımı önerilecek)."
+
     fun samsungUnconfirmedLine(host: String): String =
         "Samsung $host: son doğrudan açma komutundan sonra TV uygulaması bağlanmadı; kurulu uygulama listesine bakılıyor (kurulu olmayan uygulamaya DEEP_LINK \"Sunucu bakım altında\" uyarısı çıkarır)."
 
@@ -324,11 +353,21 @@ object TvSessionLauncher {
                 val awaitingList = java.util.concurrent.atomic.AtomicBoolean(false)
                 // Uygulamanın bu TV'de kurulu olduğu biliniyorsa listeye bakılmaz, eskisi gibi doğrudan açılır.
                 // Listesiz açma, uygulama her bağlandığında bir kez: bayat bilgi "Sunucu bakım altında" çıkarmasın.
-                val known = samsungKnownInstalled(tv, settings.samsungAppSeenHost) && samsungAllowsDirect(tv.host, installLog)
+                val knownInstalled = samsungKnownInstalled(tv, settings.samsungAppSeenHost)
+                val known = knownInstalled && samsungAllowsDirect(tv.host, installLog)
+                // Kurulu bilinen TV'de son listesiz açmadan sonra uygulama bağlanmadı: listeye bakılıyor (bilgi bayat).
+                val knownStale = knownInstalled && !known
                 // Bilinen TV'de açma komutundan sonra, yalnız günlük için listeye bir kez bakılıyor mu.
                 val probing = java.util.concurrent.atomic.AtomicBoolean(false)
                 fun samsungLaunch(webSocket: WebSocket, presence: SamsungAppPresence?) {
                     if (!awaitingList.getAndSet(false)) return
+                    // Bayat bilgide liste "yok" diyor: uygulama TV'den silinmiş (#1158); "kurulu" kaydı silinir.
+                    if (tv.brand == TvBrand.SAMSUNG && samsungForgetsOnList(knownStale, presence)) {
+                        val line = samsungMissingLine(tv.host)
+                        log(line)
+                        installLog(line)
+                        TvAppUpdate.samsungAppMissing(tv.host, settings = settings)
+                    }
                     // Kurulu değilken DEEP_LINK gönderilirse Smart Hub uygulamayı mağazada arıyor ve TV'de "Sunucu bakım
                     // altında (1544007)" ya da "Samsung sunucusuna bağlanılamıyor (AS400)" çıkıyordu (#402, #511, #637);
                     // listede yoksa ya da liste 3 sn'de gelmezse hiçbir şey gönderilmez.

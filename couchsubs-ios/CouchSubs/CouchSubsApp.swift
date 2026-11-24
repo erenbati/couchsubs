@@ -419,8 +419,8 @@ struct RootView: View {
                 case .settings: SettingsScreen(path: $path)
                 }
             }
-            // Reklam şeridi boştaki ana ekranda; çeviri sürerken (oyun görüntüsü) yok.
-            .environment(\.mobileAdBand, !model.isRunning && !model.demoMode)
+            // Reklam şeridi boştaki uygulama sayfalarında; çeviri sürerken (oyun görüntüsü ve açılan sayfalar) yok.
+            .environment(\.mobileAdBand, PromoPolicy.adBandVisible(appPage: true, translating: model.isRunning, demo: model.demoMode))
             .environment(\.perdeTabBar, tabBar(nil))
             .navigationDestination(for: Route.self) { route in
                 Group {
@@ -457,7 +457,7 @@ struct RootView: View {
                 case .tvUpdate: TVInstallScreen(update: model.tvAppUpdate, onDone: goHome)
                 }
                 }
-                .environment(\.mobileAdBand, route.showsAdBand && !model.demoMode)
+                .environment(\.mobileAdBand, PromoPolicy.adBandVisible(appPage: route.showsAdBand, translating: model.isRunning, demo: model.demoMode))
                 .environment(\.perdeTabBar, tabBar(route))
             }
         }

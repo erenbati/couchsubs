@@ -118,7 +118,7 @@
   // Uzun çeviri tek uzun satır olarak taşmasın: satır başına en çok 42 karakter, en çok 3 satır, kelime sınırından ve
   // dengeli bölünür; 3 satıra sığmazsa yazı biraz küçülür (en çok %75). Konuşan adı ("ARTHUR:") hep ilk satırdadır.
   // Mac, Windows, Android ve TV (SubtitleWrap / tv-webos/app.js) aynı kuralları uygular.
-  var WRAP_MAX_CHARS = 42, WRAP_MAX_LINES = 3, WRAP_MIN_SCALE = 0.75;
+  var WRAP_MAX_CHARS = 42, WRAP_MAX_LINES = 3, WRAP_MIN_SCALE = 1;
   var baseSize = 48, textScale = 1;
 
   function wrapTokens(text) {
@@ -192,7 +192,7 @@
     return widest;
   }
 
-  // scale: yazı boyu çarpanı (1 ya da COVER_STEP). Ölçüm yapılamazsa null, hiçbir bölme 3 satırda sığmazsa false.
+  // scale: yazı boyu çarpanı (örtüde hep 1). Ölçüm yapılamazsa null, hiçbir bölme 3 satırda sığmazsa false.
   function wrapToCover(text, box, scale) {
     if (!box || text.indexOf('\n') >= 0) return null;
     var words = wrapTokens(text);
@@ -215,31 +215,20 @@
     return best ? { text: best.text, scale: scale } : false;
   }
 
-  // "Örtsün"de yazı boyu kararlıdır (Mac/Windows: CoverFontScale, TV: coverWrap). Kullanıcının seçtiği boy kullanılır, kutu
-  // çeviriye göre genişler; yazı ancak 3 satıra sığmıyorsa bir kademe küçülür (seçilen boyun %80'i), asla büyütülmez. Küçülen
-  // boy yazı boyu ayarı değişene dek kalır: ardışık satırlarda boy bir büyük bir küçük zıplamasın. Yazı daha fazla
-  // küçülmez; sığmayan çeviride kutu büyür.
-  var COVER_STEP = 0.8, coverScale = 1, coverFont = null;
-  function wrapAt(text, scale) {
-    var cap = Math.floor(WRAP_MAX_CHARS / scale);
+  // "Örtsün"de yazı boyu sabittir (Mac/Windows: CoverFontScale, TV: coverWrap): her satır kullanıcının seçtiği boyda, kutu
+  // çeviriye göre genişler. Yazı 3 satıra sığmıyorsa küçülmez: 3 dengeli satır, tarayıcı uzun satırı kendisi böler. Eskiden
+  // 3 satıra sığmayan tek satır yazıyı %80'e indiriyor, boy ayarı değişene dek öyle bırakıyordu (X, beta.89).
+  function wrapAt(text) {
     var length = Array.from ? Array.from(text).length : text.length;
-    if (length <= cap || text.indexOf('\n') >= 0) return { text: text, scale: scale };
+    if (length <= WRAP_MAX_CHARS || text.indexOf('\n') >= 0) return { text: text, scale: 1 };
     var words = wrapTokens(text);
-    if (words.length < 2) return { text: text, scale: scale };
-    var lines = Math.min(WRAP_MAX_LINES, Math.max(2, Math.ceil(length / cap)));
-    return { text: wrapBalance(words, Math.min(lines, words.length)), scale: scale };
+    if (words.length < 2) return { text: text, scale: 1 };
+    var lines = Math.min(WRAP_MAX_LINES, Math.max(2, Math.ceil(length / WRAP_MAX_CHARS)));
+    return { text: wrapBalance(words, Math.min(lines, words.length)), scale: 1 };
   }
   function coverWrap(text, box) {
-    if (coverFont !== baseSize) { coverFont = baseSize; coverScale = 1; }
-    if (text.indexOf('\n') >= 0) return { text: text, scale: coverScale };
-    var fitted = wrapToCover(text, box, coverScale);
-    if (fitted === false && coverScale === 1) {
-      coverScale = COVER_STEP;
-      fitted = wrapToCover(text, box, coverScale);
-    } else if (fitted === null && coverScale === 1 && wrapSubtitle(text).scale < 1) {
-      coverScale = COVER_STEP;
-    }
-    return fitted || wrapAt(text, coverScale);
+    if (text.indexOf('\n') >= 0) return { text: text, scale: 1 };
+    return wrapToCover(text, box, 1) || wrapAt(text);
   }
 
   // Örtü kutusunun her yana bıraktığı pay (1080 satırlık ekranda piksel; Mac ve Windows'taki OverlayCover ile aynı).
@@ -283,6 +272,7 @@
     var rgb = hexRgb(style.backgroundColor);
     boxRgb = rgb ? rgb.join(', ') : '0, 0, 0';
     speakerNameOnly = style.nameOnly === true;
+    speakerWholeLine = style.wholeLine === true;
     var bg = fixed.bg !== null ? Number(fixed.bg) : style.background;
     if (typeof bg === 'number' && !isNaN(bg)) line.style.background = boxColor(bg);
     else if (pageColor) line.style.background = boxColor(60);
@@ -528,11 +518,14 @@
   // Metnin parçaları: [{text, color}] (renksiz parçada color null). Ad yalnız satır başında aranır ve yalnız "Ad:"
   // boyanır; cümle ve bölünmüş devam satırları kullanıcının yazı renginde kalır (TV 0.9.79; önceden bütün satır
   // boyanıyor, "Yazı rengi" beyazken altyazı renkli görünüyordu).
-  function speakerSegments(text, map) {
+  // wholeLine (Karakter Adı › "Tüm Satır", style.wholeLine): ad ve cümle, devam satırlarıyla birlikte sonraki konuşanın
+  // adına dek o konuşanın renginde (Mac, iPhone, Windows ve Android ile aynı).
+  function speakerSegments(text, map, wholeLine) {
     if (!map) return [{ text: text, color: null }];
     var segments = [];
     var start = 0;
     var lineStart = 0;
+    var running = null;
     while (lineStart <= text.length) {
       var found = null;
       var end = 0;
@@ -548,23 +541,30 @@
         }
       }
       if (found) {
-        if (lineStart > start) segments.push({ text: text.slice(start, lineStart), color: null });
-        segments.push({ text: text.slice(lineStart, end), color: map[found] });
-        start = end;
+        if (lineStart > start) segments.push({ text: text.slice(start, lineStart), color: running });
+        if (wholeLine) {
+          running = map[found];
+          start = lineStart;
+        } else {
+          segments.push({ text: text.slice(lineStart, end), color: map[found] });
+          start = end;
+        }
       }
       var next = text.indexOf('\n', lineStart);
       if (next < 0) break;
       lineStart = next + 1;
     }
-    if (start < text.length || !segments.length) segments.push({ text: text.slice(start), color: null });
+    if (start < text.length || !segments.length) segments.push({ text: text.slice(start), color: running });
     return segments;
   }
 
   // Konuşan rengi yalnız adı boyar (style.nameOnly; TV uygulamasıyla aynı).
   var speakerNameOnly = false;
+  // Karakter Adı › Tüm Satır (style.wholeLine): cümle de konuşanın renginde. Alanı göndermeyen bilgisayarda yalnız ad.
+  var speakerWholeLine = false;
 
   function paintSpeakers(el, text, map) {
-    var segments = speakerSegments(text, map);
+    var segments = speakerSegments(text, map, speakerWholeLine);
     if (segments.length === 1 && !segments[0].color) return;
     el.textContent = '';
     for (var i = 0; i < segments.length; i++) {
@@ -574,7 +574,7 @@
       }
       var colored = segments[i].text;
       var rest = '';
-      if (speakerNameOnly) {
+      if (speakerNameOnly && !speakerWholeLine) {
         var colon = colored.search(/[:\uFF1A]/);
         if (colon >= 0) {
           rest = colored.slice(colon + 1);
@@ -594,8 +594,9 @@
     clearTimeout(timer);
     if (!text) return hide();
     hideHint();
-    // "Örtsün": oyundaki altyazının yeri gelmezse son bilinen yer örtülür (Mac ve Windows'taki pencere ile aynı).
-    if (placement === 'cover' && !box) box = lastBox;
+    // Oyundaki altyazının yeri gelmezse son bilinen yer kullanılır (TV ile aynı): "Örtsün"de örtülür, "Üstünde"/"Altında"da
+    // çeviri onun üstünde/altında kalır, alttaki İngilizce satırın üstüne inmez.
+    if (placement !== 'fixed' && !box) box = lastBox;
     if (box) lastBox = box;
     var covering = box && !fixed.bottom && placement === 'cover' && !(lastStyle && lastStyle.backgroundShape === 'band');
     var wrapped = covering ? coverWrap(text, box) : wrapSubtitle(text);
@@ -662,7 +663,9 @@
       // then position the wrapper without carrying stale vertical coordinates forward.
       wrap.style.top = '';
       wrap.style.bottom = '';
-      var gap = 1.2;
+      // Çevirinin kutusu ile İngilizce satır arasında ekran yüksekliğinin %2,4'ü boşluk (TV ile aynı; eskiden %1,2, zemin
+      // İngilizce yazıya değiyormuş gibi görünüyordu).
+      var gap = 2.4;
       if (mode !== 'fixed') {
         // Kap İngilizce satırın hemen üstüne ya da altına oturur, yatayda satırın ortasına hizalanır.
         var center = (box.left + box.right) / 2;
